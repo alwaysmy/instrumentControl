@@ -1,0 +1,62 @@
+[
+  {
+    "item": "EDGE:SOUR? 查询",
+    "ok": true,
+    "detail": "原值=C1"
+  },
+  {
+    "item": "EDGE:LEV? 查询",
+    "ok": true,
+    "detail": "原值=12.2V"
+  },
+  {
+    "item": "EDGE:SLOP? 查询",
+    "ok": true,
+    "detail": "原值=RISing"
+  },
+  {
+    "item": "TRIGger:STATus? 查询",
+    "ok": true,
+    "detail": "状态=Ready"
+  },
+  {
+    "item": "EDGE:LEV 写+回读",
+    "ok": true,
+    "detail": "写 12.3 读 12.3"
+  },
+  {
+    "item": "EDGE:LEV 恢复",
+    "ok": true,
+    "detail": "恢复 12.2 读 12.2"
+  },
+  {
+    "item": "ADV P1 FREQuency 配置+读值",
+    "ok": true,
+    "detail": "P1=0.0"
+  },
+  {
+    "item": "ADV 清除",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "item": ":CONF? 原配置(参考)",
+    "ok": true,
+    "detail": "\"VOLT +1.00000000E-01,+1.00000000E-08\""
+  },
+  {
+    "item": "configure curr_dc + 实测",
+    "ok": true,
+    "detail": "-1.115e-12 A"
+  },
+  {
+    "item": "configure res + 实测(悬空超量程)",
+    "ok": true,
+    "detail": "9.9e+37 Ω"
+  },
+  {
+    "item": "恢复 volt_dc + 实测",
+    "ok": true,
+    "detail": "7.517e-04 V / CONF=\"VOLT +1.00000000E-01,+1.00000000E-08\""
+  }
+]

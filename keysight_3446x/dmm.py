@@ -135,10 +135,13 @@ class DMM:
         """:CONF 设定测量功能/量程/分辨率（不触发测量）。"""
         base = {
             "volt_dc": "VOLT:DC", "volt_ac": "VOLT:AC",
-            "res": "RES", "freq": "FREQ",
+            "curr_dc": "CURR:DC", "curr_ac": "CURR:AC",
+            "res": "RES", "fres": "FRES",
+            "cap": "CAP", "freq": "FREQ",
         }.get(function)
         if base is None:
-            raise ValueError(f"configure 暂不支持 {function!r}")
+            raise ValueError(f"configure 暂不支持 {function!r}，可用: volt_dc/volt_ac/"
+                             f"curr_dc/curr_ac/res/fres/cap/freq")
         cmd = f":CONF {base}"
         if range_v is not None:
             cmd += f" {range_v}"

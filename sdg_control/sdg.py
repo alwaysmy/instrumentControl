@@ -130,9 +130,21 @@ class SDG:
 
     def mod_wave(self, ch: int | str) -> dict:
         """:MDWV? 调制参数查询（STATE/TYPE/SRC 等）。"""
-        raw = self.query(f"{C.MDWV_Q.format(ch=self._ch(ch))}").strip()
+        return self._kv_query(f"{C.MDWV_Q.format(ch=self._ch(ch))}")
+
+    def sweep_wave(self, ch: int | str) -> dict:
+        """:SWWV? 扫频参数查询（STATE/START/STOP/TIME 等）。"""
+        return self._kv_query(f"{C.SWWV_Q.format(ch=self._ch(ch))}")
+
+    def arb_wave(self, ch: int | str) -> dict:
+        """:ARWV? 任意波参数查询（索引/文件名）。"""
+        return self._kv_query(f"{C.ARWV_Q.format(ch=self._ch(ch))}")
+
+    def _kv_query(self, cmd: str) -> dict:
+        """通用键值串解析："C1:XXX A,B,C,D" → {A:B, C:D}。"""
+        raw = self.query(cmd).strip()
         parts = raw.split(" ", 1)
-        out: dict = {}
+        out: dict = {"raw": raw}
         if len(parts) == 2:
             tokens = parts[1].split(",")
             for i in range(0, len(tokens) - 1, 2):

@@ -162,6 +162,27 @@ class SDS:
     def trigger_mode(self) -> str:
         return self.query(C.TRIG_MODE).strip()
 
+    def trigger_status(self) -> str:
+        return self.query(C.TRIG_STATUS).strip()
+
+    def edge_source(self, source: Optional[str] = None) -> Optional[str]:
+        if source is None:
+            return self.query(C.TRIG_EDGE_SOUR).strip()
+        self.write(C.TRIG_EDGE_SOUR_W.format(src=source.upper()))
+        return None
+
+    def edge_level(self, level: Optional[float] = None) -> Optional[float]:
+        if level is None:
+            return _num(self.query(C.TRIG_EDGE_LEV))
+        self.write(C.TRIG_EDGE_LEV_W.format(val=level))
+        return None
+
+    def edge_slope(self, slope: Optional[str] = None) -> Optional[str]:
+        if slope is None:
+            return self.query(C.TRIG_EDGE_SLOP).strip()
+        self.write(f"TRIG:EDGE:SLOP {slope}")
+        return None
+
     # ---------- 采集 ----------
     def acquire_depth(self, value: Optional[str] = None) -> Optional[str]:
         if value is None:
@@ -183,6 +204,32 @@ class SDS:
             if k:
                 out[k] = v.strip()
         return out
+
+    MEAS_TYPES = (
+        "VPP", "VMAX", "VMIN", "VAMP", "VTOP", "VBASE", "PERiod",
+        "FREQuency", "RISetime", "FALLtime", "PWIDth", "NWIDth", "DUTy",
+    )
+
+    def adv_measure_setup(self, slot: int, mtype: str, src: str = "C1") -> None:
+        """配置高级测量槽 P<n>（TYPE + 信源）。slot 1~8，mtype 见 MEAS_TYPES。"""
+        if not (1 <= int(slot) <= 8):
+            raise ValueError(f"invalid slot: {slot}")
+        if mtype not in self.MEAS_TYPES:
+            raise ValueError(f"未知测量类型 {mtype!r}，可用: {', '.join(self.MEAS_TYPES)}")
+        self.write(f":MEASure:ADVanced:P{int(slot)}:SOURce1 {src.upper()}")
+        self.write(f":MEASure:ADVanced:P{int(slot)}:TYPE {mtype}")
+
+    def adv_measure_value(self, slot: int) -> Optional[float]:
+        """读取高级测量槽 P<n> 当前值；'****'(无有效读数) 返回 None，
+        9.9E37(超界) 原样返回由调用方判断。"""
+        raw = self.query(C.MEAS_ADV_VAL.format(n=int(slot))).strip()
+        try:
+            return _num(raw)
+        except ValueError:
+            return None
+
+    def clear_adv_measurements(self) -> None:
+        self.write(C.MEAS_ADV_CLEAR)
 
     # ---------- 波形读取 ----------
     @staticmethod

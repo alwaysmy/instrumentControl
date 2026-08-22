@@ -13,10 +13,11 @@ BSWV_Q = "{ch}:BSWV?"            # 基础波形参数整体查询（子参数式
 BSWV_W = "{ch}:BSWV {params}"    # 例：WVTP,SINE,FRQ,1000HZ,AMP,1.0V,OFST,0V
 
 MDWV_Q = "{ch}:MDWV?"            # 调制参数
-SWPWV_Q = "{ch}:SWEEPWV?"        # 扫频参数（部分型号支持）
+SWWV_Q = "{ch}:SWWV?"            # 扫频参数（手册命令名 SWWV，SWEEPWV? 不被支持，实测）
+ARWV_Q = "{ch}:ARWV?"            # 任意波（索引/文件名）
 
 SYST_ERR = ":SYST:ERR?"
-SYST_VERS = ":SYST:VERS?"
+SYST_VERS = ":SYST:VERS?"        # 实测返回 1999.0；固件版本从 *IDN? 第 4 字段取
 
 # BSWV? 返回的键值串 → 规范解析用键名（保持原样返回亦可）
 BSWV_KEYS = (

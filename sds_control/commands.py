@@ -31,9 +31,18 @@ CHAN_COUPLING = "C{n}:COUPLING?"
 TB_SCALE = "TDIV?"
 TRIG_DELAY = "TRDL?"
 TRIG_MODE = "TRIG:MODE?"
-TRIG_SOURCE = "TRSL?"          # 待实测核对（首轮探测超时）
+TRIG_STATUS = ":TRIGger:STATus?"   # 手册 3.27.3（Stop/TD/Wait/TRiggered...）
+TRIG_EDGE_SOUR = "TRIG:EDGE:SOUR?" # 手册 :TRIGger:EDGE:SOURce（短形式）
+TRIG_EDGE_SOUR_W = "TRIG:EDGE:SOUR {src}"
+TRIG_EDGE_LEV = "TRIG:EDGE:LEV?"
+TRIG_EDGE_LEV_W = "TRIG:EDGE:LEV {val}V"
+TRIG_EDGE_SLOP = "TRIG:EDGE:SLOP?"
 
-MEAS_ALL = "MEAS?"             # 打开的测量项统计值
+MEAS_ALL = "MEAS?"                 # 打开的测量项统计值
+MEAS_ADV_CLEAR = ":MEASure:ADVanced:CLEar"
+MEAS_ADV_TYPE_Q = ":MEASure:ADVanced:P{n}:TYPE?"
+MEAS_ADV_TYPE_W = ":MEASure:ADVanced:P{n}:TYPE {t}"
+MEAS_ADV_VAL = ":MEASure:ADVanced:P{n}:VALue?"
 
 WAV_SOUR = ":WAVeform:SOURce"
 WAV_PREAMBLE = ":WAVeform:PREamble?"

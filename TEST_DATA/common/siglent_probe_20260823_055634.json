@@ -1,0 +1,71 @@
+{
+  "timestamp": "2026-08-23T05:56:06",
+  "SDG2122X": {
+    "C1:BSWV?": {
+      "ok": true,
+      "value": "C1:BSWV WVTP,SINE,FRQ,1000HZ,PERI,0.001S,AMP,0.4V,AMPVRMS,0.1414Vrms,AMPDBM,0dBm,MAX_OUTPUT_AMP,20V,OFST,0V,HLEV,0.2V,LLEV,-0.2V,PHSE,0"
+    },
+    "C2:BSWV?": {
+      "ok": true,
+      "value": "C2:BSWV WVTP,SINE,FRQ,1000HZ,PERI,0.001S,AMP,2V,AMPVRMS,0.707Vrms,AMPDBM,0dBm,MAX_OUTPUT_AMP,20V,OFST,0V,HLEV,1V,LLEV,-1V,PHSE,0"
+    },
+    "C1:OUTWV?": {
+      "ok": false,
+      "error": "VisaIOError"
+    },
+    "C1:MDWV?": {
+      "ok": true,
+      "value": "C1:MDWV STATE,OFF"
+    },
+    "SYST:VERS?": {
+      "ok": true,
+      "value": "1999.0"
+    },
+    "SYST:FIRM?": {
+      "ok": false,
+      "error": "VisaIOError"
+    },
+    "C1:SWEEPWV?": {
+      "ok": false,
+      "error": "VisaIOError"
+    }
+  },
+  "SDS824X_HD": {
+    "C1:COUPLING?": {
+      "ok": true,
+      "value": "C1:CPL D1M"
+    },
+    "CPL?": {
+      "ok": false,
+      "error": "VisaIOError"
+    },
+    "C1:OFF?": {
+      "ok": false,
+      "error": "VisaIOError"
+    },
+    "C1:SKEW?": {
+      "ok": true,
+      "value": "C1:SKEW 0.00E+00S"
+    },
+    "SANU? 1": {
+      "ok": true,
+      "value": "SANU 1.00E+06pts"
+    },
+    "HORI:SCAL?": {
+      "ok": false,
+      "error": "VisaIOError"
+    },
+    "TRIG:MODE?": {
+      "ok": true,
+      "value": "NORMal"
+    },
+    "TRIG:SOURCE?": {
+      "ok": false,
+      "error": "VisaIOError"
+    },
+    "ACQ:MDEP?": {
+      "ok": true,
+      "value": "1M"
+    }
+  }
+}

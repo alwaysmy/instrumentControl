@@ -7,6 +7,7 @@ from __future__ import annotations
 import re
 import struct
 import sys
+import time
 from pathlib import Path
 from typing import Optional, Union
 
@@ -230,6 +231,115 @@ class SDS:
 
     def clear_adv_measurements(self) -> None:
         self.write(C.MEAS_ADV_CLEAR)
+
+    # ---------- 自动定标与诊断 ----------
+    def screenshot(self, save_dir: Optional[Path] = None) -> bytes:
+        """:PRIN? BMP 截屏原始字节（含 TMC 头则剥离）。"""
+        data = self.query_raw(C.SCREEN_BMP)
+        return self._strip_tmc(data) if data.find(b"#") == 0 else data
+
+    def diagnose_trigger(self) -> dict:
+        """读取触发链路状态（定位'屏幕无波形'的第一嫌疑）。"""
+        return {
+            "mode": self.trigger_mode(),
+            "status": self.trigger_status(),
+            "edge_source": self.edge_source(),
+            "edge_level_v": self.edge_level(),
+            "timebase_s_div": self.timebase_scale(),
+        }
+
+    def auto_scale(
+        self,
+        ch: int,
+        target_cycles: float = 5.0,
+        target_divs: tuple[float, float] = (2.5, 6.0),
+        verbose: bool = False,
+    ) -> dict:
+        """让通道 ch 正确显示波形：修触发 → 测 Vpp/Freq → 调垂直/水平。
+
+        适用场景：屏幕无波形或显示不佳。步骤：
+        1. 触发源切到本通道、电平回 0V、扫频方式 AUTO（无触发也刷新）；
+        2. 打开通道显示；
+        3. 用高级测量读 Vpp 与频率；
+        4. VDIV 调到使波形占 target_divs 格；TDIV 调到约 target_cycles 个周期。
+        """
+        n = self._ch(ch)
+        src = f"C{n}"
+        actions: list[str] = []
+
+        # 1. 触发链路修复（'屏幕无波形'的头号根因：触发源挂空/电平过高）
+        trig = self.diagnose_trigger()
+        if f"C{n}" != str(trig.get("edge_source", "")):
+            self.write(f"TRIG:EDGE:SOUR {src}")
+            actions.append(f"触发源 {trig['edge_source']}→{src}")
+        if trig["mode"] and "NORM" in str(trig["mode"]).upper():
+            self.write(":TRIGger:SWEep AUTO")
+            actions.append("扫描方式→AUTO(免触发刷新)")
+        self.write(f"TRIG:EDGE:LEV 0V")
+        actions.append("触发电平→0V")
+
+        # 2. 打开通道
+        if self.query(f"C{n}:TRA?").strip() != "ON":
+            self.write(f"C{n}:TRA ON")
+            actions.append(f"{src} 显示开启")
+
+        # 3. 测量 Vpp/Freq
+        self.adv_measure_setup(1, "VPP", src)
+        self.adv_measure_setup(2, "FREQuency", src)
+        vpp = freq = None
+        for _ in range(6):
+            time.sleep(0.8)
+            vpp = self.adv_measure_value(1)
+            freq = self.adv_measure_value(2)
+            if vpp is not None and freq is not None:
+                break
+        if verbose:
+            print(f"[auto_scale] {src}: Vpp={vpp} Freq={freq} 动作={actions}")
+
+        result = {
+            "channel": src,
+            "actions": actions,
+            "vpp": vpp,
+            "freq": freq,
+            "adjusted": {},
+        }
+        if vpp is None or freq is None:
+            result["error"] = "无法测得 Vpp/频率：请检查信号接入与探头"
+            return result
+
+        # 4a. 垂直档位：VDIV ∈ 1-2-5 序列，使 Vpp 占 2.5~6 格
+        std_steps = [
+            0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.05 * 2, 0.05 * 5,
+            0.1, 0.2, 0.5, 1, 2, 5, 10,
+        ]
+        ideal = vpp / sum(target_divs) * 2  # 目标格数中点
+        best = min(std_steps, key=lambda s: abs(s - ideal))
+        cur = _num(self.query(f"C{n}:VDIV?"))
+        if abs(best - cur) / cur > 0.2:
+            self.write(f"C{n}:VDIV {best}V")
+            result["adjusted"]["vdiv"] = best
+            actions.append(f"VDIV {cur}→{best}")
+
+        # 4b. 垂直偏置：把信号中心拉回屏幕中线（简化：偏置=0 起步）
+        # 4c. 水平：TDIV 使屏幕(10格)含 target_cycles 个周期
+        ideal_tdiv = (freq and (target_cycles / freq)) or None
+        if ideal_tdiv:
+            tdiv_std = [
+                x * m
+                for x in (1e-9, 1e-6, 1e-3, 1)
+                for m in (0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000)
+                if 1e-9 <= x * m <= 1000
+            ]
+            best_t = min(tdiv_std, key=lambda s: abs(s - ideal_tdiv))
+            cur_t = self.timebase_scale()
+            if abs(best_t - cur_t) / max(cur_t, 1e-12) > 0.3:
+                self.write(f"TDIV {best_t}")
+                result["adjusted"]["tdiv"] = best_t
+                actions.append(f"TDIV {cur_t}→{best_t}")
+        result["actions"] = actions
+        if verbose:
+            print(f"[auto_scale] 最终动作: {actions}")
+        return result
 
     # ---------- 波形读取 ----------
     @staticmethod

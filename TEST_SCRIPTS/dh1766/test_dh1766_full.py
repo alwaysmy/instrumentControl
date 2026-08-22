@@ -1,8 +1,15 @@
 """DH1766A 全功能验证脚本：手册 4.2 全部指令集 读+写 验证。
 
 用法：
-    python TEST_SCRIPTS/dh1766/test_dh1766_full.py            # 空载/无负载时（默认允许写操作）
+    python TEST_SCRIPTS/dh1766/test_dh1766_full.py [resource] [options]
     python TEST_SCRIPTS/dh1766/test_dh1766_full.py --safe     # 接入负载时：输出ON通道拒绝改设定
+
+接口指定与 fallback（common 统一发现层）：
+    resource            完整 VISA 资源串（USB/TCPIP 均可），最高优先
+    --host IP           TCPIP host/IP，可多次（--proto 选 inst0/hislip0）
+    --cidr CIDR         fallback 网段，如 192.168.1.0/24（配合 --allow-scan）
+    --allow-scan        显式全部失败后允许网段扫描（最后手段）
+不带参数时扫描本机已有 VISA 资源并匹配 *IDN? 含 DH1766 的设备（原行为）。
 
 安全约定：
     - 所有写操作遵循 备份→写入→读取确认→恢复原值→读取确认；
@@ -21,9 +28,11 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "dh1766_control" / "src"))
 
-from dh1766_control import DH1766, find_dh1766  # noqa: E402
+from common.discovery import find_device  # noqa: E402
+from dh1766_control import DH1766  # noqa: E402
 from dh1766_control.visa import VisaClient  # noqa: E402
 
 OUT_DIR = ROOT / "TEST_DATA" / "dh1766"
@@ -58,10 +67,26 @@ def main() -> None:
         help="显式允许执行 *RST 复位测试（默认跳过；复位会恢复出厂设定与蜂鸣器状态，须用户允许）",
     )
     parser.add_argument("resource", nargs="?", default=None)
+    parser.add_argument("--host", action="append", help="TCPIP host/IP，可多次")
+    parser.add_argument("--proto", choices=["inst0", "hislip0"], default="inst0")
+    parser.add_argument("--cidr", default=None, help="fallback 扫描网段")
+    parser.add_argument(
+        "--allow-scan",
+        action="store_true",
+        help="显式接口全部失败后允许网段扫描（最后手段）",
+    )
     args = parser.parse_args()
 
-    resource = args.resource or find_dh1766()
-    print(f"\n== 连接 {resource}  safe_mode={args.safe} ==")
+    hit = find_device(
+        "DH1766",
+        resource=args.resource,
+        hosts=args.host,
+        proto=args.proto,
+        allow_scan=args.allow_scan,
+        cidr=args.cidr,
+    )
+    resource = hit.resource
+    print(f"\n== 连接 {resource}  source={hit.source}  safe_mode={args.safe} ==")
 
     with VisaClient(resource, timeout_ms=5000) as client:
         ps = DH1766(client, safe_mode=args.safe)
@@ -246,6 +271,7 @@ def main() -> None:
         record = {
             "timestamp": datetime.now().isoformat(timespec="seconds"),
             "resource": resource,
+            "discovery": {"source": hit.source, "idn": hit.idn},
             "safe_mode": args.safe,
             "before": before,
             "after": after,

@@ -1,0 +1,34 @@
+{
+  "timestamp": "2026-08-23T04:05:12",
+  "full_cidr": true,
+  "online_devices": [],
+  "results": [
+    {
+      "case": "T1 显式不存在地址",
+      "expect": "RuntimeError(含尝试链路)",
+      "ok": true,
+      "elapsed_s": 2.05,
+      "detail": "RuntimeError: 未找到 *IDN? 含 'NO_SUCH_DEVICE_XYZ' 的设备，尝试链路：\n  [explicit] TCPIP0::192.0.2.123::inst0::INSTR: 无响应/打开失败\n  [scanned] -: allow_scan=False，跳过网段扫描"
+    },
+    {
+      "case": "T2 在线但 IDN 不匹配",
+      "expect": "-",
+      "ok": true,
+      "note": "SKIP: 本机无可识别在线设备"
+    },
+    {
+      "case": "T3 无参查 DH1766",
+      "expect": "RuntimeError(设备离线)",
+      "ok": true,
+      "elapsed_s": 25.56,
+      "detail": "RuntimeError: 未找到 *IDN? 含 'DH1766' 的设备，尝试链路：\n  [listed] ASRL1::INSTR: 无响应/打开失败\n  [listed] ASRL13::INSTR: 无响应/打开失败\n  [listed] ASRL42::INSTR: 无响应/打开失败\n  [listed] ASRL43::INSTR: 无响应/打开失败\n  [listed] ASRL44::INSTR: 无响应/打开失败\n  [scanned] -: allow_scan=False，跳过网段扫描"
+    },
+    {
+      "case": "T4 CIDR 扫描机制",
+      "expect": "正常返回(在线列表可为空)",
+      "ok": true,
+      "elapsed_s": 7.8,
+      "detail": "net=192.168.31.0/24 在线: 无"
+    }
+  ]
+}

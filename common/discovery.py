@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Callable, Optional
@@ -24,6 +25,11 @@ import pyvisa
 
 SCAN_WORKERS = 32
 SCAN_TIMEOUT_MS = 1500
+# TCP 端口预筛（任一通即候选）：VXI-11 portmapper / HiSLIP / SCPI raw socket。
+# 仅用于快速淘汰死地址与非仪器主机；设备身份仍由 VISA + *IDN? 确认。
+SCAN_PROBE_PORTS = (111, 4880, 5025)
+PROBE_TIMEOUT_S = 0.6
+PROBE_WORKERS = 128
 
 
 @dataclass
@@ -45,10 +51,17 @@ def list_resources() -> list[str]:
 
 
 def identify(resource: str, timeout_ms: int = 3000) -> Optional[str]:
-    """对单个资源发送 *IDN?，成功返回识别串，失败/超时返回 None。"""
+    """对单个资源发送 *IDN?，成功返回识别串，失败/超时返回 None。
+
+    SOCKET 资源自动配置 \\n 读写终止符（VISA socket 会话无协议层终止符，
+    不配则命令不完整导致设备不应答）。
+    """
+    kwargs: dict = {}
+    if "SOCKET" in resource.upper():
+        kwargs = {"read_termination": "\n", "write_termination": "\n"}
     try:
         rm = pyvisa.ResourceManager()
-        inst = rm.open_resource(resource)
+        inst = rm.open_resource(resource, **kwargs)
         inst.timeout = timeout_ms
         try:
             return inst.query("*IDN?").strip()
@@ -74,6 +87,46 @@ def tcpip_resource(host: str, proto: str = "inst0") -> str:
     return f"TCPIP0::{host}::{proto}::INSTR"
 
 
+# LAN 多协议探测顺序（实测 2026-08-23：DH1766A-1 仅 raw socket 5025 可达，
+# 且 VISA SOCKET 会话必须显式配置 \n 终止符，否则命令不完整导致超时）
+LAN_PROTOCOLS: tuple[tuple[str, dict], ...] = (
+    ("TCPIP0::{host}::inst0::INSTR", {}),
+    ("TCPIP0::{host}::hislip0::INSTR", {"read_termination": "\n"}),
+    ("TCPIP0::{host}::5025::SOCKET",
+     {"read_termination": "\n", "write_termination": "\n"}),
+)
+
+
+def identify_lan(host: str, timeout_ms: int = 3000) -> Optional[tuple[str, str]]:
+    """按 LAN_PROTOCOLS 逐协议探测 *IDN?，成功返回 (可用资源串, idn)，全败返回 None。
+
+    host 含 '::' 视为完整资源串，仅按其本身探测。
+    """
+    resources = [host] if "::" in host else [t.format(host=host) for t, _ in LAN_PROTOCOLS]
+    rm = pyvisa.ResourceManager()
+    try:
+        for res in resources:
+            kwargs = next(
+                (kw for t, kw in LAN_PROTOCOLS if t.format(host=host) == res),
+                {} if res.endswith("INSTR") else
+                {"read_termination": "\n", "write_termination": "\n"},
+            )
+            try:
+                inst = rm.open_resource(res, open_timeout=timeout_ms, **kwargs)
+                inst.timeout = timeout_ms
+                try:
+                    idn = inst.query("*IDN?").strip()
+                    if idn:
+                        return (res, idn)
+                finally:
+                    inst.close()
+            except Exception:
+                continue
+        return None
+    finally:
+        rm.close()
+
+
 def detect_cidr() -> Optional[str]:
     """经 UDP 路由探测本机出口 IP，返回所在 /24 网段；失败返回 None。"""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -87,30 +140,60 @@ def detect_cidr() -> Optional[str]:
         s.close()
 
 
+def probe_alive(ip: str, ports: tuple[int, ...] = SCAN_PROBE_PORTS,
+                timeout_s: float = PROBE_TIMEOUT_S) -> bool:
+    """TCP 端口预筛：任一指定端口可建立连接返回 True（死地址秒级淘汰）。"""
+    for port in ports:
+        try:
+            with socket.create_connection((ip, port), timeout=timeout_s):
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def scan_cidr(
     cidr: str,
     idn_contains: str,
     timeout_ms: int = SCAN_TIMEOUT_MS,
+    prefilter: bool = True,
 ) -> list[FindResult]:
     """并发扫描网段内全部地址，返回所有在线设备的 FindResult（含非目标设备）。
 
+    prefilter=True（默认）先经 TCP 端口预筛淘汰无仪器服务的地址，再对候选做 VISA
+    *IDN? 识别（纯 VISA 全网段实测约 8.5 分钟，预筛后约数秒）。
     每个在线设备实时打印留痕（[HIT] 为 IDN 匹配目标）；无响应地址静默跳过。
     """
     net = ipaddress.ip_network(cidr, strict=False)
     addrs = [str(h) for h in net.hosts()]
-    print(f"[scan] 网段 {cidr} 共 {len(addrs)} 个地址，workers={SCAN_WORKERS}，单地址超时 {timeout_ms}ms")
+    print(f"[scan] 网段 {cidr} 共 {len(addrs)} 个地址，workers={SCAN_WORKERS}")
+
+    if prefilter:
+        t0 = time.monotonic()
+        with ThreadPoolExecutor(max_workers=PROBE_WORKERS) as pool:
+            alive = [
+                a for a, ok in zip(addrs, pool.map(probe_alive, addrs)) if ok
+            ]
+        print(
+            f"[scan] 端口预筛({','.join(map(str, SCAN_PROBE_PORTS))}) "
+            f"候选 {len(alive)}/{len(addrs)}，耗时 {time.monotonic() - t0:.1f}s"
+        )
+        for a in alive:
+            print(f"[scan] 候选: {a}")
+        addrs = alive
+
     needle = idn_contains.lower()
     hits: list[FindResult] = []
     done = 0
     with ThreadPoolExecutor(max_workers=SCAN_WORKERS) as pool:
-        futures = {pool.submit(identify, tcpip_resource(a), timeout_ms): a for a in addrs}
+        futures = {pool.submit(identify_lan, a, timeout_ms): a for a in addrs}
         for fut in as_completed(futures):
             done += 1
             addr = futures[fut]
-            idn = fut.result()
-            if not idn:
+            found = fut.result()
+            if not found:
                 continue
-            res = tcpip_resource(addr)
+            res, idn = found
             mark = "HIT" if needle in idn.lower() else "dev"
             print(f"[scan {done}/{len(addrs)}] [{mark}] {res} -> {idn}")
             hits.append(FindResult(resource=res, idn=idn, source="scanned"))
@@ -121,14 +204,19 @@ def find_device(
     idn_contains: str,
     resource: Optional[str] = None,
     hosts: Optional[list[str]] = None,
-    proto: str = "inst0",
     allow_scan: bool = False,
     cidr: Optional[str] = None,
     timeout_ms: int = 3000,
+    prefilter: bool = True,
 ) -> FindResult:
     """按查找链发现 *IDN? 含 idn_contains 的设备，未找到抛 RuntimeError。
 
-    参数见模块 docstring。proto 仅对 hosts 生效（inst0=VXI-11 / hislip0=HiSLIP）。
+    层① resource 完整资源串（USB/TCPIP 均可）→ 层② hosts（IP/host 列表，
+    按 LAN_PROTOCOLS 自动选协议：VXI-11 / HiSLIP / raw5025-SOCKET）→
+    层③ list_resources 全扫 → 层④ CIDR 网段扫描。
+    层③④ 仅在未给显式参数、或显式全失败且 allow_scan=True 时执行；
+    prefilter 仅对层④生效：True 先 TCP 端口预筛再 VISA 识别（推荐）。
+    要固定协议时把完整资源串传给 resource（如 TCPIP0::ip::hislip0::INSTR）。
     """
     needle = idn_contains.lower()
 
@@ -136,29 +224,28 @@ def find_device(
         return needle in idn.lower()
 
     attempts: list[tuple[str, str, str]] = []
-
-    def probe(res: str, layer: str) -> Optional[str]:
-        idn = identify(res, timeout_ms)
-        attempts.append((layer, res, idn or "无响应/打开失败"))
-        tag = "HIT" if idn and matches(idn) else ("dev" if idn else "--")
-        print(f"[{layer}] [{tag}] {res}" + (f" -> {idn}" if idn else ""))
-        return idn
-
-    explicit: list[str] = []
-    if resource:
-        explicit.append(tcpip_resource(resource))
-    explicit.extend(tcpip_resource(h, proto) for h in (hosts or []))
-
-    explicit_failed = False
     mismatched: list[tuple[str, str]] = []
-    for res in explicit:
-        idn = probe(res, "explicit")
-        if idn is None:
-            explicit_failed = True
-        elif matches(idn):
-            return FindResult(resource=res, idn=idn, source="explicit")
+    explicit_failed = False
+
+    explicit_targets: list[str] = ([resource] if resource else []) + list(hosts or [])
+    for target in explicit_targets:
+        hit: Optional[tuple[str, str]] = None
+        if "::" in target:
+            idn = identify(target, timeout_ms)
+            hit = (target, idn) if idn else None
         else:
-            mismatched.append((res, idn))
+            hit = identify_lan(target, timeout_ms)
+        if hit is None:
+            explicit_failed = True
+            attempts.append(("explicit", target, "无响应/打开失败"))
+            print(f"[explicit] [--] {target}")
+            continue
+        res, idn = hit
+        attempts.append(("explicit", res, idn))
+        print(f"[explicit] [{'HIT' if matches(idn) else 'dev'}] {res} -> {idn}")
+        if matches(idn):
+            return FindResult(resource=res, idn=idn, source="explicit")
+        mismatched.append((res, idn))
     if mismatched:
         found = "; ".join(f"{res} -> {idn}" for res, idn in mismatched)
         raise ValueError(
@@ -167,12 +254,15 @@ def find_device(
 
     def try_listed() -> Optional[FindResult]:
         for res in list_resources():
-            idn = probe(res, "listed")
+            idn = identify(res, timeout_ms)
+            attempts.append(("listed", res, idn or "无响应/打开失败"))
+            print(f"[listed] [{'HIT' if idn and matches(idn) else '--'}] {res}"
+                  + (f" -> {idn}" if idn else ""))
             if idn and matches(idn):
                 return FindResult(resource=res, idn=idn, source="listed")
         return None
 
-    if not explicit or (explicit_failed and allow_scan):
+    if not explicit_targets or (explicit_failed and allow_scan):
         hit = try_listed()
         if hit:
             return hit
@@ -186,9 +276,9 @@ def find_device(
         else:
             if not cidr:
                 print(f"[scan] 未指定网段，自动探测为 {segment}（多网卡环境建议显式传 cidr）")
-            for hit in scan_cidr(segment, idn_contains, SCAN_TIMEOUT_MS):
-                if matches(hit.idn):
-                    return hit
+            for cand in scan_cidr(segment, idn_contains, SCAN_TIMEOUT_MS, prefilter=prefilter):
+                if matches(cand.idn):
+                    return cand
 
     chain = "\n".join(f"  [{layer}] {target}: {result}" for layer, target, result in attempts)
     raise RuntimeError(f"未找到 *IDN? 含 {idn_contains!r} 的设备，尝试链路：\n{chain}")

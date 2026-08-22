@@ -103,4 +103,21 @@ def find_device(
 | LAN --host | explicit 命中（需设备接网线）|
 | --allow-scan --cidr 小测试段 | scanned 命中并留痕 |
 
-实机验证按设备在线情况执行，结果记录到 TEST_DATA/common/（时间戳命名）。
+## 8. 实施中的设计演进（实测驱动，2026-08-23）
+
+| 变更 | 原设计 | 实测依据 | 现实现 |
+|---|---|---|---|
+| TCP 端口预筛 | 不做裸 socket | 纯 VISA 扫 /24 实测 510s（open_resource 连接阶段不受 timeout 控制，死地址约 60s） | scan_cidr 默认 prefilter=True：111/4880/5025 任一通即候选（0.6s/地址），身份仍由 VISA *IDN? 确认；/24 实测 7.8s |
+| LAN 多协议探测 | hosts 仅 inst0 (VXI-11) | DH1766A-1 仅 raw socket 5025 可达；.111 设备仅 4880 开但 HiSLIP 握手 VI_ERROR_IO | identify_lan 按 LAN_PROTOCOLS 依次试 inst0 → hislip0 → 5025-SOCKET |
+| SOCKET 终止符 | 未涉及 | VISA SOCKET 会话不配 \n 终止符则命令不完整、设备不应答（*IDN? 超时） | identify()/LAN_PROTOCOLS 对 SOCKET 资源自动配 read/write_termination=\n |
+
+实测发现记录：192.168.31.111 与 .144 同 MAC `ce-92-d9-59-a6-31`（本地管理地址，
+虚拟接口特征）；.144 = DH1766A-1（raw5025）；.111 身份待查（4880 开，HiSLIP 握手失败）。
+诊断留痕：TEST_DATA/common/lan_diag*.txt/json。
+
+## 9. 测试结果（2026-08-23）
+
+T1 显式不存在地址 / T3 无参(离线) / T4 CIDR 扫描机制 / T5 fallback 端到端 全 PASS
+（T2 因本机无可识别在线设备 SKIP）。T5 链路：显式 TEST-NET 失败 → listed 无 →
+自动探测 192.168.31.0/24 → 预筛 2 候选 → scanned 命中 DH1766A-1。
+实机带载验证：显式 LAN 直连读取正常，CH1 ON(12V/0.31A) 按安全约定保持不动作。

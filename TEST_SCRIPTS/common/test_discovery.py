@@ -128,6 +128,25 @@ def main() -> int:
         expect_exc=None if dh1766_online else RuntimeError,
     )
 
+    # T5: 端到端 fallback——显式全失败后 allow_scan 扫本机网段找 DH1766
+    #     （LAN 有 DH1766 时应 scanned 命中；无则完整链路 RuntimeError 为合法结局）
+    def t5():
+        try:
+            hit = find_device(
+                "DH1766",
+                resource="TCPIP0::192.0.2.123::inst0::INSTR",  # TEST-NET 必失败
+                timeout_ms=1500,
+                allow_scan=True,
+            )
+        except RuntimeError as e:
+            assert not dh1766_online, f"DH1766 在线却 fallback 失败:\n{e}"
+            return "合法结局: 显式失败→listed 无→扫描未命中，RuntimeError 链路完整"
+        assert hit.source in ("scanned", "listed"), f"source={hit.source}"
+        assert "DH1766" in hit.idn.upper(), f"idn={hit.idn}"
+        return f"{hit.source} 命中: {hit.resource} -> {hit.idn}"
+
+    run_case(results, "T5 fallback 端到端(显式失败→扫描)", "scanned 命中 或 完整链路失败", t5)
+
     # T4: 网段扫描机制冒烟（验证并发扫描/留痕打印/空结果处理）
     def t4():
         seg = detect_cidr()

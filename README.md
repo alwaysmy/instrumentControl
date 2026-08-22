@@ -41,6 +41,12 @@ python TEST_SCRIPTS/dh1766/test_dh1766_full.py --safe     # 接入负载时（�
   实测发现的固件差异（V0.1.4.3 vs 手册基于的 V0.1.2.8）见 `dh1766_control/docs/EXPERIENCE.md`。
 - 2026-08-17：`dh1766_control` 库建立（src 布局，pip 可安装），DH1766 系列完整手册
   （43 页）经 read-pdf 提取归档至 `dh1766_control/docs/`，供后续查阅核对。
+- 2026-08-23：`common/` 统一发现层上线（`find_device`：显式 resource → hosts 自动选协议 →
+  已有资源列表 → CIDR 网段扫描，`--allow-scan` 默认关）。实测要点：纯 VISA 扫 /24 需 510s，
+  加 TCP 端口预筛(111/4880/5025) 后 7.8s；DH1766A-1 经网线可达 `TCPIP0::192.168.31.144::5025::SOCKET`
+  （raw socket 会话必须配 `\n` 终止符）；带载(CH1 ON 12V/0.31A)下显式 LAN 直连读取正常，
+  CH1 保持 ON 未做开关动作。留痕见 `TEST_DATA/common/discovery_smoke_*.json` 与
+  `TEST_SCRIPTS/common/test_discovery.py`（T1~T5 全 PASS）。
 
 ## 安全模式（接入负载后使用）
 

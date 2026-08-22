@@ -6,7 +6,7 @@
 
 接口指定与 fallback（common 统一发现层）：
     resource            完整 VISA 资源串（USB/TCPIP 均可），最高优先
-    --host IP           TCPIP host/IP，可多次（--proto 选 inst0/hislip0）
+    --host IP           TCPIP host/IP，可多次（自动选协议：VXI-11/HiSLIP/raw5025）
     --cidr CIDR         fallback 网段，如 192.168.1.0/24（配合 --allow-scan）
     --allow-scan        显式全部失败后允许网段扫描（最后手段）
 不带参数时扫描本机已有 VISA 资源并匹配 *IDN? 含 DH1766 的设备（原行为）。
@@ -67,8 +67,7 @@ def main() -> None:
         help="显式允许执行 *RST 复位测试（默认跳过；复位会恢复出厂设定与蜂鸣器状态，须用户允许）",
     )
     parser.add_argument("resource", nargs="?", default=None)
-    parser.add_argument("--host", action="append", help="TCPIP host/IP，可多次")
-    parser.add_argument("--proto", choices=["inst0", "hislip0"], default="inst0")
+    parser.add_argument("--host", action="append", help="TCPIP host/IP，可多次（自动选协议）")
     parser.add_argument("--cidr", default=None, help="fallback 扫描网段")
     parser.add_argument(
         "--allow-scan",
@@ -81,7 +80,6 @@ def main() -> None:
         "DH1766",
         resource=args.resource,
         hosts=args.host,
-        proto=args.proto,
         allow_scan=args.allow_scan,
         cidr=args.cidr,
     )

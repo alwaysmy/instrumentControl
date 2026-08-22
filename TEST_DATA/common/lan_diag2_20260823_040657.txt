@@ -1,0 +1,18 @@
+192.168.31.111:111 closed (TimeoutError)
+192.168.31.111:4880 OPEN
+192.168.31.111:5025 closed (TimeoutError)
+192.168.31.111:80 closed (TimeoutError)
+192.168.31.111:5555 closed (TimeoutError)
+192.168.31.111:5575 closed (TimeoutError)
+192.168.31.144:111 closed (TimeoutError)
+192.168.31.144:4880 closed (TimeoutError)
+192.168.31.144:5025 OPEN
+192.168.31.144:80 closed (TimeoutError)
+192.168.31.144:5555 closed (TimeoutError)
+192.168.31.144:5575 closed (TimeoutError)
+vxi11: TCPIP0::192.168.31.111::inst0::INSTR -> FAIL VisaIOError code=-1073807343 args=('VI_ERROR_RSRC_NFOUND (-1073807343): Insufficient location information or the requested device or resource is not present in the system.',)
+hislip: TCPIP0::192.168.31.111::hislip0::INSTR -> FAIL VisaIOError code=-1073807298 args=('VI_ERROR_IO (-1073807298): Could not perform operation because of I/O error.',)
+raw: TCPIP0::192.168.31.111::5025::SOCKET -> FAIL VisaIOError code=-1073807343 args=('VI_ERROR_RSRC_NFOUND (-1073807343): Insufficient location information or the requested device or resource is not present in the system.',)
+vxi11: TCPIP0::192.168.31.144::inst0::INSTR -> FAIL VisaIOError code=-1073807343 args=('VI_ERROR_RSRC_NFOUND (-1073807343): Insufficient location information or the requested device or resource is not present in the system.',)
+hislip: TCPIP0::192.168.31.144::hislip0::INSTR -> FAIL VisaIOError code=-1073807343 args=('VI_ERROR_RSRC_NFOUND (-1073807343): Insufficient location information or the requested device or resource is not present in the system.',)
+raw: TCPIP0::192.168.31.144::5025::SOCKET -> FAIL VisaIOError code=-1073807339 args=('VI_ERROR_TMO (-1073807339): Timeout expired before operation completed.',)

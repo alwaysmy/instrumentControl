@@ -7,11 +7,14 @@
     hit = find_device("DH1766", allow_scan=True, cidr="192.168.1.0/24")  # 最后手段
 """
 from .discovery import (
+    LAN_PROTOCOLS,
     FindResult,
     detect_cidr,
     find_device,
     identify,
+    identify_lan,
     list_resources,
+    probe_alive,
     scan,
     scan_cidr,
     tcpip_resource,
@@ -19,12 +22,15 @@ from .discovery import (
 from .visa_client import VisaClient
 
 __all__ = [
+    "LAN_PROTOCOLS",
     "FindResult",
     "VisaClient",
     "detect_cidr",
     "find_device",
     "identify",
+    "identify_lan",
     "list_resources",
+    "probe_alive",
     "scan",
     "scan_cidr",
     "tcpip_resource",

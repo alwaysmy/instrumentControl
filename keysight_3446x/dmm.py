@@ -132,21 +132,30 @@ class DMM:
     # ---------- 配置 ----------
     def configure(self, function: str, range_v: Optional[float] = None,
                   resolution: Optional[float] = None) -> None:
-        """:CONF 设定测量功能/量程/分辨率（不触发测量）。"""
+        """:CONF:<func> 设定测量功能/量程/分辨率（不触发测量）。
+
+        注意 Keysight 语法为冒号嵌套（:CONF:VOLT:DC <range>,<res>），
+        写成 ':CONF VOLT:DC' 会报 -102 Syntax error。
+        """
         base = {
             "volt_dc": "VOLT:DC", "volt_ac": "VOLT:AC",
             "curr_dc": "CURR:DC", "curr_ac": "CURR:AC",
             "res": "RES", "fres": "FRES",
-            "cap": "CAP", "freq": "FREQ",
+            "cap": "CAP", "freq": "FREQ", "cont": "CONT", "diod": "DIOD",
+            "per": "PER", "temp": "TEMP",
         }.get(function)
         if base is None:
-            raise ValueError(f"configure 暂不支持 {function!r}，可用: volt_dc/volt_ac/"
-                             f"curr_dc/curr_ac/res/fres/cap/freq")
-        cmd = f":CONF {base}"
+            valid = ("volt_dc, volt_ac, curr_dc, curr_ac, res, fres, "
+                     "cap, freq, cont, diod, per, temp")
+            raise ValueError(f"未知功能 {function!r}，可用: {valid}")
+        cmd = f":CONF:{base}"
+        args = []
         if range_v is not None:
-            cmd += f" {range_v}"
+            args.append(str(range_v))
         if resolution is not None:
-            cmd += f",{resolution}"
+            args.append(str(resolution))
+        if args:
+            cmd += " " + ",".join(args)
         self.write(cmd)
 
     def configuration(self) -> str:

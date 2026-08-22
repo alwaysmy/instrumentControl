@@ -93,7 +93,7 @@ class SDS:
         self._c().write(cmd)
 
     def query_raw(self, cmd: str) -> bytes:
-        return self._c().inst.query_raw(cmd)
+        return self._c().query_raw(cmd)
 
     # ---------- 信息 ----------
     def idn(self) -> str:

@@ -31,6 +31,15 @@ class VisaClient:
         """发送 SCPI 查询命令并读取一行响应（去除首尾空白）。"""
         return self.inst.query(cmd).strip()
 
+    def query_raw(self, cmd: str) -> bytes:
+        """发送命令并读取原始字节（TMC 二进制块用）。
+
+        新版 pyvisa 的 MessageBasedResource 已移除 query_raw，
+        统一用 write + read_raw 组合。
+        """
+        self.inst.write(cmd)
+        return self.inst.read_raw()
+
     def write(self, cmd: str) -> None:
         """发送 SCPI 命令，不读取响应。"""
         self.inst.write(cmd)

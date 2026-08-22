@@ -1,0 +1,62 @@
+[
+  {
+    "item": "备份",
+    "ok": true,
+    "detail": "CH2=ON BSWV=SINE1000HZ C4_disp=ON C4_VDIV=1.0"
+  },
+  {
+    "item": "SDG CH2 输出 ON",
+    "ok": true,
+    "detail": "state=ON"
+  },
+  {
+    "item": "SDS C4 配置",
+    "ok": true,
+    "detail": "VDIV=1.0 TDIV=0.0002"
+  },
+  {
+    "item": "高级测量就绪",
+    "ok": false,
+    "detail": "尝试 4 次: P1=None P2=None"
+  },
+  {
+    "item": "测频率 ≈1kHz",
+    "ok": false,
+    "detail": "P1=None"
+  },
+  {
+    "item": "测VPP ≈2V",
+    "ok": false,
+    "detail": "P2=None"
+  },
+  {
+    "item": "波形读取（SDS800X HD DESC 布局待专研）",
+    "ok": false,
+    "detail": "ValueError: min() arg is an empty sequence"
+  },
+  {
+    "item": "变频 10kHz 联动测量",
+    "ok": false,
+    "detail": "P1=None"
+  },
+  {
+    "item": "SDG CH2 输出关闭",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "item": "恢复 SDS C4/时基",
+    "ok": true,
+    "detail": "C4_disp=ON"
+  },
+  {
+    "item": "finally: SDG CH2 输出关闭",
+    "ok": true,
+    "detail": ""
+  },
+  {
+    "item": "finally: 清高级测量",
+    "ok": true,
+    "detail": ""
+  }
+]

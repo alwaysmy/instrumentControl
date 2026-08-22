@@ -87,8 +87,8 @@ def tcpip_resource(host: str, proto: str = "inst0") -> str:
     return f"TCPIP0::{host}::{proto}::INSTR"
 
 
-# LAN 多协议探测顺序（实测 2026-08-23：DH1766A-1 仅 raw socket 5025 可达；
-# RIGOL DHO924S 示波器仅 raw socket 5555 可达；VISA SOCKET 会话必须显式配置
+# LAN 多协议探测顺序（实测 2026-08-23：RIGOL DHO 系列示波器仅 raw socket 5555 可达；
+# 大华 DH1766A-1 电源仅 raw socket 5025 可达；VISA SOCKET 会话必须显式配置
 # \n 终止符，否则命令不完整导致超时）
 LAN_PROTOCOLS: tuple[tuple[str, dict], ...] = (
     ("TCPIP0::{host}::inst0::INSTR", {}),

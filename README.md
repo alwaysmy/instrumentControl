@@ -49,6 +49,12 @@ python TEST_SCRIPTS/dh1766/test_dh1766_full.py --safe     # 接入负载时（�
   带载(CH1 ON 12V/0.31A)下显式 LAN 直连读取正常，CH1 保持 ON 未做开关动作。留痕见
   `TEST_DATA/common/discovery_smoke_*.json` 与 `TEST_SCRIPTS/common/test_discovery.py`
   （T1~T5 全 PASS，扫描同时识别电源+示波器且 IDN 过滤不误配）。
+- 2026-08-23：全网段探测（`TEST_SCRIPTS/common/probe_all.py`）新发现三台在线仪器：
+  Keysight 34465A 万用表(`.123`，VXI-11)、Siglent SDG2122X 信号源(`.206`，VXI-11)、
+  Siglent SDS824X HD 示波器(`.220`，VXI-11)。`dho_control` 库建立（DHO800/DHO900 系列
+  通用，波形 BYTE/WORD TMC 解析 + 电压换算 `(raw-YORigin-YREFerence)*YINCrement`），
+  手册提取至 `dho_control/docs/DHO800编程手册_output/`（418 页），hosts 直连验证通过。
+  待办：SDS800X HD / SDG2000X 编程手册已在 E 盘定位待提取；34465A 编程手册缺需下载。
 
 ## 安全模式（接入负载后使用）
 

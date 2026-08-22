@@ -1,0 +1,19 @@
+{
+  "timestamp": "2026-08-17T00:59:02",
+  "action": "CH1 ON + measure",
+  "voltage_v": [
+    9.351014,
+    0.006204,
+    0.001653
+  ],
+  "current_a": [
+    0.197791,
+    0.0,
+    0.000624
+  ],
+  "output_state": [
+    true,
+    false,
+    false
+  ]
+}

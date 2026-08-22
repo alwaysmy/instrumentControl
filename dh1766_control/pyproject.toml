@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dh1766-control"
+version = "0.1.0"
+description = "北京大华 DH1766 系列三路可编程直流电源控制库（SCPI over VISA）"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pyvisa>=1.13.0",
+]
+
+[project.optional-dependencies]
+# Windows 平台：USB TMC 访问依赖厂商 VISA 运行时（NI-VISA / Keysight IO Libraries）
+# 禁止用 pyusb/libusb 直接访问仪器（除非设备已装 WinUSB/libusb 驱动）
+
+[tool.setuptools.packages.find]
+where = ["src"]

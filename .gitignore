@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+# dg832-control 是独立 git 仓库，由它自身版本控制
+dg832-control/

@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: dh1766-control
+Version: 0.1.0
+Summary: 北京大华 DH1766 系列三路可编程直流电源控制库（SCPI over VISA）
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: pyvisa>=1.13.0

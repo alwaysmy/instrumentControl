@@ -1,0 +1,32 @@
+{
+  "timestamp": "2026-08-23T00:27:21",
+  "resource": "TCPIP0::192.168.31.144::5025::SOCKET",
+  "readonly": true,
+  "idn": "BJDH,DH1766A-1,0,V0.1.4.3",
+  "channels": {
+    "CH1": {
+      "meas_v": 11.990728,
+      "meas_i": 0.314103,
+      "meas_p": 3.766321,
+      "set_v": 12.0,
+      "set_i": 0.4,
+      "output_on": true
+    },
+    "CH2": {
+      "meas_v": 0.001136,
+      "meas_i": 0.0,
+      "meas_p": 0.0,
+      "set_v": 12.0,
+      "set_i": 0.3,
+      "output_on": false
+    },
+    "CH3": {
+      "meas_v": 0.001563,
+      "meas_i": 0.003185,
+      "meas_p": 5e-06,
+      "set_v": 5.0,
+      "set_i": 1.5,
+      "output_on": false
+    }
+  }
+}

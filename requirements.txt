@@ -1,0 +1,8 @@
+# 通用依赖（所有设备共用）
+pyvisa>=1.13.0
+
+# Windows 平台说明：
+# - USB TMC 设备访问依赖厂商 VISA 运行时（NI-VISA 或 Keysight IO Libraries Suite），
+#   本机已安装 visa32.dll（C:\Windows\system32\visa32.dll）。
+# - 禁止使用 pyusb/libusb 直接访问仪器：Windows 上除非设备装了 WinUSB 驱动，
+#   否则 libusb 打开设备会报 NotImplementedError。仪器控制一律走 VISA。

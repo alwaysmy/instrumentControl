@@ -207,8 +207,10 @@ class SDS:
         return out
 
     MEAS_TYPES = (
-        "VPP", "VMAX", "VMIN", "VAMP", "VTOP", "VBASE", "PERiod",
-        "FREQuency", "RISetime", "FALLtime", "PWIDth", "NWIDth", "DUTy",
+        "PKPK", "MAX", "MIN", "AMPL", "TOP", "BASE", "CMEAN", "MEAN",
+        "STDEV", "VSTD", "RMS", "CRMS", "MEDIAN", "OVSP", "OVSN",
+        "PER", "FREQ", "TMAX", "TMIN", "PWID", "NWID", "DUTY", "NDUTY",
+        "RISE", "FALL", "EDGES", "PPULSES", "NPULSES", "PSLOPE", "NSLOPE",
     )
 
     def adv_measure_setup(self, slot: int, mtype: str, src: str = "C1") -> None:
@@ -233,10 +235,88 @@ class SDS:
         self.write(C.MEAS_ADV_CLEAR)
 
     # ---------- 自动定标与诊断 ----------
+    # Siglent SDS800X HD 默认通道色（RGB，容差量化匹配）
+    CH_COLORS = {
+        1: (240, 240, 0),    # 黄
+        2: (0, 240, 240),    # 青
+        3: (240, 80, 240),   # 紫/粉
+        4: (32, 240, 32),    # 绿
+    }
+    # 屏幕网格区近似标定（1024x600 截图，可按机型微调）
+    SCREEN_GRID = {"x0": 20, "x1": 935, "y0": 48, "y1": 552, "divs_y": 10}
+
     def screenshot(self, save_dir: Optional[Path] = None) -> bytes:
         """:PRIN? BMP 截屏原始字节（含 TMC 头则剥离）。"""
         data = self.query_raw(C.SCREEN_BMP)
         return self._strip_tmc(data) if data.find(b"#") == 0 else data
+
+    def screenshot_png(self, save_path: Path) -> Path:
+        """截屏并存为 PNG（供人工/AI 查看）。"""
+        import struct
+
+        from PIL import Image
+
+        data = self.screenshot()
+        w = struct.unpack("<i", data[18:22])[0]
+        h_raw = struct.unpack("<i", data[22:26])[0]
+        offset = struct.unpack("<I", data[10:14])[0]
+        row_size = ((w * 4 + 3) // 4) * 4
+        img = Image.frombytes(
+            "RGBA",
+            (w, abs(h_raw)),
+            bytes(data[offset : offset + row_size * abs(h_raw)]),
+            "raw",
+            "BGRA",
+        )
+        if h_raw > 0:
+            img = img.transpose(0)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        img.save(save_path)
+        return save_path
+
+    def analyze_screen(self, ch: int) -> dict:
+        """截屏并统计通道轨迹的像素 Y 分布（视觉反馈核心）。
+
+        返回 {visible, y_min, y_max, y_center, grid_top, grid_bottom,
+              px_per_div, rows}，坐标为截图像素系（自上而下）。
+        """
+        data = self.screenshot()
+        w = struct.unpack("<i", data[18:22])[0]
+        h_raw = struct.unpack("<i", data[22:26])[0]
+        top_down = h_raw < 0
+        h = abs(h_raw)
+        offset = struct.unpack("<I", data[10:14])[0]
+        row_size = ((w * 4 + 3) // 4) * 4
+
+        tr, tg, tb = self.CH_COLORS[ch]
+        ys: list[int] = []
+        for r in range(h):
+            base = offset + r * row_size
+            for c in range(w):
+                i = base + c * 4
+                b, g, rr = data[i], data[i + 1], data[i + 2]
+                if (
+                    abs(rr - tr) < 64 and abs(gg := g - tg) < 64 and abs(b - tb) < 64
+                    or (tr > 200 and rr > 200 and tg > 150 and b < 100)
+                ):
+                    disp_r = r if top_down else h - 1 - r
+                    ys.append(disp_r)
+                    _ = gg
+        grid = self.SCREEN_GRID
+        out: dict = {
+            "visible": bool(ys),
+            "grid_top": grid["y0"],
+            "grid_bottom": grid["y1"],
+            "px_per_div": (grid["y1"] - grid["y0"]) / grid["divs_y"],
+        }
+        if ys:
+            out.update({
+                "y_min": min(ys),
+                "y_max": max(ys),
+                "y_center": (min(ys) + max(ys)) / 2,
+                "rows": len(set(ys)),
+            })
+        return out
 
     def diagnose_trigger(self) -> dict:
         """读取触发链路状态（定位'屏幕无波形'的第一嫌疑）。"""

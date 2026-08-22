@@ -82,9 +82,9 @@ def _run_tests(gen: SDG, scope: SDS) -> None:
         time.sleep(1.0)                    # 等采集稳定
         rec("SDS C4 配置", True, f"VDIV={scope.channel_scale(4)} TDIV={scope.timebase_scale()}")
 
-        # ---- 3. 测量：高级测量槽（配置后需等测量引擎就绪，'****' 时重试）----
-        scope.adv_measure_setup(1, "FREQuency", "C4")
-        scope.adv_measure_setup(2, "VPP", "C4")
+        # ---- 3. 测量：高级测量槽（TYPE 枚举为 SDS 专有缩写：PKPK/FREQ 等）----
+        scope.adv_measure_setup(1, "PKPK", "C4")
+        scope.adv_measure_setup(2, "FREQ", "C4")
         freq = vpp = None
         for attempt in range(4):
             time.sleep(1.5)

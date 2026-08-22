@@ -54,7 +54,13 @@ python TEST_SCRIPTS/dh1766/test_dh1766_full.py --safe     # 接入负载时（�
   Siglent SDS824X HD 示波器(`.220`，VXI-11)。`dho_control` 库建立（DHO800/DHO900 系列
   通用，波形 BYTE/WORD TMC 解析 + 电压换算 `(raw-YORigin-YREFerence)*YINCrement`），
   手册提取至 `dho_control/docs/DHO800编程手册_output/`（418 页），hosts 直连验证通过。
-  待办：SDS800X HD / SDG2000X 编程手册已在 E 盘定位待提取；34465A 编程手册缺需下载。
+- 2026-08-23：三台新设备库完成（均含手册提取 + 只读冒烟实测）：
+  `sds_control`（SDS800X HD 系列，495 页手册，波形 PREamble 二进制协议+分片读取+电压换算
+  raw/code*vdiv-offset）、`sdg_control`（SDG2000X 系列，175 页 PG，BSWV 整查/键值写）、
+  `keysight_3446x`（Truevolt 583 页手册已下载提取，CONF/MEAS/NPLC/DATA:LAST）。
+  实测要点：SDS 全拼命令 ":ACQuire:MDEPth?" 不响应必须短形式 "ACQ:MDEP?"；SDS 响应带单位
+  后缀需剥离；SDS 查询回显头按前缀智能剥离；34465A DATA:LAST? 带 "VDC" 后缀。
+  留痕：TEST_DATA/common/three_libs_smoke_*.json。DHO924S 待设备空闲后做全功能验证。
 
 ## 安全模式（接入负载后使用）
 

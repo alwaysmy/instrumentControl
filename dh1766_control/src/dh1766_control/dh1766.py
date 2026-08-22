@@ -32,6 +32,17 @@ CHANNEL_SWITCH_DELAY_S = 0.3
 RELAY_DELAY_S = 0.5
 
 
+def _ch_num(ch: Channel) -> int:
+    """通道规范化：'CH1'|1 → 1；非法值抛 ValueError。"""
+    try:
+        n = CH_ALIASES[ch.upper()] if isinstance(ch, str) else int(ch)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        raise ValueError(f"invalid channel: {ch!r}")
+    if n not in (1, 2, 3):
+        raise ValueError(f"invalid channel: {ch!r}")
+    return n
+
+
 class DH1766:
     """DH1766A 驱动，基于 VisaClient。"""
 
@@ -92,11 +103,12 @@ class DH1766:
         """STAT:PRES 恢复事件使能寄存器为开机值。"""
         self.client.write(C.STAT_PRES)
 
-    def stat_ques_enable(self, value: Optional[int] = None):
+    def stat_ques_enable(self, value: Optional[int] = None) -> Optional[int]:
         """STAT:QUES:ENAB 查询事件使能寄存器（读写）。"""
         if value is None:
             return int(self.client.query(C.STAT_QUES_ENAB + "?"))
         self.client.write(f"{C.STAT_QUES_ENAB} {value}")
+        return None
 
     def stat_ques_event(self) -> int:
         """STAT:QUES? 查询事件寄存器（读取后清零，IEEE 488.2 事件寄存器行为）。"""
@@ -106,11 +118,12 @@ class DH1766:
         """STAT:QUES:COND? 查询条件寄存器（读不清零）。"""
         return int(self.client.query(C.STAT_QUES_COND))
 
-    def stat_oper_enable(self, value: Optional[int] = None):
+    def stat_oper_enable(self, value: Optional[int] = None) -> Optional[int]:
         """STAT:OPER:ENAB 操作事件使能寄存器（读写）。"""
         if value is None:
             return int(self.client.query(C.STAT_OPER_ENAB + "?"))
         self.client.write(f"{C.STAT_OPER_ENAB} {value}")
+        return None
 
     def stat_oper_event(self) -> int:
         """STAT:OPER? 操作事件寄存器（读取后清零）。"""
@@ -127,12 +140,10 @@ class DH1766:
         node = "COND" if kind == "cond" else "EVEN"
         return int(self.client.query(C.STAT_INST_ISUM.format(n=ch, node=node)))
 
-    # ================= 输出通道设定 4.2.3 =================
+    # ================= 通道设定（手册 4.2.3）=================
     def select_channel(self, ch: Channel) -> None:
         """INST:NSEL <1|2|3> 切换当前操作通道（含 >=300ms 间隔）。"""
-        n = CH_ALIASES[ch] if isinstance(ch, str) else int(ch)
-        if n not in (1, 2, 3):
-            raise ValueError(f"invalid channel: {ch!r}")
+        n = _ch_num(ch)
         self.client.write(f"{C.INST_NSEL} {n}")
         time.sleep(CHANNEL_SWITCH_DELAY_S)
 
@@ -140,11 +151,11 @@ class DH1766:
         """INST? 当前通道（CH1/CH2/CH3）。"""
         return self.client.query(C.INST_SEL + "?")
 
-    def couple_trig(self, channels: Optional[list[Channel]] = None) -> list[str]:
+    def couple_trig(self, channels: Optional[list[Channel]] = None) -> Optional[list[str]]:
         """INST:COUP:TRIG 组合通道（读写）。
 
-        channels=None 时查询；传 [CH1,CH2,CH3] 设置，NONE 清除。
-        手册例：INST:COUP:TRIG CH1,CH2,CH3。
+        channels=None 时查询返回 list[str]；传设置值后写命令并返回 None。
+        手册例：INST:COUP:TRIG CH1,CH2,CH3；["NONE"] 清除。
         """
         if channels is None:
             resp = self.client.query(C.INST_COUP_TRIG + "?")
@@ -152,13 +163,14 @@ class DH1766:
         if len(channels) == 1 and str(channels[0]).upper() == "NONE":
             self.client.write(f"{C.INST_COUP_TRIG} NONE")
             time.sleep(CMD_DELAY_S)
-            return
+            return None
         names = [
-            c if (isinstance(c, str) and c.upper() in CH_ALIASES) else f"CH{int(c)}"
+            c if (isinstance(c, str) and c.upper() in CH_ALIASES) else f"CH{_ch_num(c)}"
             for c in channels
         ]
         self.client.write(f"{C.INST_COUP_TRIG} {','.join(names)}")
         time.sleep(CMD_DELAY_S)
+        return None
 
     # ================= 电压指令集 4.2.4 =================
     def set_voltage(self, ch: Channel, value: float) -> None:
@@ -287,14 +299,18 @@ class DH1766:
         self.client.write(f"{C.APPL_OUTP} {args}")
         time.sleep(CMD_DELAY_S)
 
-    def _set_mode_cmd(self, node: str, on: bool) -> None:
+    _MODE_CMDS = {"TRAC": "OUTP:TRAC", "SERI": "OUTP:SERI", "PARA": "OUTP:PARA"}
+
+    def _set_mode_cmd(self, mode: str, on: bool) -> None:
         """OUTP:TRAC/SERI/PARA 模式切换（继电器动作 >=500ms）。"""
+        if mode not in self._MODE_CMDS:
+            raise ValueError(f"invalid mode: {mode!r}")
         self._guard_all_outputs_off()
-        self.client.write(f"OUTP:{node} {'ON' if on else 'OFF'}")
+        self.client.write(f"{self._MODE_CMDS[mode]} {'ON' if on else 'OFF'}")
         time.sleep(RELAY_DELAY_S)
 
-    def _get_mode_cmd(self, node: str) -> bool:
-        resp = self.client.query(f"OUTP:{node}?")
+    def _get_mode_cmd(self, mode: str) -> bool:
+        resp = self.client.query(self._MODE_CMDS[mode] + "?")
         return resp.strip() in ("1", "ON")
 
     def track_mode(self, on: Optional[bool] = None) -> Optional[bool]:
@@ -318,12 +334,16 @@ class DH1766:
         self._set_mode_cmd("PARA", on)
         return None
 
-    def output_timer(self, value: Optional[int] = None) -> int:
-        """OUTP:TIM:DATA 输出定时器（秒，读写；0=关闭）。"""
+    def output_timer(self, value: Optional[int] = None) -> Optional[int]:
+        """OUTP:TIM:DATA 输出定时器（秒，读写；0=关闭）。
+
+        注：本机固件 V0.1.4.3 写 0 被静默忽略（无法经 SCPI 关闭定时器，见 EXPERIENCE.md）。
+        """
         if value is None:
             return int(float(self.client.query(C.OUTP_TIM + "?")))
         self.client.write(f"{C.OUTP_TIM} {value}")
         time.sleep(CMD_DELAY_S)
+        return None
 
     # ================= 测量指令集 4.2.8 =================
     def measure_voltage_all(self) -> list[float]:
@@ -357,8 +377,11 @@ class DH1766:
         return float(self.client.query(C.MEAS_POW + "?"))
 
     # ================= 复合控制命令 4.2.9（设备扩展） =================
-    def apply_voltage(self, values: Optional[list[float]] = None) -> list[float]:
-        """APPL:VOLT 三路电压设定（读写，一次完成，无通道切换延时）。"""
+    def apply_voltage(self, values: Optional[list[float]] = None) -> Optional[list[float]]:
+        """APPL:VOLT 三路电压设定（读写，一次完成，无通道切换延时）。
+
+        设置后按 SCPI-99 §7.2 回读并返回设备实际设定值；仅写时无需回读可忽略返回值。
+        """
         if values is None:
             raw = self.client.query(C.APPL_VOLT + "?")
             return [float(x) for x in raw.split(",")]
@@ -366,9 +389,10 @@ class DH1766:
             raise ValueError("values must have exactly 3 elements")
         self.client.write(f"{C.APPL_VOLT} {values[0]},{values[1]},{values[2]}")
         time.sleep(CMD_DELAY_S)
+        return self.apply_voltage()
 
-    def apply_current(self, values: Optional[list[float]] = None) -> list[float]:
-        """APPL:CURR 三路电流设定（读写）。"""
+    def apply_current(self, values: Optional[list[float]] = None) -> Optional[list[float]]:
+        """APPL:CURR 三路电流设定（读写）。设置后回读返回实际设定值。"""
         if values is None:
             raw = self.client.query(C.APPL_CURR + "?")
             return [float(x) for x in raw.split(",")]
@@ -376,27 +400,30 @@ class DH1766:
             raise ValueError("values must have exactly 3 elements")
         self.client.write(f"{C.APPL_CURR} {values[0]},{values[1]},{values[2]}")
         time.sleep(CMD_DELAY_S)
+        return self.apply_current()
 
     # ================= IEEE-488 子系统 4.2.10 =================
-    def ese(self, value: Optional[int] = None) -> int:
+    def ese(self, value: Optional[int] = None) -> Optional[int]:
         """*ESE 标准事件使能寄存器（读写）。"""
         if value is None:
             return int(self.client.query(C.ESE + "?"))
         self.client.write(f"{C.ESE} {value}")
         time.sleep(CMD_DELAY_S)
+        return None
 
     def esr(self) -> int:
         """*ESR? 标准事件寄存器（读取后清零）。"""
         return int(self.client.query(C.ESR))
 
-    def opc(self, query: bool = False):
+    def opc(self, query: bool = False) -> Optional[int]:
         """*OPC 操作完成标志；query=True 时 *OPC? 返回 1。"""
         if query:
             return int(self.client.query(C.OPC + "?"))
         self.client.write(C.OPC)
         time.sleep(CMD_DELAY_S)
+        return None
 
-    def psc(self, value: Optional[int] = None) -> int:
+    def psc(self, value: Optional[int] = None) -> Optional[int]:
         """*PSC 上电使能寄存器清零策略（读写）。
 
         注：本机固件 V0.1.4.3 写 1 后查询仍返回 0（固件行为）。
@@ -405,6 +432,7 @@ class DH1766:
             return int(self.client.query(C.PSC + "?"))
         self.client.write(f"{C.PSC} {value}")
         time.sleep(CMD_DELAY_S)
+        return None
 
     def rst(self) -> None:
         """*RST 复位所有参数到出厂状态（会覆盖全部设定，使用前务必备份）。
@@ -417,12 +445,13 @@ class DH1766:
         self.client.write(C.RST)
         time.sleep(3.0)
 
-    def sre(self, value: Optional[int] = None) -> int:
+    def sre(self, value: Optional[int] = None) -> Optional[int]:
         """*SRE 状态字节使能寄存器（读写）。"""
         if value is None:
             return int(self.client.query(C.SRE + "?"))
         self.client.write(f"{C.SRE} {value}")
         time.sleep(CMD_DELAY_S)
+        return None
 
     def stb(self) -> int:
         """*STB? 状态字节寄存器（读取后清零）。"""
@@ -434,7 +463,7 @@ class DH1766:
         if not self.safe_mode:
             return
         states = self.get_output_state()
-        n = CH_ALIASES[ch] if isinstance(ch, str) else int(ch)
+        n = _ch_num(ch)
         if states[n - 1]:
             raise RuntimeError(
                 f"safe_mode: CH{n} 输出开启中，拒绝修改设定；请先 set_output({n}, False)"

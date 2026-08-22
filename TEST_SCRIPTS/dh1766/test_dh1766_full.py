@@ -159,22 +159,29 @@ def main() -> None:
         ps.output_timer(timer)
         check("OUTP:TIM:DATA 恢复", ps.output_timer(), timer)
 
-        # 8. 组合通道
+        # 8. 组合通道（测试后恢复到测试前原值）
+        orig_couple = before["couple_trig"] or ["NONE"]
         ps.couple_trig(["CH1", "CH2", "CH3"])
         check("INST:COUP:TRIG 设置", ps.couple_trig(), ["CH1", "CH2", "CH3"])
-        ps.couple_trig(["NONE"])
-        check("INST:COUP:TRIG 恢复", ps.couple_trig(), ["NONE"])
+        ps.couple_trig(orig_couple)
+        check("INST:COUP:TRIG 恢复", ps.couple_trig(), orig_couple)
 
-        # 9. 输出模式（输出全关时操作，继电器 >=500ms）
+        # 9. 输出模式（输出全关时操作，继电器 >=500ms；结束后恢复测试前原值）
         for mode, setter, getter in (
             ("TRAC", ps.track_mode, ps.track_mode),
             ("SERI", ps.series_mode, ps.series_mode),
             ("PARA", ps.parallel_mode, ps.parallel_mode),
         ):
+            original = before[f"{mode.lower()}_mode"]
             setter(True)
             check(f"OUTP:{mode} 设置ON", getter(), True)
             setter(False)
             check(f"OUTP:{mode} 恢复OFF", getter(), False)
+            if original is True:
+                setter(True)
+                check(f"OUTP:{mode} 恢复原值ON", getter(), True)
+            elif original is None:
+                rec(f"OUTP:{mode} 原值未知", True, f"快照查询返回 {original!r}，保持 OFF")
 
         # 10. 系统/状态寄存器
         ps.clear()
@@ -202,10 +209,10 @@ def main() -> None:
         check("*PSC 恢复", ps.psc(), psc)
         ps.opc()
         check("*OPC?", ps.opc(query=True), 1)
-        rec("*STB?", f"{ps.stb()} (读取后清零, 正常)")
-        rec("STAT:OPER:COND?", f"{ps.stat_oper_cond()} (bit2/3/4=CV/CC/LIST, 546=0x222)")
-        rec("STAT:QUES:COND?", f"{ps.stat_ques_cond()}")
-        rec("ISUM1 COND", f"{ps.stat_inst_isum(1, 'cond')}")
+        rec("*STB?", True, f"{ps.stb()} (读取后清零, 正常)")
+        rec("STAT:OPER:COND?", True, f"{ps.stat_oper_cond()} (bit2/3/4=CV/CC/LIST, 546=0x222)")
+        rec("STAT:QUES:COND?", True, f"{ps.stat_ques_cond()}")
+        rec("ISUM1 COND", True, f"{ps.stat_inst_isum(1, 'cond')}")
 
         # 11. 远程/本地
         ps.remote()

@@ -1,0 +1,30 @@
+{
+  "timestamp": "2026-08-23T04:20:01",
+  "hosts": {
+    "192.168.31.146": {
+      "open_ports": [
+        5555
+      ],
+      "idn_attempts": [
+        "port5555: TCPIP0::192.168.31.146::5555::SOCKET ({'read_termination': '\\n', 'write_termination': '\\n'}) -> RIGOL TECHNOLOGIES,DHO924S,DHO9A253600386,KFCVME50114"
+      ]
+    },
+    "192.168.31.111": {
+      "open_ports": [
+        4880,
+        1024,
+        443
+      ],
+      "idn_attempts": [
+        "port4880: TCPIP0::192.168.31.111::4880::SOCKET FAIL VisaIOError",
+        "port4880: TCPIP0::192.168.31.111::4880::SOCKET FAIL VisaIOError",
+        "port4880: TCPIP0::192.168.31.111::inst0::INSTR FAIL VisaIOError",
+        "port4880: TCPIP0::192.168.31.111::hislip0::INSTR FAIL VisaIOError",
+        "port1024: TCPIP0::192.168.31.111::1024::SOCKET FAIL VisaIOError",
+        "port1024: TCPIP0::192.168.31.111::1024::SOCKET FAIL VisaIOError",
+        "port1024: TCPIP0::192.168.31.111::inst0::INSTR FAIL VisaIOError",
+        "port1024: TCPIP0::192.168.31.111::hislip0::INSTR FAIL VisaIOError"
+      ]
+    }
+  }
+}

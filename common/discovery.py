@@ -25,9 +25,9 @@ import pyvisa
 
 SCAN_WORKERS = 32
 SCAN_TIMEOUT_MS = 1500
-# TCP 端口预筛（任一通即候选）：VXI-11 portmapper / HiSLIP / SCPI raw socket。
-# 仅用于快速淘汰死地址与非仪器主机；设备身份仍由 VISA + *IDN? 确认。
-SCAN_PROBE_PORTS = (111, 4880, 5025)
+# TCP 端口预筛（任一通即候选）：VXI-11 portmapper / HiSLIP / SCPI raw(5025 Keysight 等 /
+# 5555 Rigol)。仅用于快速淘汰死地址与非仪器主机；设备身份仍由 VISA + *IDN? 确认。
+SCAN_PROBE_PORTS = (111, 4880, 5025, 5555)
 PROBE_TIMEOUT_S = 0.6
 PROBE_WORKERS = 128
 
@@ -87,12 +87,15 @@ def tcpip_resource(host: str, proto: str = "inst0") -> str:
     return f"TCPIP0::{host}::{proto}::INSTR"
 
 
-# LAN 多协议探测顺序（实测 2026-08-23：DH1766A-1 仅 raw socket 5025 可达，
-# 且 VISA SOCKET 会话必须显式配置 \n 终止符，否则命令不完整导致超时）
+# LAN 多协议探测顺序（实测 2026-08-23：DH1766A-1 仅 raw socket 5025 可达；
+# RIGOL DHO924S 示波器仅 raw socket 5555 可达；VISA SOCKET 会话必须显式配置
+# \n 终止符，否则命令不完整导致超时）
 LAN_PROTOCOLS: tuple[tuple[str, dict], ...] = (
     ("TCPIP0::{host}::inst0::INSTR", {}),
     ("TCPIP0::{host}::hislip0::INSTR", {"read_termination": "\n"}),
     ("TCPIP0::{host}::5025::SOCKET",
+     {"read_termination": "\n", "write_termination": "\n"}),
+    ("TCPIP0::{host}::5555::SOCKET",
      {"read_termination": "\n", "write_termination": "\n"}),
 )
 

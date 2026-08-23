@@ -27,6 +27,17 @@ def _num(text: str) -> float:
     return float(m.group().replace("D", "E").replace("d", "e"))
 
 
+def drain_errors(scope: "SDS") -> int:
+    """清空设备错误队列（滞后报错会污染逐命令查错，写序列前必须先清）。"""
+    n = 0
+    while n < 30:
+        e = scope.query(C.SYST_ERR).strip()
+        if e.startswith("+0") or "No error" in e:
+            break
+        n += 1
+    return n
+
+
 class SDS:
     """Siglent SDS 系列示波器控制封装。"""
 
@@ -196,7 +207,7 @@ class SDS:
 
     # ---------- 测量 ----------
     def measure_summary(self) -> dict:
-        """:MEAS? 返回当前已打开测量项的统计值串，原样解析为键值对。"""
+        """:MEAS? 返回测量显示开关状态（非统计值，实测确认）。"""
         raw = self.query(C.MEAS_ALL)
         out: dict = {}
         for token in raw.split(","):
@@ -205,6 +216,42 @@ class SDS:
             if k:
                 out[k] = v.strip()
         return out
+
+    def measure_simple(self, item: str, src: str = "C4", timeout_s: float = 6.0) -> float:
+        """SIMPLE 模式单次测量：自动切模式→设信源→开测量项→读值。
+
+        实测要点（SDS800X HD）：
+        - 必须先 :MEASure:MODE SIMPle（默认 ADVANCED 下 SIMPle 组整体失效，
+          VALue? 返回 'The number of measurements is zero'）；
+        - SOURce 与 ITEM 是两条命令，ITEM 必须带 ,ON 状态参数；
+        - item 用 SDS 缩写枚举（PKPK/FREQ/PER/MAX/RMS...，与 ADVanced 同表）；
+        - 每步后查 SYST:ERR? 确认。
+        """
+        if item not in self.MEAS_TYPES:
+            raise ValueError(f"未知测量项 {item!r}，可用: {', '.join(self.MEAS_TYPES)}")
+        drain_errors(self)
+        self.write(":MEASure:MODE SIMPle")
+        time.sleep(0.2)
+        err = self.query(C.SYST_ERR).strip()
+        if not err.startswith("+0") and "No error" not in err:
+            raise RuntimeError(f":MEASure:MODE SIMPle 被拒: {err}")
+        self.write(f":MEASure:SIMPle:SOURce {src.upper()}")
+        time.sleep(0.1)
+        self.write(f":MEASure:SIMPle:ITEM {item},ON")
+        time.sleep(0.1)
+        deadline = time.monotonic() + timeout_s
+        last_raw = ""
+        while time.monotonic() < deadline:
+            time.sleep(0.5)
+            last_raw = self.query(f":MEASure:SIMPle:VALue? {item}").strip()
+            try:
+                return float(_num(last_raw))
+            except ValueError:
+                continue  # 'The number of measurements is zero' 等待测量引擎就绪
+        raise RuntimeError(
+            f"{item}@{src} 在 {timeout_s}s 内无有效值（最后响应: {last_raw!r}）；"
+            f"请检查信号接入/触发配置"
+        )
 
     MEAS_TYPES = (
         "PKPK", "MAX", "MIN", "AMPL", "TOP", "BASE", "CMEAN", "MEAN",
@@ -352,27 +399,25 @@ class SDS:
         if f"C{n}" != str(trig.get("edge_source", "")):
             self.write(f"TRIG:EDGE:SOUR {src}")
             actions.append(f"触发源 {trig['edge_source']}→{src}")
-        if trig["mode"] and "NORM" in str(trig["mode"]).upper():
-            self.write(":TRIGger:SWEep AUTO")
-            actions.append("扫描方式→AUTO(免触发刷新)")
-        self.write(f"TRIG:EDGE:LEV 0V")
+        self.write("TRIG:EDGE:LEV 0V")
         actions.append("触发电平→0V")
+        drain_errors(self)
 
         # 2. 打开通道
         if self.query(f"C{n}:TRA?").strip() != "ON":
             self.write(f"C{n}:TRA ON")
             actions.append(f"{src} 显示开启")
 
-        # 3. 测量 Vpp/Freq
-        self.adv_measure_setup(1, "VPP", src)
-        self.adv_measure_setup(2, "FREQuency", src)
+        # 3. 测量 Vpp/Freq（SIMPLE 模式，ADVANCED P 槽在该机型不出值）
         vpp = freq = None
-        for _ in range(6):
-            time.sleep(0.8)
-            vpp = self.adv_measure_value(1)
-            freq = self.adv_measure_value(2)
-            if vpp is not None and freq is not None:
-                break
+        try:
+            vpp = self.measure_simple("PKPK", src)
+        except RuntimeError as e:
+            actions.append(f"Vpp 测量失败: {e}")
+        try:
+            freq = self.measure_simple("FREQ", src)
+        except RuntimeError as e:
+            actions.append(f"Freq 测量失败: {e}")
         if verbose:
             print(f"[auto_scale] {src}: Vpp={vpp} Freq={freq} 动作={actions}")
 
@@ -401,8 +446,8 @@ class SDS:
             actions.append(f"VDIV {cur}→{best}")
 
         # 4b. 垂直偏置：把信号中心拉回屏幕中线（简化：偏置=0 起步）
-        # 4c. 水平：TDIV 使屏幕(10格)含 target_cycles 个周期
-        ideal_tdiv = (freq and (target_cycles / freq)) or None
+        # 4c. 水平：TDIV 使全屏(10格)含 target_cycles 个周期
+        ideal_tdiv = (freq and (target_cycles / freq) / 10) or None
         if ideal_tdiv:
             tdiv_std = [
                 x * m

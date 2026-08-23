@@ -1,0 +1,58 @@
+"""SDS SIMPle 测量组验证（正确语法：SOURce 与 ITEM 分离，每步查错队列）。"""
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+from sdg_control import SDG  # noqa: E402
+from sds_control import SDS  # noqa: E402
+
+
+def main() -> int:
+    gen = SDG("TCPIP0::192.168.31.206::inst0::INSTR")
+    scope = SDS("TCPIP0::192.168.31.220::inst0::INSTR")
+    gen.connect()
+    scope.connect()
+
+    def drain(tag: str) -> None:
+        n = 0
+        while True:
+            e = scope.query(":SYST:ERR?").strip()
+            if e.startswith("+0") or "No error" in e:
+                break
+            n += 1
+            print(f"  [{tag}] 队列: {e}")
+            if n > 30:
+                break
+        if n == 0:
+            print(f"  [{tag}] 错误队列干净")
+
+    try:
+        drain("初始")
+        gen.set_output(2, True)
+        time.sleep(0.3)
+        for cmd in (
+            ":MEASure:SIMPle:SOURce C4",
+            ":MEASure:SIMPle:ITEM FREQ,ON",
+            ":MEASure:SIMPle:ITEM PKPK,ON",
+        ):
+            scope.write(cmd)
+            time.sleep(0.2)
+            e = scope.query(":SYST:ERR?").strip()
+            print(f"  {cmd} -> ERR: {e}")
+        time.sleep(1.5)
+        for q in (":MEASure:SIMPle:VALue? FREQ", ":MEASure:SIMPle:VALue? PKPK"):
+            v = scope.query(q)
+            print(f"  >>> {q} = {v}")
+        drain("读值后")
+    finally:
+        gen.set_output(2, False)
+        gen.close()
+        scope.close()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

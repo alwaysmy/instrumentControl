@@ -408,16 +408,32 @@ class SDS:
             self.write(f"C{n}:TRA ON")
             actions.append(f"{src} 显示开启")
 
-        # 3. 测量 Vpp/Freq（SIMPLE 模式，ADVANCED P 槽在该机型不出值）
+        # 3. 测量 Vpp/Freq —— TDIV 为上轮遗留时不适配会导致平线(****)，逐级重试
         vpp = freq = None
-        try:
-            vpp = self.measure_simple("PKPK", src)
-        except RuntimeError as e:
-            actions.append(f"Vpp 测量失败: {e}")
-        try:
-            freq = self.measure_simple("FREQ", src)
-        except RuntimeError as e:
-            actions.append(f"Freq 测量失败: {e}")
+        for tdiv_try in (None, 1e-3, 1e-4, 1e-2, 1e-5):
+            if tdiv_try is not None:
+                self.write("TDIV %g" % tdiv_try)
+                time.sleep(0.8)
+            try:
+                vpp = self.measure_simple("PKPK", src)
+                freq = self.measure_simple("FREQ", src)
+                if vpp and freq and vpp > 1e-6:
+                    break
+                actions.append(f"TDIV={tdiv_try or '保持'} 无有效波形(PKPK={vpp})，换档重试")
+            except RuntimeError as e:
+                actions.append(f"TDIV={tdiv_try or '保持'} 重试失败")
+
+        # 3b. 触发电平改设信号中点（MAX/MIN），提升非双极性/带偏置信号的触发稳定性
+        if vpp and vpp > 1e-6:
+            try:
+                vmax = self.measure_simple("MAX", src)
+                vmin = self.measure_simple("MIN", src)
+                mid = (vmax + vmin) / 2
+                self.write("TRIG:EDGE:LEV %gV" % mid)
+                actions.append(f"触发电平→{mid:.3g}V(信号中点)")
+            except RuntimeError:
+                pass
+
         if verbose:
             print(f"[auto_scale] {src}: Vpp={vpp} Freq={freq} 动作={actions}")
 
@@ -432,7 +448,7 @@ class SDS:
             result["error"] = "无法测得 Vpp/频率：请检查信号接入与探头"
             return result
 
-        # 4a. 垂直档位：VDIV ∈ 1-2-5 序列，使 Vpp 占 2.5~6 格
+        # 4a. 垂直档位：VDIV ∈ 1-2-5 序列，使 Vpp 占 2.5~6 格；调后复测确认收敛
         std_steps = [
             0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.05 * 2, 0.05 * 5,
             0.1, 0.2, 0.5, 1, 2, 5, 10,
@@ -444,6 +460,21 @@ class SDS:
             self.write(f"C{n}:VDIV {best}V")
             result["adjusted"]["vdiv"] = best
             actions.append(f"VDIV {cur}→{best}")
+            time.sleep(1.2)
+            try:
+                vpp2 = self.measure_simple("PKPK", src)
+                if vpp2 and vpp and abs(vpp2 - vpp) / vpp > 0.3:
+                    actions.append(f"复测 Vpp 漂移 {vpp:.3g}→{vpp2:.3g}，按新值二次定标")
+                    ideal = vpp2 / sum(target_divs) * 2
+                    best2 = min(std_steps, key=lambda s: abs(s - ideal))
+                    cur2 = _num(self.query(f"C{n}:VDIV?"))
+                    if abs(best2 - cur2) / cur2 > 0.2:
+                        self.write(f"C{n}:VDIV {best2}V")
+                        result["adjusted"]["vdiv"] = best2
+                        actions.append(f"VDIV {cur2}→{best2}")
+                    result["vpp"] = vpp2
+            except RuntimeError as e:
+                actions.append(f"复测失败: {e}")
 
         # 4b. 垂直偏置：把信号中心拉回屏幕中线（简化：偏置=0 起步）
         # 4c. 水平：TDIV 使全屏(10格)含 target_cycles 个周期

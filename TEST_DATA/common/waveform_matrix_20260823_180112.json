@@ -1,0 +1,113 @@
+[
+  {
+    "case": "SINE@1000Hz/2Vpp",
+    "scale": [
+      "触发电平→0V"
+    ],
+    "vpp": 2.0125,
+    "freq": 999.99596,
+    "ok_v": true,
+    "ok_f": true,
+    "verdict": "PASS"
+  },
+  {
+    "case": "SINE@100Hz/2Vpp",
+    "scale": [
+      "触发电平→0V",
+      "Freq 测量失败: FREQ@C4 在 6.0s 内无有效值（最后响应: '****'）；请检查信号接入/触发配置"
+    ],
+    "error": "RuntimeError: FREQ@C4 在 6.0s 内无有效值（最后响应: '****'）；请检查信号接入/触发配置",
+    "verdict": "ERROR"
+  },
+  {
+    "case": "SINE@10000Hz/2Vpp",
+    "scale": [
+      "触发电平→0V",
+      "TDIV 0.0005→4.9999999999999996e-05"
+    ],
+    "vpp": 2.010417,
+    "freq": 10001.33,
+    "ok_v": true,
+    "ok_f": true,
+    "verdict": "PASS"
+  },
+  {
+    "case": "SINE@100000Hz/2Vpp",
+    "scale": [
+      "触发电平→0V",
+      "TDIV 5e-05→4.9999999999999996e-06"
+    ],
+    "vpp": 2.0,
+    "freq": 99976.67,
+    "ok_v": true,
+    "ok_f": true,
+    "verdict": "PASS"
+  },
+  {
+    "case": "SQUARE@1000Hz/2Vpp",
+    "scale": [
+      "触发电平→0V",
+      "Freq 测量失败: FREQ@C4 在 6.0s 内无有效值（最后响应: '****'）；请检查信号接入/触发配置"
+    ],
+    "error": "RuntimeError: FREQ@C4 在 6.0s 内无有效值（最后响应: '****'）；请检查信号接入/触发配置",
+    "verdict": "ERROR"
+  },
+  {
+    "case": "RAMP@1000Hz/2Vpp",
+    "scale": [
+      "触发电平→0V",
+      "Freq 测量失败: FREQ@C4 在 6.0s 内无有效值（最后响应: '****'）；请检查信号接入/触发配置"
+    ],
+    "error": "RuntimeError: FREQ@C4 在 6.0s 内无有效值（最后响应: '****'）；请检查信号接入/触发配置",
+    "verdict": "ERROR"
+  },
+  {
+    "case": "PULSE@1000Hz/2Vpp",
+    "scale": [
+      "触发电平→0V",
+      "Freq 测量失败: FREQ@C4 在 6.0s 内无有效值（最后响应: '****'）；请检查信号接入/触发配置"
+    ],
+    "error": "RuntimeError: FREQ@C4 在 6.0s 内无有效值（最后响应: '****'）；请检查信号接入/触发配置",
+    "verdict": "ERROR"
+  },
+  {
+    "case": "NOISE@1000Hz/2Vpp",
+    "scale": [
+      "触发电平→0V",
+      "VDIV 0.5→0.2",
+      "TDIV 5e-06→2e-06"
+    ],
+    "vpp": 0.93125,
+    "freq": 142868.0,
+    "ok_v": false,
+    "ok_f": true,
+    "verdict": "FAIL"
+  },
+  {
+    "case": "SINE@1000Hz/0.5Vpp",
+    "scale": [
+      "触发电平→0V",
+      "Freq 测量失败: FREQ@C4 在 6.0s 内无有效值（最后响应: '****'）；请检查信号接入/触发配置"
+    ],
+    "error": "RuntimeError: FREQ@C4 在 6.0s 内无有效值（最后响应: '****'）；请检查信号接入/触发配置",
+    "verdict": "ERROR"
+  },
+  {
+    "case": "SINE@1000Hz/5Vpp",
+    "scale": [
+      "触发电平→0V",
+      "Freq 测量失败: FREQ@C4 在 6.0s 内无有效值（最后响应: '****'）；请检查信号接入/触发配置"
+    ],
+    "error": "RuntimeError: FREQ@C4 在 6.0s 内无有效值（最后响应: '****'）；请检查信号接入/触发配置",
+    "verdict": "ERROR"
+  },
+  {
+    "case": "SINE@1000Hz/2Vpp",
+    "scale": [
+      "触发电平→0V",
+      "Freq 测量失败: FREQ@C4 在 6.0s 内无有效值（最后响应: '****'）；请检查信号接入/触发配置"
+    ],
+    "error": "RuntimeError: FREQ@C4 在 6.0s 内无有效值（最后响应: '****'）；请检查信号接入/触发配置",
+    "verdict": "ERROR"
+  }
+]

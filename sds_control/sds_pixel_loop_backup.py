@@ -322,10 +322,11 @@ class SDS:
         return save_path
 
     def analyze_screen(self, ch: int) -> dict:
-        """截屏并统计通道轨迹的像素 Y 分布（视觉反馈核心）。
+        """截屏并统计通道轨迹在网格区内的像素 Y 分布（削顶/居中判断的物理依据）。
 
-        返回 {visible, y_min, y_max, y_center, grid_top, grid_bottom,
-              px_per_div, rows}，坐标为截图像素系（自上而下）。
+        只统计网格区内的轨迹像素（通道标签等 UI 元素在网格区外，天然排除）。
+        返回 {visible, y_min, y_max, y_center, clipped, grid_top, grid_bottom,
+        px_per_div, rows}。
         """
         data = self.screenshot()
         w = struct.unpack("<i", data[18:22])[0]
@@ -335,21 +336,24 @@ class SDS:
         offset = struct.unpack("<I", data[10:14])[0]
         row_size = ((w * 4 + 3) // 4) * 4
 
+        grid = self.SCREEN_GRID
         tr, tg, tb = self.CH_COLORS[ch]
-        ys: list[int] = []
+        row_counts: dict[int, int] = {}
         for r in range(h):
+            disp_r = r if top_down else h - 1 - r
+            if not (grid["y0"] <= disp_r <= grid["y1"]):
+                continue
             base = offset + r * row_size
-            for c in range(w):
+            cnt = 0
+            for c in range(grid["x0"], min(grid["x1"], w)):
                 i = base + c * 4
                 b, g, rr = data[i], data[i + 1], data[i + 2]
-                if (
-                    abs(rr - tr) < 64 and abs(gg := g - tg) < 64 and abs(b - tb) < 64
-                    or (tr > 200 and rr > 200 and tg > 150 and b < 100)
-                ):
-                    disp_r = r if top_down else h - 1 - r
-                    ys.append(disp_r)
-                    _ = gg
-        grid = self.SCREEN_GRID
+                if abs(rr - tr) < 70 and abs(g - tg) < 70 and abs(b - tb) < 70:
+                    cnt += 1
+            # 高密度行=网格边框/满宽线（非波形轨迹），排除防误判削顶
+            if 0 < cnt < 300:
+                row_counts[disp_r] = cnt
+        ys = list(row_counts)
         out: dict = {
             "visible": bool(ys),
             "grid_top": grid["y0"],
@@ -357,11 +361,13 @@ class SDS:
             "px_per_div": (grid["y1"] - grid["y0"]) / grid["divs_y"],
         }
         if ys:
+            y_min, y_max = min(ys), max(ys)
             out.update({
-                "y_min": min(ys),
-                "y_max": max(ys),
-                "y_center": (min(ys) + max(ys)) / 2,
+                "y_min": y_min,
+                "y_max": y_max,
+                "y_center": (y_min + y_max) / 2,
                 "rows": len(set(ys)),
+                "clipped": y_min <= grid["y0"] + 3 or y_max >= grid["y1"] - 3,
             })
         return out
 
@@ -399,11 +405,6 @@ class SDS:
         if f"C{n}" != str(trig.get("edge_source", "")):
             self.write(f"TRIG:EDGE:SOUR {src}")
             actions.append(f"触发源 {trig['edge_source']}→{src}")
-        # AUTO 模式（手册 3.27.1）：超时未触发也强制采集，测量引擎不会冻结
-        # （NOISE 等无规则波形在 NORMal 下永不触发，会污染后续所有测量）
-        if str(trig.get("mode", "")).upper() != "AUTO":
-            self.write(":TRIGger:MODE AUTO")
-            actions.append("触发模式→AUTO(免触发冻结)")
         self.write("TRIG:EDGE:LEV 0V")
         actions.append("触发电平→0V")
         drain_errors(self)
@@ -428,35 +429,8 @@ class SDS:
             except RuntimeError as e:
                 actions.append(f"TDIV={tdiv_try or '保持'} 重试失败")
 
-        result = {
-            "channel": src,
-            "actions": actions,
-            "vpp": vpp,
-            "freq": freq,
-            "adjusted": {},
-        }
-        # 3b. 垂直定标（先缩放入屏，再中点电平/偏置——超屏时 MAX/MIN 被钳制不可信）
-        std_steps = [
-            0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10,
-        ]
-        if vpp and freq:
-            # 3b-1【缩放入屏】：只放大不缩小（宁大勿小）——初测可能受上轮遗留
-            # 档位钳制偏低，据此缩小会引入真削顶；欠格精度问题由 3b-3 细调兜底
-            try:
-                ideal_in = vpp / 6.0
-                start = min((s for s in std_steps if s >= ideal_in), default=10.0)
-                cur = _num(self.query(f"C{n}:VDIV?"))
-                if start > cur:
-                    self.write(f"C{n}:VDIV {start}V")
-                    result["adjusted"]["vdiv"] = start
-                    actions.append(f"缩放入屏: VDIV {cur}→{start}")
-                    time.sleep(1.2)
-                    vpp = self.measure_simple("PKPK", src)
-                    result["vpp"] = vpp
-            except RuntimeError as e:
-                actions.append(f"缩放入屏失败: {e}")
-
-            # 3b-2【信号中点触发电平】：入屏后 MAX/MIN 可信
+        # 3b. 触发电平改设信号中点（MAX/MIN），提升非双极性/带偏置信号的触发稳定性
+        if vpp and vpp > 1e-6:
             try:
                 vmax = self.measure_simple("MAX", src)
                 vmin = self.measure_simple("MIN", src)
@@ -466,83 +440,112 @@ class SDS:
             except RuntimeError:
                 pass
 
-            # 3b-3【细调档位】：往目标格数调，调后验证 MAX/MIN 仍在屏内否则回退
-            try:
-                ideal = vpp / sum(target_divs) * 2
-                best = min(std_steps, key=lambda s: abs(s - ideal))
-                cur = _num(self.query(f"C{n}:VDIV?"))
-                if best < cur and abs(best - cur) / cur > 0.2:
-                    self.write(f"C{n}:VDIV {best}V")
-                    time.sleep(1.2)
-                    vmax = self.measure_simple("MAX", src)
-                    vmin = self.measure_simple("MIN", src)
-                    lim = 4.5 * best
-                    if vmax > lim or vmin < -lim:
-                        self.write(f"C{n}:VDIV {cur}V")
-                        actions.append(f"细调 {best} 引发削顶，回退 {cur}")
-                    else:
-                        result["adjusted"]["vdiv"] = best
-                        actions.append(f"细调: VDIV {cur}→{best}")
-                        vpp = self.measure_simple("PKPK", src)
-                        result["vpp"] = vpp
-            except RuntimeError as e:
-                actions.append(f"细调失败: {e}")
-
-            # 3b-4【偏置居中】：中点偏离 0 时用 OFST 拉回（方向探测一次）
-            try:
-                vmax = self.measure_simple("MAX", src)
-                vmin = self.measure_simple("MIN", src)
-                mid = (vmax + vmin) / 2
-                cur_vdiv = _num(self.query(f"C{n}:VDIV?"))
-                if abs(mid) > 0.1 * cur_vdiv:
-                    cur_ofst = _num(self.query(f"C{n}:OFST?"))
-                    trial = cur_ofst - mid
-                    self.write(f"C{n}:OFST {trial}V")
-                    time.sleep(1.2)
-                    mid2 = (self.measure_simple("MAX", src) + self.measure_simple("MIN", src)) / 2
-                    if abs(mid2) > abs(mid):
-                        trial = cur_ofst + mid
-                        self.write(f"C{n}:OFST {trial}V")
-                        time.sleep(1.2)
-                    result["adjusted"]["ofst"] = trial
-                    actions.append(f"偏置居中: OFST→{trial:g}V")
-            except RuntimeError:
-                pass
-
         if verbose:
             print(f"[auto_scale] {src}: Vpp={vpp} Freq={freq} 动作={actions}")
 
+        result = {
+            "channel": src,
+            "actions": actions,
+            "vpp": vpp,
+            "freq": freq,
+            "adjusted": {},
+        }
         if vpp is None or freq is None:
             result["error"] = "无法测得 Vpp/频率：请检查信号接入与探头"
             return result
 
-        # 4a. 垂直档位：VDIV ∈ 1-2-5 序列，使 Vpp 占 2.5~6 格；调后复测确认收敛
+        # 4. 垂直定标（像素闭环）：测量值超屏会被钳制不可信，
+        #    削顶/居中判断一律以截屏轨迹像素为准。
         std_steps = [
-            0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.05 * 2, 0.05 * 5,
-            0.1, 0.2, 0.5, 1, 2, 5, 10,
+            0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10,
         ]
-        ideal = vpp / sum(target_divs) * 2  # 目标格数中点
-        best = min(std_steps, key=lambda s: abs(s - ideal))
-        cur = _num(self.query(f"C{n}:VDIV?"))
-        if abs(best - cur) / cur > 0.2:
-            self.write(f"C{n}:VDIV {best}V")
-            result["adjusted"]["vdiv"] = best
-            actions.append(f"VDIV {cur}→{best}")
+
+        def px_adjust_vdiv(direction: int, cur: float) -> Optional[float]:
+            """direction=+1 放大一档 / -1 缩小一档，返回新档位。"""
+            if direction > 0:
+                nxt = next((s for s in std_steps if s > cur * 1.2), None)
+            else:
+                nxt = next((s for s in reversed(std_steps) if s < cur * 0.8), None)
+            if nxt:
+                self.write(f"C{n}:VDIV {nxt}V")
+                time.sleep(1.2)
+            return nxt
+
+        # 4a. 最大档起步（超屏读数钳制，初测值只当量级参考）
+        try:
+            self.write(f"C{n}:VDIV {std_steps[-1]}V")
+            actions.append(f"VDIV→{std_steps[-1]}V(最大档起步)")
             time.sleep(1.2)
-            try:
-                vpp2 = self.measure_simple("PKPK", src)
-                if vpp2 and vpp and abs(vpp2 - vpp) / vpp > 0.3:
-                    actions.append(f"复测 Vpp 漂移 {vpp:.3g}→{vpp2:.3g}，按新值二次定标")
-                    ideal = vpp2 / sum(target_divs) * 2
-                    best2 = min(std_steps, key=lambda s: abs(s - ideal))
-                    cur2 = _num(self.query(f"C{n}:VDIV?"))
-                    if abs(best2 - cur2) / cur2 > 0.2:
-                        self.write(f"C{n}:VDIV {best2}V")
-                        result["adjusted"]["vdiv"] = best2
-                        actions.append(f"VDIV {cur2}→{best2}")
-                    result["vpp"] = vpp2
-            except RuntimeError as e:
-                actions.append(f"复测失败: {e}")
+            vpp = self.measure_simple("PKPK", src)
+            freq = self.measure_simple("FREQ", src) or freq
+            result["vpp"] = vpp
+            if vpp:
+                start = min((s for s in std_steps if s >= vpp / 6.0), default=10.0)
+                self.write(f"C{n}:VDIV {start}V")
+                result["adjusted"]["vdiv"] = start
+                actions.append(f"按 Vpp≈{vpp:.3g} 跳档 → {start}V/div")
+                time.sleep(1.2)
+
+            # 4b. 像素闭环：削顶→放大；偏离中线→调 OFST。最多 5 轮
+            for _ in range(5):
+                scr = self.analyze_screen(n)
+                if not scr.get("visible"):
+                    actions.append("像素分析: 轨迹不可见，停止垂直定标")
+                    break
+                px_div = scr["px_per_div"]
+                mid_px = (scr["grid_top"] + scr["grid_bottom"]) / 2
+                if scr.get("clipped"):
+                    cur = _num(self.query(f"C{n}:VDIV?"))
+                    nxt = px_adjust_vdiv(+1, cur)
+                    if not nxt:
+                        actions.append("已最大档仍削顶")
+                        break
+                    result["adjusted"]["vdiv"] = nxt
+                    actions.append(f"像素检出削顶 → VDIV {cur}→{nxt}")
+                    continue
+                delta_px = scr["y_center"] - mid_px
+                if abs(delta_px) > px_div * 0.4:
+                    cur_vdiv = _num(self.query(f"C{n}:VDIV?"))
+                    cur_ofst = _num(self.query(f"C{n}:OFST?"))
+                    # 波形偏高(y_center 小) → OFST 增大把它拉下；方向一次探测
+                    trial = cur_ofst + delta_px / px_div * cur_vdiv
+                    self.write(f"C{n}:OFST {trial}V")
+                    time.sleep(1.2)
+                    scr2 = self.analyze_screen(n)
+                    if scr2.get("visible") and abs(
+                        (scr2.get("y_center", mid_px)) - mid_px
+                    ) > abs(delta_px):
+                        trial = cur_ofst - delta_px / px_div * cur_vdiv
+                        self.write(f"C{n}:OFST {trial}V")
+                        time.sleep(1.2)
+                    result["adjusted"]["ofst"] = trial
+                    actions.append(f"偏置居中: OFST→{trial:g}V")
+                    continue
+                break
+
+            # 4c. 水平定标：按 FREQ 调 TDIV 使全屏含 target_cycles 个周期
+            if freq:
+                ideal_tdiv = (target_cycles / freq) / 10
+                tdiv_std = [
+                    x * m
+                    for x in (1e-9, 1e-6, 1e-3, 1)
+                    for m in (0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000)
+                    if 1e-9 <= x * m <= 1000
+                ]
+                best_t = min(tdiv_std, key=lambda s: abs(s - ideal_tdiv))
+                cur_t = self.timebase_scale()
+                if abs(best_t - cur_t) / max(cur_t, 1e-12) > 0.3:
+                    self.write(f"TDIV {best_t}")
+                    result["adjusted"]["tdiv"] = best_t
+                    actions.append(f"TDIV {cur_t}→{best_t}({freq:.3g}Hz×{target_cycles}周期)")
+                    time.sleep(1.2)
+
+            # 4d. 终测
+            vpp = self.measure_simple("PKPK", src)
+            freq = self.measure_simple("FREQ", src) or freq
+            result["vpp"] = vpp
+        except RuntimeError as e:
+            actions.append(f"垂直定标失败: {e}")
 
         # 4b. 垂直偏置：把信号中心拉回屏幕中线（简化：偏置=0 起步）
         # 4c. 水平：TDIV 使全屏(10格)含 target_cycles 个周期

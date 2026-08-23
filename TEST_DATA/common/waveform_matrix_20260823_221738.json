@@ -1,0 +1,163 @@
+[
+  {
+    "case": "SINE@1000Hz/2Vpp",
+    "scale": [
+      "触发电平→0V",
+      "TDIV=保持 重试失败",
+      "缩放入屏: VDIV 0.01→0.02",
+      "触发电平→-2.08e-05V(信号中点)",
+      "VDIV 0.02→0.05",
+      "复测 Vpp 漂移 0.17→0.426，按新值二次定标",
+      "VDIV 0.05→0.1",
+      "TDIV 0.001→0.0005"
+    ],
+    "vpp": 0.851875,
+    "freq": 999.9415,
+    "ok_v": false,
+    "ok_f": true,
+    "verdict": "FAIL"
+  },
+  {
+    "case": "SINE@100Hz/2Vpp",
+    "scale": [
+      "触发电平→0V",
+      "TDIV=保持 重试失败",
+      "TDIV=0.001 重试失败",
+      "TDIV=0.0001 重试失败",
+      "缩放入屏: VDIV 0.1→0.2",
+      "触发电平→-0.000208V(信号中点)",
+      "VDIV 0.2→0.5",
+      "TDIV 0.01→0.005"
+    ],
+    "vpp": 2.004167,
+    "freq": 99.9734237,
+    "ok_v": true,
+    "ok_f": true,
+    "verdict": "PASS"
+  },
+  {
+    "case": "SINE@10000Hz/2Vpp",
+    "scale": [
+      "触发电平→0V",
+      "触发电平→-0.00312V(信号中点)",
+      "TDIV 0.005→4.9999999999999996e-05"
+    ],
+    "vpp": 2.010417,
+    "freq": 9999.7958,
+    "ok_v": true,
+    "ok_f": true,
+    "verdict": "PASS"
+  },
+  {
+    "case": "SINE@100000Hz/2Vpp",
+    "scale": [
+      "触发电平→0V",
+      "触发电平→-0.00469V(信号中点)",
+      "TDIV 5e-05→4.9999999999999996e-06"
+    ],
+    "vpp": 1.997917,
+    "freq": 100029.0,
+    "ok_v": true,
+    "ok_f": true,
+    "verdict": "PASS"
+  },
+  {
+    "case": "SQUARE@1000Hz/2Vpp",
+    "scale": [
+      "触发电平→0V",
+      "TDIV=保持 重试失败",
+      "触发电平→-0.00365V(信号中点)",
+      "TDIV 0.001→0.0005"
+    ],
+    "vpp": 2.052083,
+    "freq": 1000.017,
+    "ok_v": true,
+    "ok_f": true,
+    "verdict": "PASS"
+  },
+  {
+    "case": "RAMP@1000Hz/2Vpp",
+    "scale": [
+      "触发电平→0V",
+      "触发电平→-0.00469V(信号中点)"
+    ],
+    "vpp": 2.007292,
+    "freq": 999.9659,
+    "ok_v": true,
+    "ok_f": true,
+    "verdict": "PASS"
+  },
+  {
+    "case": "PULSE@1000Hz/2Vpp",
+    "scale": [
+      "触发电平→0V",
+      "触发电平→-0.00365V(信号中点)"
+    ],
+    "vpp": 2.052083,
+    "freq": 1000.015,
+    "ok_v": true,
+    "ok_f": true,
+    "verdict": "PASS"
+  },
+  {
+    "case": "NOISE@1000Hz/2Vpp",
+    "scale": [
+      "触发电平→0V",
+      "触发电平→0.0312V(信号中点)",
+      "细调: VDIV 0.5→0.2",
+      "偏置居中: OFST→-0.035V",
+      "VDIV 0.2→0.25",
+      "TDIV 0.0005→0.00019999999999999998"
+    ],
+    "vpp": 1.209375,
+    "freq": 16150.75,
+    "ok_v": false,
+    "ok_f": true,
+    "verdict": "FAIL"
+  },
+  {
+    "case": "SINE@1000Hz/0.5Vpp",
+    "scale": [
+      "触发电平→0V",
+      "触发电平→0.00208V(信号中点)",
+      "细调: VDIV 0.25→0.1",
+      "TDIV 0.0002→0.0005"
+    ],
+    "vpp": 0.501667,
+    "freq": 1000.061,
+    "ok_v": true,
+    "ok_f": true,
+    "verdict": "PASS"
+  },
+  {
+    "case": "SINE@1000Hz/5Vpp",
+    "scale": [
+      "触发电平→0V",
+      "缩放入屏: VDIV 0.1→0.2",
+      "触发电平→0.0365V(信号中点)",
+      "偏置居中: OFST→-0.000242V",
+      "VDIV 0.2→0.5",
+      "复测 Vpp 漂移 1.7→4.26，按新值二次定标",
+      "VDIV 0.5→1"
+    ],
+    "vpp": 5.01458,
+    "freq": 999.99677,
+    "ok_v": true,
+    "ok_f": true,
+    "verdict": "PASS"
+  },
+  {
+    "case": "SINE@1000Hz/2Vpp",
+    "scale": [
+      "触发电平→0V",
+      "触发电平→0.997V(信号中点)",
+      "细调: VDIV 1.0→0.5",
+      "偏置居中: OFST→0.996354V"
+    ],
+    "vpp": 1.125,
+    "freq": 1000.044,
+    "ok_v": false,
+    "ok_f": true,
+    "verdict": "FAIL"
+  }
+]

@@ -44,3 +44,19 @@
 1. 写序列前先 drain 错误队列（滞后报错会污染逐命令查错）；
 2. 命令落码前必须过提取手册这一关，禁止凭记忆裸写；
 3. 写操作后回读比对 + 查 SYST:ERR?，三者缺一不可。
+
+## 二轮：全量代码扫描（audit_all_commands.py）
+
+范围：五套库 .py + 相关测试脚本中的全部 SCPI 字符串（含 f-string 内联），共 84 条唯一命令。
+
+结果：54 HIT / 30 MISS；30 条 MISS 经人工对照手册逐条甄别，**全部为审计器归一化假阳性**：
+
+| 类别 | 明细 | 手册证据 |
+|---|---|---|
+| 单段根命令未入索引 | dho :CLEar(3.1.1)/:SINGle(3.1.4)/:TFORce(3.1.5) | DHO 手册目录原文 |
+| 混合大小写未匹配 | sds :AUToset | SDS 手册专章 |
+| Keysight 长形式无冒号 | k3446x CONF/MEAS/DATA:LAST/NPLC 全部 | Truevolt 原文 CONFigure:VOLTage:DC 等；且 MEAS 七族+NPLC 已实测 |
+| 错误分组残留 | :SYST:ERR?:SYST:VERS? 等 | SDG/SDS 实测均通 |
+
+**最终结论：代码中不存在无出处的猜测命令。**
+唯一被删的猜测命令为 :SYST:FACT（一轮审计发现）。

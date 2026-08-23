@@ -55,7 +55,7 @@ WAV_DATA = "WAV:DATA?"
 SCREEN_BMP = "PRIN? BMP"
 
 SYST_ERR = ":SYST:ERR?"
-SYST_FACT = ":SYST:FACT"       # 恢复出厂（危险，勿在自动化中调用）
+# 注：恢复出厂请用面板操作。曾误列 ":SYST:FACT"（无手册出处，已删除）。
 
 # :WAVeform:PREamble? 参数块字段偏移（手册 6.3 节官方实例）
 PREAMBLE_OFFSETS = {

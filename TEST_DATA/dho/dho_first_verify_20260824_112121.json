@@ -1,0 +1,21 @@
+{
+  "timestamp": "20260824_112121",
+  "resource": "TCPIP0::192.168.31.146::5555::SOCKET",
+  "results": [
+    {
+      "item": "*IDN?",
+      "ok": true,
+      "detail": "RIGOL TECHNOLOGIES,DHO924S,DHO9A253600386,KFCVME50114"
+    },
+    {
+      "item": "snapshot()",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "item": "get_waveform CH1",
+      "ok": false,
+      "detail": "AttributeError: 'TCPIPSocket' object has no attribute 'query_raw'"
+    }
+  ]
+}

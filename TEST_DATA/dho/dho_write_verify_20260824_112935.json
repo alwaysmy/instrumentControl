@@ -1,0 +1,37 @@
+[
+  {
+    "item": "备份",
+    "ok": true,
+    "detail": "{\"ch2_scale\": 0.01, \"ch2_offset\": 0.0, \"ch2_coup\": \"DC\", \"ch2_disp\": false, \"tb\": 1e-07, \"edge_lev\": 1.400267, \"acq_type\": \"NORM\"}"
+  },
+  {
+    "item": "CH2 SCALe 写 0.1",
+    "ok": false,
+    "detail": "回读 0.01"
+  },
+  {
+    "item": "CH2 COUPling AC",
+    "ok": true,
+    "detail": "AC"
+  },
+  {
+    "item": "TIMebase SCALe 写 100us",
+    "ok": true,
+    "detail": "回读 0.0001"
+  },
+  {
+    "item": "EDGE LEVel 写 0.5",
+    "ok": true,
+    "detail": "回读 0.5"
+  },
+  {
+    "item": "ACQuire TYPE HRES",
+    "ok": false,
+    "detail": "NORM"
+  },
+  {
+    "item": "恢复比对",
+    "ok": true,
+    "detail": ""
+  }
+]

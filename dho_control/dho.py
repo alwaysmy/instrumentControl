@@ -101,7 +101,7 @@ class DHO:
         self._c().write(cmd)
 
     def query_raw(self, cmd: str) -> bytes:
-        return self._c().inst.query_raw(cmd)
+        return self._c().query_raw(cmd)
 
     # ---------- 信息与系统 ----------
     def idn(self) -> str:
@@ -157,7 +157,7 @@ class DHO:
         return None
 
     def acquire_type(self, value: Optional[str] = None) -> Optional[str]:
-        """:ACQuire:TYPE 采集方式 SAMPle|PEAK|AVERages|HRESolution。"""
+        """:ACQuire:TYPE 采集方式 NORMal|PEAK|AVERages|ULTRa（手册 3.3.4）。"""
         if value is None:
             return self.query(C.ACQ_TYPE + "?").strip() or None
         self.write(f"{C.ACQ_TYPE} {value}")
@@ -189,8 +189,10 @@ class DHO:
         return None
 
     def channel_scale(self, ch: int, scale: Optional[float] = None) -> Optional[float]:
-        """:CHANnel<n>:SCALe 垂直档位 V/div。"""
+        """:CHANnel<n>:SCALe 垂直档位 V/div。未开启的通道写入会被拒(-200)，自动先开启。"""
         n = self._check_ch(ch)
+        if scale is not None and not self.channel_display(n):
+            self.channel_display(n, True)
         if scale is None:
             resp = self.query(f"{C.CHAN_SCALE.format(n=n)}?")
             return float(resp) if resp else None

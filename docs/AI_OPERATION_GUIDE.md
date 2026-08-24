@@ -60,6 +60,25 @@ with SDS(resource) as scope:
    scope.screenshot_png(path)   # 超屏时设备测量值被钳制，像素不骗人
 ```
 
+### auto_scale 两条路径（多信号场景必读）
+
+```python
+scope.auto_scale(4)                     # 默认：SCPI 闭环，只动 C4
+scope.auto_scale(4, use_autoset=True)   # 显式：:AUToset 一步定标
+```
+
+| 路径 | 矩阵成绩 | 特点 |
+|---|---|---|
+| SCPI 闭环（默认）| 13/17 | **只动目标通道**，多信号场景安全；边界：1MHz、SQUARE@1k、带偏置细调残差 |
+| AUToset（显式）| 16/17 | 全局破坏性：**重置所有通道档位/时基/触发** |
+
+**use_autoset=True 的启用前置**（调用方主动判断，缺一不可）：
+1. 信号类型简单且周期性（WVTP 是自己设的，可直接判断；NOISE/调制不适用）
+2. 没有其他已调好的通道（AUToset 会毁掉它们）
+
+**多信号推荐流程**：逐通道 `auto_scale(n)`（SCPI 闭环）→ 全部就位；
+某通道 SCPI 失败且满足前置 → 才 `use_autoset=True` 重来（其他通道需重调）。
+
 实测案例：测量全 `****` → 截图发现触发源=C1 电平 12.2V 而信号在 C4 →
 切触发源+电平归零后立即恢复。
 

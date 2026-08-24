@@ -1,0 +1,17 @@
+{
+  "timestamp": "2026-08-25T02:40:04",
+  "steps": [
+    {
+      "step": "pre_idn",
+      "value": "Siglent Technologies,SDS824X HD,SDS08A0C8R0274,2.8.12.1.1.6.5"
+    },
+    {
+      "step": "shutdown_cmd",
+      "sent": true
+    },
+    {
+      "step": "offline",
+      "after_s": 6.0
+    }
+  ]
+}

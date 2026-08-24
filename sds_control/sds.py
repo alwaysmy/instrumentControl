@@ -639,6 +639,22 @@ class SDS:
             print(f"[auto_scale] 最终动作: {actions}")
         return result
 
+    def shutdown(self, confirm: bool = False) -> None:
+        """:SYSTem:SHUTdown 远程关机（手册 237 页；实测 ~6s 离线）。
+
+        ⚠ 破坏性：设备将关机离线，需面板手动开机（无网络唤醒）。
+        必须显式 confirm=True 才执行。
+        """
+        if not confirm:
+            raise RuntimeError("shutdown 需要 confirm=True（设备将关机离线，需手动开机）")
+        self.write(":SYSTem:SHUTdown")
+
+    def reboot(self, confirm: bool = False) -> None:
+        """:SYSTem:REBoot 远程重启（手册同节）。⚠ 破坏性，需显式 confirm=True。"""
+        if not confirm:
+            raise RuntimeError("reboot 需要 confirm=True（设备将重启离线）")
+        self.write(":SYSTem:REBoot")
+
     # ---------- 波形读取 ----------
     @staticmethod
     def _strip_tmc(data: bytes) -> bytes:

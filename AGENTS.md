@@ -34,6 +34,16 @@ dg832-control）。AI/Agent 操作仪器必须遵守以下规范。
     未开启的 RIGOL 通道写 SCALe 被拒（-200），需先 `:CHANnel<n>:DISPlay ON`。
 14. **USB TMC 一律走 VISA**：禁止 pyusb/libusb 直连（Windows 无驱动时
     NotImplementedError）。LAN raw socket 会话必须配 `\n` 终止符。
+15. **示波器"无波形/测量全 `****`"标准排查流程**（先读后写，截图辅助）：
+    a. **先读配置不猜**：触发源/触发电平/触发模式/通道开关/时基/垂直档位/采集参数
+       ——`sds_control.diagnose_trigger()`、DHO 用 `snapshot()`；
+    b. 常见坑：触发源挂空通道（实测：源=C1 电平 12.2V 而信号在 C4）、
+       NORMal 模式遇 NOISE 类无规则信号（永不触发→采集冻结）、通道未开启、
+       档位与信号量级不匹配（超屏读数被钳制）；
+    c. **修正顺序**：触发源→目标通道 → 模式 AUTO → 电平归信号中点 →
+       通道开启 → auto_scale 自动定标；
+    d. **截图辅助**：截图像素分析是削顶/居中/有无波形的唯一物理真相
+       （`screenshot_png` + `analyze_screen`），设备测量值超屏被钳制不可信。
 
 ## 二、安全红线
 

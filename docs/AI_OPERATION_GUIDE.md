@@ -45,6 +45,24 @@ with SDS(resource) as scope:
 - ADVANCED P 槽 VALue? 恒 '****'（疑似选件），勿用
 - 触发源挂空/电平过高 = 屏幕无波形的头号根因
 
+### 示波器调试标准流程（先读后写，截图辅助）
+
+```
+1. 读配置（不猜）
+   scope.diagnose_trigger()   # 触发源/电平/模式/状态/时基
+   scope.snapshot()           # 通道开关/档位/耦合/采集参数
+2. 对照信号判断配置错误
+   常见坑：触发源挂空通道、电平在信号幅值外、NORMal 遇无规则信号、
+   通道未开、档位与量级不匹配（超屏读数被钳制）
+3. 修正（auto_scale 一键完成）
+   触发源→目标通道 → 模式 AUTO → 电平→信号中点 → 通道开启 → 定标
+4. 截图验证（唯一物理真相）
+   scope.screenshot_png(path)   # 超屏时设备测量值被钳制，像素不骗人
+```
+
+实测案例：测量全 `****` → 截图发现触发源=C1 电平 12.2V 而信号在 C4 →
+切触发源+电平归零后立即恢复。
+
 ### sdg_control（信号源）
 ```python
 gen.set_basic_wave(2, WVTP="SINE", FRQ="1000HZ", AMP="2V", OFST="0V")

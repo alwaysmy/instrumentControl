@@ -43,7 +43,10 @@ dg832-control）。AI/Agent 操作仪器必须遵守以下规范。
     c. **修正顺序**：触发源→目标通道 → 模式 AUTO → 电平归信号中点 →
        通道开启 → auto_scale 自动定标；
     d. **截图辅助**：截图像素分析是削顶/居中/有无波形的唯一物理真相
-       （`screenshot_png` + `analyze_screen`），设备测量值超屏被钳制不可信。
+       （`screenshot_png` + `analyze_screen`），设备测量值超屏被钳制不可信；
+    e. **auto_scale 两条路径**（默认 SCPI 闭环只动目标通道，多信号安全；
+       `:AUToset` 是全局破坏性命令会重置所有通道——仅在确认"简单周期信号+
+       无其他已调好通道"时才 `use_autoset=True` 显式启用）。
 
 ## 二、安全红线
 

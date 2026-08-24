@@ -388,15 +388,20 @@ class SDS:
         target_cycles: float = 5.0,
         target_divs: tuple[float, float] = (2.5, 6.0),
         verbose: bool = False,
-        use_autoset: bool = True,
+        use_autoset: bool = False,
     ) -> dict:
         """让通道 ch 正确显示波形。
 
-        use_autoset=True（默认，适合简单规则信号）：
-            :AUToset 一步定标 → SCPI 读 PKPK/FREQ 验证 → 微调 VDIV/TDIV 到
-            目标格数。零截图。
-        use_autoset=False（复杂信号/AUTOSET 失败兜底）：
-            触发修复 → TDIV 重试 → SCPI 闭环垂直定标（削顶回退/偏置居中）。
+        默认（use_autoset=False）走 SCPI 闭环，只动目标通道——多信号场景下
+        其他已调好的通道不受影响。
+
+        use_autoset=True 仅在满足以下全部条件时显式启用：
+            - 信号类型简单且周期性（正弦/方波等，NOISE/复杂调制不适用）；
+            - 没有其他已调好的通道（:AUToset 是全局破坏性命令，会重置
+              所有通道档位/时基/触发配置）。
+        AUToset 路径：一步定标 → SCPI 读 PKPK/FREQ 验证 → 微调，零截图。
+        SCPI 闭环路径：触发修复 → TDIV 重试 → 垂直定标（削顶回退/偏置居中）。
+        两者失败均可再用截图像素诊断兜底。
         """
         n = self._ch(ch)
         src = f"C{n}"

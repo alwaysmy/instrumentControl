@@ -1,0 +1,377 @@
+[
+  {
+    "case": "SINE@10Hz/2Vpp/off0",
+    "scale": [
+      "触发电平→0V",
+      "TDIV=保持 重试失败",
+      "TDIV=0.001 重试失败",
+      "TDIV=0.01 重试失败",
+      "TDIV=0.0001 重试失败",
+      "触发电平→0.00729V(信号中点)",
+      "TDIV 0.1→0.05"
+    ],
+    "trig": {
+      "mode": "AUTO",
+      "status": "Roll",
+      "edge_source": "C4",
+      "edge_level_v": 0.00833,
+      "timebase_s_div": 0.05
+    },
+    "vpp": 2.015625,
+    "ok_v": true,
+    "freq": 10.0001,
+    "ok_f": true,
+    "verdict": "PASS"
+  },
+  {
+    "case": "SINE@100Hz/2Vpp/off0",
+    "scale": [
+      "触发电平→0V",
+      "触发电平→0.00677V(信号中点)",
+      "TDIV 0.05→0.005"
+    ],
+    "trig": {
+      "mode": "AUTO",
+      "status": "Arm",
+      "edge_source": "C4",
+      "edge_level_v": 0.00833,
+      "timebase_s_div": 0.005
+    },
+    "vpp": 2.016667,
+    "ok_v": true,
+    "freq": 99.9915441,
+    "ok_f": true,
+    "verdict": "PASS"
+  },
+  {
+    "case": "SINE@1000Hz/2Vpp/off0",
+    "scale": [
+      "触发电平→0V",
+      "触发电平→0.00625V(信号中点)",
+      "TDIV 0.005→0.0005"
+    ],
+    "trig": {
+      "mode": "AUTO",
+      "status": "Ready",
+      "edge_source": "C4",
+      "edge_level_v": 0.00833,
+      "timebase_s_div": 0.0005
+    },
+    "vpp": 2.022917,
+    "ok_v": true,
+    "freq": 999.86707,
+    "ok_f": true,
+    "verdict": "PASS"
+  },
+  {
+    "case": "SINE@10000Hz/2Vpp/off0",
+    "scale": [
+      "触发电平→0V",
+      "触发电平→0.00521V(信号中点)",
+      "TDIV 0.0005→4.9999999999999996e-05"
+    ],
+    "trig": {
+      "mode": "AUTO",
+      "status": "Ready",
+      "edge_source": "C4",
+      "edge_level_v": 0.00833,
+      "timebase_s_div": 5e-05
+    },
+    "vpp": 2.019792,
+    "ok_v": true,
+    "freq": 9999.6051,
+    "ok_f": true,
+    "verdict": "PASS"
+  },
+  {
+    "case": "SINE@100000Hz/2Vpp/off0",
+    "scale": [
+      "触发电平→0V",
+      "触发电平→0.00469V(信号中点)",
+      "TDIV 5e-05→4.9999999999999996e-06"
+    ],
+    "trig": {
+      "mode": "AUTO",
+      "status": "Ready",
+      "edge_source": "C4",
+      "edge_level_v": 0.00833,
+      "timebase_s_div": 5e-06
+    },
+    "vpp": 2.013542,
+    "ok_v": true,
+    "freq": 99995.0,
+    "ok_f": true,
+    "verdict": "PASS"
+  },
+  {
+    "case": "SINE@1e+06Hz/1Vpp/off0",
+    "scale": [
+      "触发电平→0V",
+      "触发电平→0.00781V(信号中点)",
+      "细调: VDIV 0.5→0.2",
+      "偏置居中: OFST→-0.67125V",
+      "VDIV 0.2→0.1",
+      "TDIV 5e-06→5e-07"
+    ],
+    "trig": {
+      "mode": "AUTO",
+      "status": "Ready",
+      "edge_source": "C4",
+      "edge_level_v": 0.26,
+      "timebase_s_div": 5e-07
+    },
+    "vpp": 0.267878,
+    "ok_v": false,
+    "freq": 999973.0,
+    "ok_f": true,
+    "verdict": "FAIL"
+  },
+  {
+    "case": "SQUARE@1000Hz/2Vpp/off0",
+    "scale": [
+      "触发电平→0V",
+      "TDIV=保持 重试失败",
+      "缩放入屏: VDIV 0.1→0.2",
+      "触发电平→0.424V(信号中点)",
+      "偏置居中: OFST→-0.24625V",
+      "VDIV 0.2→0.25",
+      "复测 Vpp 漂移 1.21→1.85，按新值二次定标",
+      "VDIV 0.25→0.5",
+      "TDIV 0.001→0.0005"
+    ],
+    "trig": {
+      "mode": "AUTO",
+      "status": "Ready",
+      "edge_source": "C4",
+      "edge_level_v": 0.425,
+      "timebase_s_div": 0.0005
+    },
+    "vpp": 2.059375,
+    "ok_v": true,
+    "freq": 1000.014,
+    "ok_f": true,
+    "verdict": "PASS"
+  },
+  {
+    "case": "SQUARE@10000Hz/2Vpp/off0",
+    "scale": [
+      "触发电平→0V",
+      "触发电平→0.0026V(信号中点)",
+      "TDIV 0.0005→4.9999999999999996e-05"
+    ],
+    "trig": {
+      "mode": "AUTO",
+      "status": "Ready",
+      "edge_source": "C4",
+      "edge_level_v": 0.0,
+      "timebase_s_div": 5e-05
+    },
+    "vpp": 2.059375,
+    "ok_v": true,
+    "freq": 10000.15,
+    "ok_f": true,
+    "verdict": "PASS"
+  },
+  {
+    "case": "RAMP@1000Hz/2Vpp/off0",
+    "scale": [
+      "触发电平→0V",
+      "TDIV=保持 重试失败",
+      "触发电平→0.0026V(信号中点)",
+      "TDIV 0.001→0.0005"
+    ],
+    "trig": {
+      "mode": "AUTO",
+      "status": "Ready",
+      "edge_source": "C4",
+      "edge_level_v": 0.0,
+      "timebase_s_div": 0.0005
+    },
+    "vpp": 2.0125,
+    "ok_v": true,
+    "freq": 999.91323,
+    "ok_f": true,
+    "verdict": "PASS"
+  },
+  {
+    "case": "PULSE@1000Hz/2Vpp/off0",
+    "scale": [
+      "触发电平→0V",
+      "触发电平→0.00417V(信号中点)"
+    ],
+    "trig": {
+      "mode": "AUTO",
+      "status": "Trig'd",
+      "edge_source": "C4",
+      "edge_level_v": 0.00833,
+      "timebase_s_div": 0.0005
+    },
+    "vpp": 2.054167,
+    "ok_v": true,
+    "freq": 1000.017,
+    "ok_f": true,
+    "verdict": "PASS"
+  },
+  {
+    "case": "PULSE@100Hz/2Vpp/off0",
+    "scale": [
+      "触发电平→0V",
+      "TDIV=保持 重试失败",
+      "TDIV=0.001 重试失败",
+      "触发电平→-0.00729V(信号中点)",
+      "TDIV 0.01→0.005"
+    ],
+    "trig": {
+      "mode": "AUTO",
+      "status": "Arm",
+      "edge_source": "C4",
+      "edge_level_v": -0.00833,
+      "timebase_s_div": 0.005
+    },
+    "vpp": 2.032292,
+    "ok_v": true,
+    "freq": 100.00149,
+    "ok_f": true,
+    "verdict": "PASS"
+  },
+  {
+    "case": "NOISE@1000Hz/2Vpp/off0",
+    "scale": [
+      "触发电平→0V",
+      "触发电平→-0.0557V(信号中点)",
+      "细调: VDIV 0.5→0.2",
+      "VDIV 0.2→0.25",
+      "TDIV 0.005→0.01"
+    ],
+    "trig": {
+      "mode": "AUTO",
+      "status": "Arm",
+      "edge_source": "C4",
+      "edge_level_v": -0.0583,
+      "timebase_s_div": 0.01
+    },
+    "vpp": 1.178125,
+    "ok_v": false,
+    "ok_f": true,
+    "verdict": "FAIL"
+  },
+  {
+    "case": "DC@1000Hz/0Vpp/off1",
+    "scale": [
+      "触发电平→0V",
+      "TDIV=保持 重试失败",
+      "TDIV=0.001 重试失败",
+      "TDIV=0.01 重试失败",
+      "TDIV=0.0001 重试失败",
+      "TDIV=0.1 重试失败",
+      "TDIV=1.0 重试失败",
+      "TDIV=1e-05 重试失败"
+    ],
+    "trig": {
+      "mode": "AUTO",
+      "status": "Auto",
+      "edge_source": "C4",
+      "edge_level_v": 0.0,
+      "timebase_s_div": 1e-05
+    },
+    "vpp": 0.009375,
+    "ok_v": true,
+    "ok_f": true,
+    "verdict": "PASS"
+  },
+  {
+    "case": "SINE@1000Hz/0.2Vpp/off0",
+    "scale": [
+      "触发电平→0V",
+      "TDIV=保持 重试失败",
+      "触发电平→0.00495V(信号中点)",
+      "细调: VDIV 0.25→0.05",
+      "偏置居中: OFST→-0.1795V",
+      "VDIV 0.05→0.02",
+      "复测 Vpp 漂移 0.0678→0.00642，按新值二次定标",
+      "VDIV 0.02→0.002",
+      "TDIV 0.001→0.0005"
+    ],
+    "trig": {
+      "mode": "AUTO",
+      "status": "Ready",
+      "edge_source": "C4",
+      "edge_level_v": 0.171,
+      "timebase_s_div": 0.0005
+    },
+    "vpp": 0.0,
+    "ok_v": false,
+    "error": "RuntimeError: FREQ@C4 在 6.0s 内无有效值（最后响应: '****'）；请检查信号接入/触发配置",
+    "verdict": "ERROR"
+  },
+  {
+    "case": "SINE@1000Hz/5Vpp/off0",
+    "scale": [
+      "触发电平→0V",
+      "缩放入屏: VDIV 0.002→0.005",
+      "触发电平→0.179V(信号中点)",
+      "偏置居中: OFST→0.000161455V",
+      "VDIV 0.005→0.01",
+      "复测 Vpp 漂移 0.0426→0.0852，按新值二次定标",
+      "VDIV 0.01→0.02"
+    ],
+    "trig": {
+      "mode": "AUTO",
+      "status": "Ready",
+      "edge_source": "C4",
+      "edge_level_v": 0.0817,
+      "timebase_s_div": 0.0005
+    },
+    "vpp": 0.170375,
+    "ok_v": false,
+    "freq": 1000.072,
+    "ok_f": true,
+    "verdict": "FAIL"
+  },
+  {
+    "case": "SINE@1000Hz/2Vpp/off1",
+    "scale": [
+      "触发电平→0V",
+      "TDIV=保持 重试失败",
+      "TDIV=0.001 重试失败",
+      "TDIV=0.01 重试失败",
+      "TDIV=0.0001 重试失败",
+      "TDIV=0.1 重试失败",
+      "TDIV=1.0 重试失败",
+      "TDIV=1e-05 重试失败"
+    ],
+    "trig": {
+      "mode": "AUTO",
+      "status": "Auto",
+      "edge_source": "C4",
+      "edge_level_v": 0.0,
+      "timebase_s_div": 1e-05
+    },
+    "vpp": 0.0,
+    "ok_v": false,
+    "error": "RuntimeError: FREQ@C4 在 6.0s 内无有效值（最后响应: '****'）；请检查信号接入/触发配置",
+    "verdict": "ERROR"
+  },
+  {
+    "case": "SINE@1000Hz/2Vpp/off-1",
+    "scale": [
+      "触发电平→0V",
+      "TDIV=保持 重试失败",
+      "触发电平→-0.0369V(信号中点)",
+      "偏置居中: OFST→-0.036542V",
+      "TDIV 0.001→0.0005"
+    ],
+    "trig": {
+      "mode": "AUTO",
+      "status": "Ready",
+      "edge_source": "C4",
+      "edge_level_v": -0.037,
+      "timebase_s_div": 0.0005
+    },
+    "vpp": 0.059125,
+    "ok_v": false,
+    "freq": 999.92591,
+    "ok_f": true,
+    "verdict": "FAIL"
+  }
+]

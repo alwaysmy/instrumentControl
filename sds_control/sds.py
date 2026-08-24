@@ -238,16 +238,23 @@ class SDS:
         self.write(f":MEASure:SIMPle:SOURce {src.upper()}")
         time.sleep(0.1)
         self.write(f":MEASure:SIMPle:ITEM {item},ON")
-        time.sleep(0.1)
+        # 测量项切换后引擎需要重建（实测：连续切换时读到过渡期旧值，
+        # 如 MAX 读出上一项的残值导致 auto_scale 连环误判）
+        time.sleep(0.8)
         deadline = time.monotonic() + timeout_s
         last_raw = ""
+        poll_start = time.monotonic()
         while time.monotonic() < deadline:
-            time.sleep(0.5)
             last_raw = self.query(f":MEASure:SIMPle:VALue? {item}").strip()
             try:
                 return float(_num(last_raw))
             except ValueError:
-                continue  # 'The number of measurements is zero' 等待测量引擎就绪
+                time.sleep(0.5)
+            if time.monotonic() - poll_start > 3.0:
+                # 长时间无有效值时重发 ITEM 刷新测量引擎
+                self.write(f":MEASure:SIMPle:ITEM {item},ON")
+                time.sleep(0.5)
+                poll_start = time.monotonic()
         raise RuntimeError(
             f"{item}@{src} 在 {timeout_s}s 内无有效值（最后响应: {last_raw!r}）；"
             f"请检查信号接入/触发配置"
@@ -445,9 +452,9 @@ class SDS:
             # 与低分辨率读数下引入新问题，改为：钳制初测偏小时 start 偏小，
             # 削顶由 3b-3 验证回退兜底；信号丢失(出屏)由 MAX-MIN≈0 检测
             try:
-                ideal_in = max(vpp / 6.0, 0.002)  # 下限 2mV，防钳制初测把档位带到极小
+                ideal_in = max(vpp / 6.0, 0.05)  # 下限 50mV：钳制初测防极小档化
                 start = min((s for s in std_steps if s >= ideal_in), default=10.0)
-                start = max(start, 0.002)
+                start = max(start, 0.05)
                 cur = _num(self.query(f"C{n}:VDIV?"))
                 if start > cur:
                     self.write(f"C{n}:VDIV {start}V")

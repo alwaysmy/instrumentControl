@@ -388,14 +388,15 @@ class SDS:
         target_cycles: float = 5.0,
         target_divs: tuple[float, float] = (2.5, 6.0),
         verbose: bool = False,
+        use_autoset: bool = True,
     ) -> dict:
-        """让通道 ch 正确显示波形：修触发 → 测 Vpp/Freq → 调垂直/水平。
+        """让通道 ch 正确显示波形。
 
-        适用场景：屏幕无波形或显示不佳。步骤：
-        1. 触发源切到本通道、电平回 0V、扫频方式 AUTO（无触发也刷新）；
-        2. 打开通道显示；
-        3. 用高级测量读 Vpp 与频率；
-        4. VDIV 调到使波形占 target_divs 格；TDIV 调到约 target_cycles 个周期。
+        use_autoset=True（默认，适合简单规则信号）：
+            :AUToset 一步定标 → SCPI 读 PKPK/FREQ 验证 → 微调 VDIV/TDIV 到
+            目标格数。零截图。
+        use_autoset=False（复杂信号/AUTOSET 失败兜底）：
+            触发修复 → TDIV 重试 → SCPI 闭环垂直定标（削顶回退/偏置居中）。
         """
         n = self._ch(ch)
         src = f"C{n}"
@@ -411,14 +412,71 @@ class SDS:
         if str(trig.get("mode", "")).upper() != "AUTO":
             self.write(":TRIGger:MODE AUTO")
             actions.append("触发模式→AUTO(免触发冻结)")
-        self.write("TRIG:EDGE:LEV 0V")
-        actions.append("触发电平→0V")
         drain_errors(self)
 
         # 2. 打开通道
         if self.query(f"C{n}:TRA?").strip() != "ON":
             self.write(f"C{n}:TRA ON")
             actions.append(f"{src} 显示开启")
+
+        std_steps = [
+            0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10,
+        ]
+        result = {
+            "channel": src,
+            "actions": actions,
+            "vpp": None,
+            "freq": None,
+            "adjusted": {},
+        }
+
+        # 2.5 AUToset 快速路径（简单规则信号一步定标，零截图；失败落入 SCPI 闭环）
+        if use_autoset:
+            try:
+                self.write(C.AUTOSET)
+                time.sleep(2.5)
+                drain_errors(self)
+                vpp = self.measure_simple("PKPK", src)
+                freq = self.measure_simple("FREQ", src)
+                result["vpp"], result["freq"] = vpp, freq
+                if vpp and freq and vpp > 1e-6:
+                    # AUToset 已保证入屏，读数可信——微调到目标格数/周期数
+                    ideal = vpp / sum(target_divs) * 2
+                    best = min(std_steps, key=lambda s: abs(s - ideal))
+                    cur = _num(self.query(f"C{n}:VDIV?"))
+                    if abs(best - cur) / cur > 0.2:
+                        self.write(f"C{n}:VDIV {best}V")
+                        time.sleep(1.2)
+                        vmax = self.measure_simple("MAX", src)
+                        vmin = self.measure_simple("MIN", src)
+                        lim = 4.5 * best
+                        if vmax > lim or vmin < -lim or vmax - vmin < 1e-3:
+                            self.write(f"C{n}:VDIV {cur}V")
+                            actions.append(f"细调 {best} 异常，回退 {cur}")
+                        else:
+                            result["adjusted"]["vdiv"] = best
+                            actions.append(f"细调: VDIV {cur}→{best}")
+                    ideal_tdiv = (target_cycles / freq) / 10
+                    tdiv_std = [
+                        x * m
+                        for x in (1e-9, 1e-6, 1e-3, 1)
+                        for m in (0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000)
+                        if 1e-9 <= x * m <= 1000
+                    ]
+                    best_t = min(tdiv_std, key=lambda s: abs(s - ideal_tdiv))
+                    cur_t = self.timebase_scale()
+                    if abs(best_t - cur_t) / max(cur_t, 1e-12) > 0.3:
+                        self.write(f"TDIV {best_t}")
+                        result["adjusted"]["tdiv"] = best_t
+                        actions.append(f"TDIV {cur_t}→{best_t}")
+                    time.sleep(0.8)
+                    result["vpp"] = self.measure_simple("PKPK", src)
+                    result["freq"] = self.measure_simple("FREQ", src)
+                    if verbose:
+                        print(f"[auto_scale:AUToset] {result}")
+                return result
+            except RuntimeError as e:
+                actions.append(f"AUToset 路径失败({e})，回退 SCPI 闭环")
 
         # 3. 测量 Vpp/Freq —— TDIV 为上轮遗留时不适配会导致平线(****)，逐级重试
         # 列表覆盖低频（10Hz 需 ≥20ms/div）到高频
@@ -436,13 +494,6 @@ class SDS:
             except RuntimeError as e:
                 actions.append(f"TDIV={tdiv_try or '保持'} 重试失败")
 
-        result = {
-            "channel": src,
-            "actions": actions,
-            "vpp": vpp,
-            "freq": freq,
-            "adjusted": {},
-        }
         # 3b. 垂直定标（先缩放入屏，再中点电平/偏置——超屏时 MAX/MIN 被钳制不可信）
         std_steps = [
             0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10,

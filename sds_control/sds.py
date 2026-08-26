@@ -146,12 +146,16 @@ class SDS:
         return None
 
     def channel_attenuation(self, ch: int) -> float:
-        """探头衰减比（响应如 'C1:ATTN 10' → 10.0；D1M 表示 1M:1 数字探针）。"""
+        """探头衰减比（响应如 'C1:ATTN 10' → 10.0；'D1M' 为 1M:1 数字探针 → 1e6）。"""
         raw = self.query(f"C{self._ch(ch)}:ATTN?")
         try:
             return float(raw)
         except ValueError:
-            return float(raw.replace("D", "E")) if "D" in raw else float(raw.rstrip("M") or 0)
+            pass
+        m = re.match(r"^D(\d+)M$", raw.strip())
+        if m:
+            return float(m.group(1)) * 1e6
+        raise ValueError(f"无法解析衰减比: {raw!r}")
 
     def channel_coupling(self, ch: int, coupling: Optional[str] = None) -> Optional[str]:
         n = self._ch(ch)
@@ -237,7 +241,13 @@ class SDS:
             raise RuntimeError(f":MEASure:MODE SIMPle 被拒: {err}")
         self.write(f":MEASure:SIMPle:SOURce {src.upper()}")
         time.sleep(0.1)
+        err = self.query(C.SYST_ERR).strip()
+        if not err.startswith("+0") and "No error" not in err:
+            raise RuntimeError(f":MEASure:SIMPle:SOURce 被拒: {err}")
         self.write(f":MEASure:SIMPle:ITEM {item},ON")
+        err = self.query(C.SYST_ERR).strip()
+        if not err.startswith("+0") and "No error" not in err:
+            raise RuntimeError(f":MEASure:SIMPle:ITEM 被拒: {err}")
         # 测量项切换后引擎需要重建（实测：连续切换时读到过渡期旧值，
         # 如 MAX 读出上一项的残值导致 auto_scale 连环误判）
         time.sleep(0.8)
@@ -592,8 +602,7 @@ class SDS:
 
         # 4a. 垂直档位：VDIV ∈ 1-2-5 序列，使 Vpp 占 2.5~6 格；调后复测确认收敛
         std_steps = [
-            0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.05 * 2, 0.05 * 5,
-            0.1, 0.2, 0.5, 1, 2, 5, 10,
+            0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10,
         ]
         ideal = vpp / sum(target_divs) * 2  # 目标格数中点
         best = min(std_steps, key=lambda s: abs(s - ideal))
@@ -605,7 +614,7 @@ class SDS:
             time.sleep(1.2)
             try:
                 vpp2 = self.measure_simple("PKPK", src)
-                if vpp2 and vpp and abs(vpp2 - vpp) / vpp > 0.3:
+                if vpp2 and vpp and abs(vpp2 - vpp) / max(vpp, 1e-9) > 0.3:
                     actions.append(f"复测 Vpp 漂移 {vpp:.3g}→{vpp2:.3g}，按新值二次定标")
                     ideal = vpp2 / sum(target_divs) * 2
                     best2 = min(std_steps, key=lambda s: abs(s - ideal))

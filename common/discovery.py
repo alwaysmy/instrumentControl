@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -60,17 +61,18 @@ def identify(resource: str, timeout_ms: int = 3000) -> Optional[str]:
     kwargs: dict = {}
     if "SOCKET" in resource.upper():
         kwargs = {"read_termination": "\n", "write_termination": "\n"}
+    rm = pyvisa.ResourceManager()
     try:
-        rm = pyvisa.ResourceManager()
         inst = rm.open_resource(resource, open_timeout=timeout_ms, **kwargs)
         inst.timeout = timeout_ms
         try:
             return inst.query("*IDN?").strip()
         finally:
             inst.close()
-            rm.close()
     except Exception:
         return None
+    finally:
+        rm.close()
 
 
 def scan() -> dict[str, Optional[str]]:
@@ -269,7 +271,25 @@ def find_device(
 
     def try_listed() -> Optional[FindResult]:
         for res in list_resources():
-            idn = identify(res, timeout_ms)
+            # 串口驱动层 open 可能无限挂起（open_timeout 管不到），线程硬超时兜底
+            if res.upper().startswith("ASRL"):
+                idn: Optional[str] = None
+                holder: dict = {}
+
+                def work(res=res):
+                    holder["idn"] = identify(res, timeout_ms)
+
+                t = threading.Thread(target=work, daemon=True)
+                t.start()
+                t.join(6.0)
+                if t.is_alive():
+                    idn = None
+                    attempts.append(("listed", res, "串口探测挂起(6s)，跳过"))
+                    print(f"[listed] [挂起] {res}")
+                    continue
+                idn = holder.get("idn")
+            else:
+                idn = identify(res, timeout_ms)
             attempts.append(("listed", res, idn or "无响应/打开失败"))
             print(f"[listed] [{'HIT' if idn and matches(idn) else '--'}] {res}"
                   + (f" -> {idn}" if idn else ""))

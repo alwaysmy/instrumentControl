@@ -12,7 +12,8 @@ MCP server：`mcp_instruments/server.py`（17 工具，五台设备）。
 
 ```
 需要知道有哪些设备在线？
-  → instr_discover（含 LAN 网段 + USB/GPIB 探测；串口只列出不探测）
+  → instr_discover（LAN 网段 + USB/GPIB/串口全探测；串口被占用给提示，
+    驱动挂起 6s 硬超时；代理 fake-IP 干扰 LAN 时降级 warning 不影响 VISA 结果）
 
 示波器（SDS）：
   看波形显示是否正常 → sds_diagnose（触发链路）→ 异常则 sds_auto_scale

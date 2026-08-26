@@ -18,10 +18,12 @@ class VisaClient:
         read_termination: str = "\n",
         write_termination: str = "\n",
         chunk_size: int = 4096,
+        open_timeout_ms: int = 3000,
     ):
         self.resource = resource
         self.rm = pyvisa.ResourceManager()
-        self.inst = self.rm.open_resource(resource)
+        # open_timeout 与读超时分开：离线资源的连接阶段不受 inst.timeout 控制
+        self.inst = self.rm.open_resource(resource, open_timeout=open_timeout_ms)
         self.inst.timeout = timeout_ms
         self.inst.read_termination = read_termination
         self.inst.write_termination = write_termination

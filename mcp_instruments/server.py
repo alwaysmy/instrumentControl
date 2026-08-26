@@ -25,7 +25,7 @@ for sub in ("dh1766_control/src",):
 
 from mcp.server.fastmcp import FastMCP
 
-from common.discovery import find_device, identify_lan, detect_cidr, probe_alive
+from common.discovery import identify_lan, detect_cidr, probe_alive, list_resources, identify
 from sds_control import SDS
 from sdg_control import SDG
 from keysight_3446x import DMM
@@ -159,6 +159,7 @@ def instr_discover(cidr: str | None = None) -> str:
             result: dict = {}
 
             def work():
+                rm = None
                 try:
                     rm = pyvisa.ResourceManager()
                     inst = rm.open_resource(r, open_timeout=2000)
@@ -176,12 +177,14 @@ def instr_discover(cidr: str | None = None) -> str:
                             )
                     finally:
                         inst.close()
-                        rm.close()
                 except Exception as e:
                     if "BUSY" in str(e).upper() or getattr(e, "error_code", 0) == -1073807346:
                         result.update(online=None, note="串口被占用（其他程序打开中）")
                     else:
                         result.update(online=None, note=f"打开失败: {type(e).__name__}")
+                finally:
+                    if rm is not None:
+                        rm.close()
 
             t = threading.Thread(target=work, daemon=True)
             t.start()
@@ -282,12 +285,14 @@ def sds_shutdown(confirm: bool, resource: str = SDS_RES) -> str:
         return _err("confirm_required", "关机需 confirm=True（设备将离线，需手动开机）", "SDS")
 
     def fn(s: SDS):
-        # 设备可能立即断开导致 write 抛 VisaIOError，但关机已生效——不视为失败
+        # 设备可能立即断开导致 write 抛 VisaIOError，但关机已生效——区分记录
         try:
             s.shutdown(confirm=True)
-            return {"sent": True, "note": "命令已确认送达"}
+            return {"sent": True, "delivered": True, "note": "命令已确认送达"}
         except Exception as e:
-            return {"sent": True, "note": f"命令已发送（设备断开: {type(e).__name__}）"}
+            # 断开类异常（写后连接断）视为已送达；其他异常标记未确认
+            return {"sent": True, "delivered": False,
+                    "note": f"命令已发送但结果未确认: {type(e).__name__}"}
 
     def close_quiet(s: SDS):
         try:

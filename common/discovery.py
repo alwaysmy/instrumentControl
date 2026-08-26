@@ -54,14 +54,15 @@ def identify(resource: str, timeout_ms: int = 3000) -> Optional[str]:
     """对单个资源发送 *IDN?，成功返回识别串，失败/超时返回 None。
 
     SOCKET 资源自动配置 \\n 读写终止符（VISA socket 会话无协议层终止符，
-    不配则命令不完整导致设备不应答）。
+    不配则命令不完整导致设备不应答）。open_timeout 与读超时同设——
+    否则离线资源的 TCP 连接阶段可达 60s+（系统默认）。
     """
     kwargs: dict = {}
     if "SOCKET" in resource.upper():
         kwargs = {"read_termination": "\n", "write_termination": "\n"}
     try:
         rm = pyvisa.ResourceManager()
-        inst = rm.open_resource(resource, **kwargs)
+        inst = rm.open_resource(resource, open_timeout=timeout_ms, **kwargs)
         inst.timeout = timeout_ms
         try:
             return inst.query("*IDN?").strip()
@@ -131,11 +132,22 @@ def identify_lan(host: str, timeout_ms: int = 3000) -> Optional[tuple[str, str]]
 
 
 def detect_cidr() -> Optional[str]:
-    """经 UDP 路由探测本机出口 IP，返回所在 /24 网段；失败返回 None。"""
+    """经 UDP 路由探测本机出口 IP，返回所在 /24 网段；失败返回 None。
+
+    仅接受 RFC1918 私网（10/172.16-31/192.168）。注意 Python 的 is_private
+    会把 198.18.0.0/15（benchmark 段，代理 fake-IP 常用）也判为私有，
+    必须显式排除——扫它得到 254 个假地址且 VISA open 全部挂起。
+    """
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
+        addr = ipaddress.ip_address(ip)
+        ok = addr in ipaddress.ip_network("10.0.0.0/8") or \
+            addr in ipaddress.ip_network("172.16.0.0/12") or \
+            addr in ipaddress.ip_network("192.168.0.0/16")
+        if not ok:
+            return None
         return str(ipaddress.ip_network(f"{ip}/24", strict=False))
     except Exception:
         return None

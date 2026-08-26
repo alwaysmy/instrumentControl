@@ -122,13 +122,20 @@ def _psu_close(p: DH1766) -> None:
 
 @mcp.tool()
 def instr_discover(cidr: str | None = None) -> str:
-    """发现本机所有仪器：LAN 端口预筛 + 多协议 *IDN?。
-    cidr 可选（如 '192.168.31.0/24'），默认自动探测本机 /24。"""
+    """发现本机所有仪器。返回三部分：
+    lan: 网段扫描（TCP 预筛 + 多协议 *IDN?，键=资源串 值=IDN）；
+    visa: VISA 资源列表（USB/GPIB 自动探测 *IDN?；串口 ASRL 只列出
+    不探测——避免占用串口干扰设备，online=None）；
+    cidr: 实际使用的网段。cidr 参数可选（如 '192.168.31.0/24'），
+    默认自动探测本机 /24。"""
     import ipaddress
     import concurrent.futures as cf
+    from common.discovery import list_resources, identify
 
     def fn(_):
         seg = cidr or detect_cidr()
+        if not seg:
+            return {"error": "无法探测本机网段（代理/VPN 虚拟网卡？），请显式传 cidr 参数，如 192.168.31.0/24"}
         addrs = [str(h) for h in ipaddress.ip_network(seg, strict=False).hosts()]
         with cf.ThreadPoolExecutor(max_workers=128) as pool:
             alive = [a for a, ok in zip(addrs, pool.map(probe_alive, addrs)) if ok]
@@ -137,7 +144,24 @@ def instr_discover(cidr: str | None = None) -> str:
             for a, r in pool.map(lambda x: (x, identify_lan(x)), alive):
                 if r:
                     lan[r[0]] = r[1]
-        return {"cidr": seg, "candidates": alive, "instruments": lan}
+        visa = []
+
+        def probe_visa(r: str):
+            up = r.upper()
+            entry = {"resource": r}
+            if up.startswith("ASRL"):
+                entry.update(kind="serial", online=None,
+                             note="串口不自动探测（避免占用干扰）")
+            elif "INSTR" in up:
+                idn = identify(r, timeout_ms=2000)
+                entry.update(kind="usb/gpib", online=bool(idn), idn=idn)
+            else:
+                entry.update(kind="other", online=None)
+            return entry
+
+        with cf.ThreadPoolExecutor(max_workers=16) as pool:
+            visa = list(pool.map(probe_visa, list_resources()))
+        return {"cidr": seg, "candidates": alive, "lan": lan, "visa": visa}
 
     return _call("discovery", lambda: None, fn, close_fn=lambda _: None)
 
@@ -152,16 +176,19 @@ def sds_status(resource: str = SDS_RES) -> str:
 
 @mcp.tool()
 def sds_auto_scale(ch: int, use_autoset: bool = False, resource: str = SDS_RES) -> str:
-    """SDS 自动定标让通道波形正确显示。
-    use_autoset=True 为破坏性 :AUToset（重置所有通道），仅限简单周期信号且
-    无其他已调好通道时显式启用；默认 SCPI 闭环只动目标通道。"""
+    """SDS 自动定标让通道 ch(1-4) 波形正确显示。
+    use_autoset=True 为破坏性 :AUToset（重置所有通道档位/时基/触发），仅限
+    简单周期信号且无其他已调好通道时显式启用；默认 SCPI 闭环只动目标通道。返回 actions/vpp/freq/adjusted。"""
     return _call("SDS", lambda: _sds(resource),
                  lambda s: s.auto_scale(ch, use_autoset=use_autoset))
 
 
 @mcp.tool()
 def sds_measure(item: str, ch: int = 4, resource: str = SDS_RES) -> str:
-    """SDS 单次测量（SIMPLE 模式）。item: PKPK/MAX/MIN/RMS/FREQ/PER/PWID/DUTY 等。"""
+    """SDS 单次测量（SIMPLE 模式，自动切模式+设信源）。ch=1-4。
+    item 枚举（SDS 缩写表）：PKPK/MAX/MIN/AMPL/TOP/BASE/RMS/CRMS/MEAN/VSTD/
+    PER/FREQ/PWID/NWID/DUTY/NDUTY/RISE/FALL/EDGES/PPULSES 等。
+    无有效读数（如无信号测频率）会在超时后返回 device_error。"""
     return _call("SDS", lambda: _sds(resource),
                  lambda s: s.measure_simple(item, f"C{ch}"))
 
@@ -218,8 +245,9 @@ def sdg_status(resource: str = SDG_RES) -> str:
 @mcp.tool()
 def sdg_set_wave(ch: int, wvtp: str, freq_hz: float, amp_v: float,
                  offset_v: float = 0.0, resource: str = SDG_RES) -> str:
-    """SDG 设置通道波形参数（SINE/SQUARE/RAMP/PULSE/NOISE/DC）。
-    注意：不改变输出开关状态；输出开启时参数实时生效。"""
+    """SDG 设置通道 ch(1-2) 波形参数。wvtp: SINE/SQUARE/RAMP/PULSE/NOISE/DC；
+    freq_hz 单位 Hz；amp_v 单位 V（高阻负载下即 Vpp）；offset_v 单位 V。
+    注意：不改变输出开关状态；输出开启时参数实时生效。返回含设备回读。"""
     def fn(g: SDG):
         r = g.set_basic_wave(
             ch, WVTP=wvtp.upper(), FRQ=f"{freq_hz:g}HZ",
@@ -234,7 +262,8 @@ def sdg_set_wave(ch: int, wvtp: str, freq_hz: float, amp_v: float,
 @mcp.tool()
 def sdg_output(ch: int, on: bool, confirm: bool = False,
                resource: str = SDG_RES) -> str:
-    """SDG 开关通道输出。⚠ on=True 输出真实信号，需 confirm=True。"""
+    """SDG 开关通道 ch(1-2) 输出。⚠ on=True 输出真实信号，必须 confirm=True。
+    on=False 关闭输出无需 confirm。返回输出状态（state/LOAD/PLRT）。"""
     if on and not confirm:
         return _err("confirm_required", "开启输出需 confirm=True（真实信号输出）", "SDG")
 
@@ -265,7 +294,9 @@ def dmm_status(resource: str = DMM_RES) -> str:
 def dmm_configure(function: str, range_v: float | None = None,
                   resolution: float | None = None,
                   resource: str = DMM_RES) -> str:
-    """34465A 配置测量功能/量程/分辨率（不触发测量）。"""
+    """34465A 配置测量功能/量程/分辨率（不触发测量）。function: volt_dc/
+    volt_ac/curr_dc/curr_ac/res/fres/cap/freq；range_v/resolution 可选。
+    注意 :CONF? 回读有滞后一拍特性，以实测值为准。"""
     return _call("DMM", lambda: _dmm(resource),
                  lambda d: (d.configure(function, range_v, resolution),
                             d.configuration())[1])
@@ -281,7 +312,9 @@ def dho_status(resource: str = DHO_RES) -> str:
 
 @mcp.tool()
 def dho_measure_item(item: str, ch: int = 1, resource: str = DHO_RES) -> str:
-    """DHO 单次测量查询（:MEASure:ITEM?，34 种 item 如 VPP/FREQ/VAVG）。"""
+    """DHO 单次测量查询。item 枚举（RIGOL 表）: VPP/VMAX/VMIN/VAMP/VAVG/VRMS/
+    PERiod/FREQuency/PWIDth/NWIDth/PDUTy/RTIMe/FTIMe 等；ch=1-4。
+    无有效测量返回 9.9E37 量级值。"""
     return _call("DHO", lambda: _dho(resource), lambda s: s.measure_item(item, ch))
 
 
@@ -289,14 +322,14 @@ def dho_measure_item(item: str, ch: int = 1, resource: str = DHO_RES) -> str:
 
 @mcp.tool()
 def psu_status(resource: str = PSU_RES) -> str:
-    """DH1766 电源只读快照：三路电压/电流/功率/设定/OVP/OCP/输出状态。"""
+    """DH1766 电源只读快照：三路(CH1-3)电压/电流/功率/设定值/OVP/OCP/输出状态/跟踪模式。"""
     return _call("DH1766", lambda: _psu_connect(resource),
                  lambda p: p.snapshot(), close_fn=_psu_close)
 
 
 @mcp.tool()
 def psu_measure(resource: str = PSU_RES) -> str:
-    """DH1766 三路输出电压/电流回读。"""
+    """DH1766 三路输出电压/电流回读（CH1/2/3，单位 V/A）。带载时读数为实际输出。"""
     return _call("DH1766", lambda: _psu_connect(resource),
                  lambda p: {"voltage_v": p.measure_voltage_all(),
                             "current_a": p.measure_current_all()},

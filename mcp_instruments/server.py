@@ -124,44 +124,108 @@ def _psu_close(p: DH1766) -> None:
 def instr_discover(cidr: str | None = None) -> str:
     """发现本机所有仪器。返回三部分：
     lan: 网段扫描（TCP 预筛 + 多协议 *IDN?，键=资源串 值=IDN）；
-    visa: VISA 资源列表（USB/GPIB 自动探测 *IDN?；串口 ASRL 只列出
-    不探测——避免占用串口干扰设备，online=None）；
+    visa: VISA 资源列表——USB/GPIB/串口均自动探测 *IDN?（串口被占用时
+    返回占用提示，空闲则探测后立即断开，约 2s/口）；
     cidr: 实际使用的网段。cidr 参数可选（如 '192.168.31.0/24'），
-    默认自动探测本机 /24。"""
+    默认自动探测本机 /24（代理虚拟网卡环境需显式传）。"""
     import ipaddress
     import concurrent.futures as cf
     from common.discovery import list_resources, identify
 
     def fn(_):
-        seg = cidr or detect_cidr()
-        if not seg:
-            return {"error": "无法探测本机网段（代理/VPN 虚拟网卡？），请显式传 cidr 参数，如 192.168.31.0/24"}
-        addrs = [str(h) for h in ipaddress.ip_network(seg, strict=False).hosts()]
-        with cf.ThreadPoolExecutor(max_workers=128) as pool:
-            alive = [a for a, ok in zip(addrs, pool.map(probe_alive, addrs)) if ok]
-        lan = {}
-        with cf.ThreadPoolExecutor(max_workers=32) as pool:
-            for a, r in pool.map(lambda x: (x, identify_lan(x)), alive):
-                if r:
-                    lan[r[0]] = r[1]
-        visa = []
+        # VISA 资源（USB/串口/GPIB）先探测——不依赖网段，代理干扰不影响
 
         def probe_visa(r: str):
+            """非串口 VISA 资源探测（USB/GPIB 走 VISA，有 open_timeout 兜底）。"""
             up = r.upper()
             entry = {"resource": r}
-            if up.startswith("ASRL"):
-                entry.update(kind="serial", online=None,
-                             note="串口不自动探测（避免占用干扰）")
-            elif "INSTR" in up:
+            if "INSTR" in up:
                 idn = identify(r, timeout_ms=2000)
                 entry.update(kind="usb/gpib", online=bool(idn), idn=idn)
             else:
                 entry.update(kind="other", online=None)
             return entry
 
+        def probe_serial(r: str, timeout_s: float = 6.0):
+            """串口探测：被占用给提示；空闲则 *IDN? 后立即断开。
+
+            驱动层 open 可能无限挂起且持有 VISA 全局锁（open_timeout 管不到），
+            故串口不进并行池（会拖死全部 worker），单独线程 join 硬超时；
+            挂起线程为 daemon 随进程退出。
+            """
+            import pyvisa
+            import threading
+
+            result: dict = {}
+
+            def work():
+                try:
+                    rm = pyvisa.ResourceManager()
+                    inst = rm.open_resource(r, open_timeout=2000)
+                    inst.timeout = 1500
+                    inst.write_termination = "\n"
+                    inst.read_termination = "\n"
+                    try:
+                        idn = inst.query("*IDN?").strip()
+                        if idn:
+                            result.update(online=True, idn=idn)
+                        else:
+                            result.update(
+                                online=False,
+                                note="打开成功但无 *IDN? 响应（非 SCPI 设备或波特率不匹配）",
+                            )
+                    finally:
+                        inst.close()
+                        rm.close()
+                except Exception as e:
+                    if "BUSY" in str(e).upper() or getattr(e, "error_code", 0) == -1073807346:
+                        result.update(online=None, note="串口被占用（其他程序打开中）")
+                    else:
+                        result.update(online=None, note=f"打开失败: {type(e).__name__}")
+
+            t = threading.Thread(target=work, daemon=True)
+            t.start()
+            t.join(timeout_s)
+            if t.is_alive():
+                return {"online": None, "note": f"探测超时({timeout_s:.0f}s，驱动挂起，疑似被占用)"}
+            return result
+
+        resources = list_resources()
+        non_serial = [r for r in resources if not r.upper().startswith("ASRL")]
+        serial_res = [r for r in resources if r.upper().startswith("ASRL")]
         with cf.ThreadPoolExecutor(max_workers=16) as pool:
-            visa = list(pool.map(probe_visa, list_resources()))
-        return {"cidr": seg, "candidates": alive, "lan": lan, "visa": visa}
+            visa = list(pool.map(probe_visa, non_serial))
+        for r in serial_res:
+            entry = {"resource": r, "kind": "serial"}
+            entry.update(probe_serial(r))
+            visa.append(entry)
+
+        # LAN 网段扫描（代理 fake-IP 会污染，异常时降级为警告而非失败）
+        seg = cidr or detect_cidr()
+        lan, warn = {}, None
+        if not seg:
+            warn = "无法探测本机网段（代理/VPN 虚拟网卡？），LAN 部分跳过；可显式传 cidr"
+        else:
+            addrs = [str(h) for h in ipaddress.ip_network(seg, strict=False).hosts()]
+            with cf.ThreadPoolExecutor(max_workers=128) as pool:
+                alive = [a for a, ok in zip(addrs, pool.map(probe_alive, addrs)) if ok]
+            # 代理 fake-IP 模式会对任意 IP 立即 SYN-ACK → 全部误报 alive →
+            # 后续 VISA open 逐个挂起拖死线程池（实测 254 全 alive 卡死 5min+）
+            if len(alive) > 64:
+                warn = (
+                    f"网段 {seg} 探测到 {len(alive)}/{len(addrs)} 地址端口全开——"
+                    "疑似代理/VPN fake-IP 干扰，LAN 结果已丢弃。"
+                    "请关闭代理后重试，或用 resource 参数直连。"
+                )
+            else:
+                with cf.ThreadPoolExecutor(max_workers=32) as pool:
+                    for a, r in pool.map(lambda x: (x, identify_lan(x)), alive):
+                        if r:
+                            lan[r[0]] = r[1]
+        out = {"cidr": seg, "lan": lan, "visa": visa}
+        if warn:
+            out["warning"] = warn
+        return out
 
     return _call("discovery", lambda: None, fn, close_fn=lambda _: None)
 

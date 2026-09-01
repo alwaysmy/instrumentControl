@@ -9,7 +9,13 @@ import pyvisa
 
 
 class VisaClient:
-    """持有一个 VISA 资源连接的 SCPI 客户端。"""
+    """持有一个 VISA 资源连接的 SCPI 客户端。
+
+    默认配置 \\n 读写终止符——raw socket 设备（如 DH1766 的 5025 口）响应
+    以 \\n 结尾，不设终止符时 read() 会等待 EOF 导致永久超时（即使设备
+    已应答；pyvisa-py 后端尤其明显）。直连 open_resource 的调用方必须
+    自行配置同等终止符。
+    """
 
     def __init__(
         self,

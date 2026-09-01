@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-from __future__ import annotations
-
 """
 instrument MCP Server — 五台仪器的统一 MCP 接口。
 
@@ -26,22 +24,16 @@ for sub in ("dh1766_control/src",):
     sys.path.insert(0, os.path.join(ROOT, sub))
 
 from mcp.server.fastmcp import FastMCP
-from mcp import types as mcp_types
+
+from common.discovery import identify_lan, detect_cidr, probe_alive, list_resources, identify
+from sds_control import SDS
+from sdg_control import SDG
+from keysight_3446x import DMM
+from dho_control import DHO
+from dh1766_control import DH1766
+from dh1766_control.visa import VisaClient
 
 mcp = FastMCP("instruments")
-
-# Codex（Windows）对同时声明 prompts+resources 能力的 stdio 服务器存在
-# “工具发现成功但不注入会话”的缺陷（实测 kimi-cu 仅声明 tools 可正常注入，
-# everything-mcp 与 instrument 声明 prompts 后均注入失败）。本服务器只用 tools，
-# 移除 prompts/resources 处理器，使初始化能力收敛为仅 tools。
-for _req_type in (
-    mcp_types.ListPromptsRequest,
-    mcp_types.GetPromptRequest,
-    mcp_types.ListResourcesRequest,
-    mcp_types.ListResourceTemplatesRequest,
-    mcp_types.ReadResourceRequest,
-):
-    mcp._mcp_server.request_handlers.pop(_req_type, None)
 
 _DEVICE_LOCK = threading.Lock()
 
@@ -94,36 +86,30 @@ def _call(model_name, connect_fn, fn, close_fn=None):
 
 
 def _sds(resource: str = SDS_RES) -> SDS:
-    from sds_control import SDS
     s = SDS(resource)
     s.connect()
     return s
 
 
 def _sdg(resource: str = SDG_RES) -> SDG:
-    from sdg_control import SDG
     g = SDG(resource)
     g.connect()
     return g
 
 
 def _dmm(resource: str = DMM_RES) -> DMM:
-    from keysight_3446x import DMM
     d = DMM(resource)
     d.connect()
     return d
 
 
 def _dho(resource: str = DHO_RES) -> DHO:
-    from dho_control import DHO
     h = DHO(resource)
     h.connect()
     return h
 
 def _psu_connect(resource: str = PSU_RES) -> DH1766:
     """DH1766 连接（DH1766 类无 close，退出经 _psu_close 关 client）。"""
-    from dh1766_control import DH1766
-    from dh1766_control.visa import VisaClient
     return DH1766(VisaClient(resource, timeout_ms=5000))
 
 
@@ -417,31 +403,6 @@ def psu_measure(resource: str = PSU_RES) -> str:
                  lambda p: {"voltage_v": p.measure_voltage_all(),
                             "current_a": p.measure_current_all()},
                  close_fn=_psu_close)
-
-
-def _prewarm_device_imports() -> None:
-    """后台预热重依赖（pyvisa/numpy 及各设备库），避免首次工具调用卡顿。
-
-    pyvisa 首次 import 与首个 ResourceManager 初始化（加载 visa32.dll）可能
-    耗时 20s+，放 daemon 线程预热，不阻塞 initialize/tools-list 关键路径。
-    """
-    try:
-        import pyvisa
-        rm = pyvisa.ResourceManager()
-        try:
-            rm.close()
-        except Exception:
-            pass
-    except Exception:
-        pass
-    for _mod in ("sds_control", "sdg_control", "keysight_3446x", "dho_control"):
-        try:
-            __import__(_mod)
-        except Exception:
-            pass
-
-
-threading.Thread(target=_prewarm_device_imports, daemon=True).start()
 
 
 if __name__ == "__main__":

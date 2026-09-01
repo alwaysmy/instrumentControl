@@ -376,6 +376,39 @@ class DH1766:
         self.select_channel(ch)
         return float(self.client.query(C.MEAS_POW + "?"))
 
+    def measure_voltage_dict(self) -> dict[str, float]:
+        """MEAS:VOLT:ALL? 按通道名返回 {"CH1": v, "CH2": v, "CH3": v}。
+
+        语义提示：CH2 常用负轨（如 -12V 模拟负供电），断电验证时 CH1/CH2
+        都要归零。
+        """
+        vals = self.measure_voltage_all()
+        return {f"CH{i + 1}": vals[i] for i in range(len(vals))}
+
+    def measure_current_dict(self) -> dict[str, float]:
+        """MEAS:CURR:ALL? 按通道名返回 {"CH1": a, "CH2": a, "CH3": a}。"""
+        vals = self.measure_current_all()
+        return {f"CH{i + 1}": vals[i] for i in range(len(vals))}
+
+    def power_cycle(self, ch: Channel, off_s: float = 6.0, on_settle_s: float = 2.0) -> dict:
+        """断电→上电高层 API（断电验证场景高频操作）。
+
+        off_s: 断电时长（实测电容残留需 ≥6s 放完）；on_settle_s: 上电后
+        等待过渡态（EXPERIENCE.md §5.1：上电后 ≥2s 读数才稳定）。
+        返回 {"off_s": 实际断电时长, "settle_s": 实际等待, "after": 上电稳定后读数 dict}。
+        """
+        self.set_output(ch, False)
+        t0 = time.monotonic()
+        time.sleep(off_s)
+        off_actual = time.monotonic() - t0
+        self.set_output(ch, True)
+        time.sleep(on_settle_s)
+        return {
+            "off_s": round(off_actual, 2),
+            "settle_s": on_settle_s,
+            "after": self.measure_voltage_dict(),
+        }
+
     # ================= 复合控制命令 4.2.9（设备扩展） =================
     def apply_voltage(self, values: Optional[list[float]] = None) -> Optional[list[float]]:
         """APPL:VOLT 三路电压设定（读写，一次完成，无通道切换延时）。

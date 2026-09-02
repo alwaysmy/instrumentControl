@@ -2,6 +2,10 @@
 
 封装 pyvisa 的资源打开/查询/写入/关闭，统一超时与终止符。
 所有仪器（USB TMC / 串口 / LAN）共用。
+
+镜像副本：dh1766_control/src/dh1766_control/visa.py（该库需独立 pip 安装，
+不能 import common）。两份代码体（class 及其方法）保持逐行一致，修改任一份
+必须同步另一份；模块 docstring 的各自上下文说明是唯一允许的差异。
 """
 from __future__ import annotations
 
@@ -9,7 +13,13 @@ import pyvisa
 
 
 class VisaClient:
-    """持有一个 VISA 资源连接的 SCPI 客户端。"""
+    """持有一个 VISA 资源连接的 SCPI 客户端。
+
+    默认配置 \\n 读写终止符——raw socket 设备（如 DH1766 的 5025 口）响应
+    以 \\n 结尾，不设终止符时 read() 会等待 EOF 导致永久超时（即使设备
+    已应答；pyvisa-py 后端尤其明显）。直连 open_resource 的调用方必须
+    自行配置同等终止符。
+    """
 
     def __init__(
         self,

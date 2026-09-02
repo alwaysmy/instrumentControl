@@ -2,7 +2,8 @@
 
 仪器控制集合项目：VISA/SCPI 统一发现层（common/）+ 按设备分库
 （dh1766_control / dho_control / sds_control / sdg_control / keysight_3446x /
-dg832-control）。AI/Agent 操作仪器必须遵守以下规范。
+emoe_control / dg832-control）+ MCP 统一暴露（mcp_instruments/）。
+AI/Agent 操作仪器必须遵守以下规范。
 
 ## 一、SCPI 客户端铁律（实测教训，违反必踩坑）
 
@@ -69,6 +70,8 @@ dg832-control）。AI/Agent 操作仪器必须遵守以下规范。
 - 审计报告：`docs/command_audit_20260823.md`（零猜测命令结论）
 - 操作手册：`docs/AI_OPERATION_GUIDE.md`（API/固件特性/闭环范例）
 - 设备经验：`dh1766_control/docs/EXPERIENCE.md`（时序/固件差异/上电过渡态）
+- MCP 服务器：`mcp_instruments/server.py`（17 工具五设备；zcode 用户级 config 已注册
+  `instruments`；工具选择/参数语义/安全门见 skill `instrument-mcp`）
 
 ## 四、当前设备与资源
 
@@ -79,6 +82,7 @@ dg832-control）。AI/Agent 操作仪器必须遵守以下规范。
 | Siglent SDS824X HD | sds_control | VXI-11（.220）|
 | Siglent SDG2122X 信号源 | sdg_control | VXI-11（.206）|
 | Keysight 34465A 万用表 | keysight_3446x | VXI-11（.123）|
+| Emoe 校准器（骨架） | emoe_control | 串口 `ASRL31`（仅发现+*IDN?，编程手册未提供）|
 
 ## 五、已知待办
 

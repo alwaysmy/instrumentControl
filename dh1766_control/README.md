@@ -9,6 +9,12 @@ pip install -e ./dh1766_control
 # 依赖：pyvisa>=1.13.0 + 厂商 VISA 运行时（NI-VISA / Keysight IO Libraries，Windows 提供 visa32.dll）
 ```
 
+> **自包含范围**：`DH1766` / `VisaClient` / `commands` 不依赖项目其他代码，pip 安装后可
+> 独立使用（显式传资源串即可）。`find_dh1766` 则依赖项目根目录的 `common` 包在
+> sys.path（见 `src/dh1766_control/discovery.py` 头注），脱离项目根使用时请改传
+> 显式 resource。另：`visa.py` 是 `common/visa_client.py` 的镜像副本（原因同上），
+> 两份须同步修改。
+
 ## 用法
 
 ```python

@@ -308,13 +308,8 @@ def sds_shutdown(confirm: bool, resource: str = SDS_RES) -> str:
             return {"sent": True, "delivered": False,
                     "note": f"命令已发送但结果未确认: {type(e).__name__}"}
 
-    def close_quiet(s: SDS):
-        try:
-            s.close()
-        except Exception:
-            pass
-
-    return _call("SDS", lambda: _sds(resource), fn, close_fn=close_quiet)
+    # 关闭走 _call 默认路径（finally 已 try/except 兜底，关机后断连的 close 异常被吞）
+    return _call("SDS", lambda: _sds(resource), fn)
 
 
 # ============ SDG 信号源 ============

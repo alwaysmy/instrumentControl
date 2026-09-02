@@ -6,10 +6,17 @@
 
 ```
 instrumentControl/
-├── common/                 # 通用部分：VISA 客户端与设备发现（多设备共用）
-├── dh1766_control/         # DH1766 控制库（独立可安装：pip install -e ./dh1766_control）
+├── common/                 # 通用层：VISA 客户端 VisaClient + 统一发现 find_device
+├── mcp_instruments/        # MCP 服务器：17 工具统一暴露五台仪器（server.py + SKILL.md）
+├── dh1766_control/         # DH1766 电源库（独立可安装：pip install -e ./dh1766_control）
 │   ├── src/dh1766_control/ # 驱动 + SCPI 命令常量 + VISA 客户端（自包含）
 │   └── docs/               # 手册提取 / 命令速查 / 经验总结
+├── dho_control/            # RIGOL DHO800/900 示波器库
+├── sds_control/            # Siglent SDS800X HD 示波器库
+├── sdg_control/            # Siglent SDG2000X 信号源库
+├── keysight_3446x/         # Keysight Truevolt 34465A 万用表库
+├── emoe_control/           # Emoe 校准器库（骨架版：仅发现 + *IDN?，编程手册未提供）
+├── dg832-control/          # DG832 独立嵌套 git 仓库（历史库，结构不同，勿混入主仓提交）
 ├── devices/                # 设备专用文档（驱动已迁入 dh1766_control）
 ├── archive/                # 历史版本归档（旧版驱动等，可回溯）
 ├── TEST_SCRIPTS/           # 实测脚本（按设备分目录，输出带时间戳留痕）
@@ -61,6 +68,16 @@ python TEST_SCRIPTS/dh1766/test_dh1766_full.py --safe     # 接入负载时（�
   实测要点：SDS 全拼命令 ":ACQuire:MDEPth?" 不响应必须短形式 "ACQ:MDEP?"；SDS 响应带单位
   后缀需剥离；SDS 查询回显头按前缀智能剥离；34465A DATA:LAST? 带 "VDC" 后缀。
   留痕：TEST_DATA/common/three_libs_smoke_*.json。DHO924S 待设备空闲后做全功能验证。
+- 2026-08-25：`mcp_instruments/` MCP 服务器上线：五台仪器 17 工具统一暴露（无状态
+  连接→操作→关闭 + 全局锁串行化；复位类零暴露，关机/开输出 confirm=True 安全门；
+  错误统一 `{ok, error_type, error}` 四分类）。已注册 zcode 用户级 config
+  （`~/.zcode/cli/config.json` 的 `instruments`，新会话生效；使用指引 skill：instrument-mcp）。
+- 2026-08-26：`instr_discover` v3（串口探测：占用提示/空闲 IDN 后断开/驱动挂起 6s 硬超时；
+  VISA 先于 LAN 隔离代理干扰；fake-IP 网段污染降级 warning），实测发现串口新设备
+  EmoeCalibrator（ASRL31），建 `emoe_control` 骨架库（仅发现 + `*IDN?`，编程手册未提供）。
+- 2026-08-26/09-01：三轮审查修复（整体代码审查 17 项、MCP 专项、DH1766 远控文档建议：
+  `find_dh1766` 上次成功地址缓存 `.last_good_resource.json`、`power_cycle` 高层 API——
+  后者未暴露 MCP）。
 
 ## 安全模式（接入负载后使用）
 

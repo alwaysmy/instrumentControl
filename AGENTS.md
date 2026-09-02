@@ -70,7 +70,8 @@ AI/Agent 操作仪器必须遵守以下规范。
 - 审计报告：`docs/command_audit_20260823.md`（零猜测命令结论）
 - 操作手册：`docs/AI_OPERATION_GUIDE.md`（API/固件特性/闭环范例）
 - 设备经验：`dh1766_control/docs/EXPERIENCE.md`（时序/固件差异/上电过渡态）
-- MCP 服务器：`mcp_instruments/server.py`（17 工具五设备；zcode 用户级 config 已注册
+- MCP 服务器：`mcp_instruments/server.py`（19 工具 = 17 专用 + 2 通用护栏
+  instr_query/instr_write——新设备零代码接入；zcode 用户级 config 已注册
   `instruments`；工具选择/参数语义/安全门见 skill `instrument-mcp`）
 
 ## 四、当前设备与资源
@@ -82,7 +83,7 @@ AI/Agent 操作仪器必须遵守以下规范。
 | Siglent SDS824X HD | sds_control | VXI-11（.220）|
 | Siglent SDG2122X 信号源 | sdg_control | VXI-11（.206）|
 | Keysight 34465A 万用表 | keysight_3446x | VXI-11（.123）|
-| Emoe 校准器（骨架） | emoe_control | 串口 `ASRL31`（仅发现+*IDN?，编程手册未提供）|
+| Emoe 校准器（骨架） | emoe_control | 串口，仅发现+*IDN?（编程手册未提供）。**ASRL 端口号会漂移**：校准器原 ASRL31 现离线；ASRL5 现为另一台新设备 ADS127L11-DAQ-EV——接入新串口设备一律先 `instr_discover` 重新定位 |
 
 ## 五、已知待办
 

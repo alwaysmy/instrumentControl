@@ -14,10 +14,12 @@ dho_control(示波器) / dh1766_control(电源)，经 common 统一发现层。
     - 每次调用连接→操作→关闭（无状态）+ 全局设备锁串行化。
 """
 import os
+import re
 import sys
 import json
 import time
 import threading
+from datetime import datetime
 from pathlib import Path
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -44,6 +46,7 @@ for _req_type in (
     mcp._mcp_server.request_handlers.pop(_req_type, None)
 
 _DEVICE_LOCK = threading.Lock()
+_PREWARM_DONE = threading.Event()  # VISA/设备库冷启动完成前置位（看门狗放宽依据）
 
 SDS_RES = "TCPIP0::192.168.31.220::inst0::INSTR"
 SDG_RES = "TCPIP0::192.168.31.206::inst0::INSTR"
@@ -144,7 +147,7 @@ def instr_discover(cidr: str | None = None) -> str:
     默认自动探测本机 /24（代理虚拟网卡环境需显式传）。"""
     import ipaddress
     import concurrent.futures as cf
-    from common.discovery import list_resources, identify
+    from common.discovery import list_resources, identify, probe_alive, identify_lan
 
     def fn(_):
         # VISA 资源（USB/串口/GPIB）先探测——不依赖网段，代理干扰不影响
@@ -160,22 +163,18 @@ def instr_discover(cidr: str | None = None) -> str:
                 entry.update(kind="other", online=None)
             return entry
 
-        def probe_serial(r: str, timeout_s: float = 6.0):
+        def probe_serial(r: str, rm, timeout_s: float = 6.0):
             """串口探测：被占用给提示；空闲则 *IDN? 后立即断开。
 
-            驱动层 open 可能无限挂起且持有 VISA 全局锁（open_timeout 管不到），
-            故串口不进并行池（会拖死全部 worker），单独线程 join 硬超时；
-            挂起线程为 daemon 随进程退出。
+            驱动层 open 可能无限挂起（open_timeout 管不到），故串口不进并行池
+            （会拖死全部 worker），单独线程 join 硬超时；挂起线程为 daemon
+            随进程退出。RM 由调用方共享单例传入——每探测各建 RM 曾致原生层
+            崩溃（8 串口实测 2026-09-03，进程直接死亡）。
             """
-            import pyvisa
-            import threading
-
             result: dict = {}
 
             def work():
-                rm = None
                 try:
-                    rm = pyvisa.ResourceManager()
                     inst = rm.open_resource(r, open_timeout=2000)
                     inst.timeout = 1500
                     inst.write_termination = "\n"
@@ -196,9 +195,6 @@ def instr_discover(cidr: str | None = None) -> str:
                         result.update(online=None, note="串口被占用（其他程序打开中）")
                     else:
                         result.update(online=None, note=f"打开失败: {type(e).__name__}")
-                finally:
-                    if rm is not None:
-                        rm.close()
 
             t = threading.Thread(target=work, daemon=True)
             t.start()
@@ -212,39 +208,188 @@ def instr_discover(cidr: str | None = None) -> str:
         serial_res = [r for r in resources if r.upper().startswith("ASRL")]
         with cf.ThreadPoolExecutor(max_workers=16) as pool:
             visa = list(pool.map(probe_visa, non_serial))
-        for r in serial_res:
-            entry = {"resource": r, "kind": "serial"}
-            entry.update(probe_serial(r))
-            visa.append(entry)
+        rm_serial = pyvisa.ResourceManager()
+        try:
+            for r in serial_res:
+                entry = {"resource": r, "kind": "serial"}
+                entry.update(probe_serial(r, rm_serial))
+                visa.append(entry)
+        finally:
+            try:
+                rm_serial.close()
+            except Exception:
+                pass
 
-        # LAN 网段扫描（代理 fake-IP 会污染，异常时降级为警告而非失败）
+        # LAN 网段扫描（代理 fake-IP 会污染，任何异常降级为警告，不拖垮 VISA 结果）
         seg = cidr or detect_cidr()
         lan, warn = {}, None
-        if not seg:
-            warn = "无法探测本机网段（代理/VPN 虚拟网卡？），LAN 部分跳过；可显式传 cidr"
-        else:
-            addrs = [str(h) for h in ipaddress.ip_network(seg, strict=False).hosts()]
-            with cf.ThreadPoolExecutor(max_workers=128) as pool:
-                alive = [a for a, ok in zip(addrs, pool.map(probe_alive, addrs)) if ok]
-            # 代理 fake-IP 模式会对任意 IP 立即 SYN-ACK → 全部误报 alive →
-            # 后续 VISA open 逐个挂起拖死线程池（实测 254 全 alive 卡死 5min+）
-            if len(alive) > 64:
-                warn = (
-                    f"网段 {seg} 探测到 {len(alive)}/{len(addrs)} 地址端口全开——"
-                    "疑似代理/VPN fake-IP 干扰，LAN 结果已丢弃。"
-                    "请关闭代理后重试，或用 resource 参数直连。"
-                )
+        try:
+            if not seg:
+                warn = "无法探测本机网段（代理/VPN 虚拟网卡？），LAN 部分跳过；可显式传 cidr"
             else:
-                with cf.ThreadPoolExecutor(max_workers=32) as pool:
-                    for a, r in pool.map(lambda x: (x, identify_lan(x)), alive):
-                        if r:
-                            lan[r[0]] = r[1]
+                addrs = [str(h) for h in ipaddress.ip_network(seg, strict=False).hosts()]
+                with cf.ThreadPoolExecutor(max_workers=128) as pool:
+                    alive = [a for a, ok in zip(addrs, pool.map(probe_alive, addrs)) if ok]
+                # 代理 fake-IP 模式会对任意 IP 立即 SYN-ACK → 全部误报 alive →
+                # 后续 VISA open 逐个挂起拖死线程池（实测 254 全 alive 卡死 5min+）
+                if len(alive) > 64:
+                    warn = (
+                        f"网段 {seg} 探测到 {len(alive)}/{len(addrs)} 地址端口全开——"
+                        "疑似代理/VPN fake-IP 干扰，LAN 结果已丢弃。"
+                        "请关闭代理后重试，或用 resource 参数直连。"
+                    )
+                else:
+                    with cf.ThreadPoolExecutor(max_workers=32) as pool:
+                        for a, r in pool.map(lambda x: (x, identify_lan(x)), alive):
+                            if r:
+                                lan[r[0]] = r[1]
+        except Exception as e:
+            warn = f"LAN 扫描异常降级（VISA 结果不受影响）: {type(e).__name__}: {e}"
         out = {"cidr": seg, "lan": lan, "visa": visa}
         if warn:
             out["warning"] = warn
         return out
 
     return _call("discovery", lambda: None, fn, close_fn=lambda _: None)
+
+
+# ============ 通用护栏 SCPI（新设备零代码接入） ============
+#
+# 设计取舍：不做多设备接口统一——各库专用工具承载人工筛选的语义与安全门；
+# 通用工具只提供"对照手册直发命令"的护栏通道，设备用出价值后再补专用库。
+
+# 复位/存储覆写类黑名单（AGENTS.md 安全红线）：confirm=True 也不放行——
+# 需显式授权的复位场景走测试脚本（如 dh1766 --allow-rst），不经 MCP。
+_FORBIDDEN_RE = re.compile(
+    r"\*(RST|SAV|RCL)"  # *RST / *SAV n / *RCL n（含带参写法）
+    r"|:?(SYST|SYSTEM):(RESET|RES|FACTORY|FACT|PRESET|PRES)(:|\?|$)"
+)
+
+
+def _is_forbidden(cmd: str) -> bool:
+    """空白归一后匹配黑名单（兼容 SCPI 长短形式与大小写）。"""
+    return bool(_FORBIDDEN_RE.search(re.sub(r"\s+", "", cmd).upper()))
+
+
+_ERR_CLEAN_RE = re.compile(r"^\+?0\s*,")
+
+
+def _drain_errors(c) -> list[str]:
+    """排空 SYST:ERR? 队列（铁律2），上限 20 条防死循环。"""
+    errs: list[str] = []
+    for _ in range(20):
+        try:
+            r = c.query("SYST:ERR?").strip()
+        except Exception as e:
+            return errs + [f"(SYST:ERR? 查询失败: {type(e).__name__})"]
+        if _ERR_CLEAN_RE.match(r) or "no error" in r.lower():
+            return errs
+        errs.append(r)
+    return errs + ["(错误队列超过 20 条，停止排空)"]
+
+
+def _visa(resource: str, timeout_ms: int = 5000):
+    from common.visa_client import VisaClient
+    return VisaClient(resource, timeout_ms=max(500, min(timeout_ms, 30000)))
+
+
+def _guarded_call(resource: str, timeout_ms: int, fn) -> str:
+    """带硬超时看门狗的 _call（通用工具专用）。
+
+    实测（2026-09-03）：DMM 离线时 VXI-11 open 无视 open_timeout 挂起 2min+，
+    而 VISA 全局锁会让全部后续工具连锁冻结。通用工具会指向任意发现地址
+    （含离线），必须在 MCP 层兜底：connect+fn 跑 daemon 线程，join 硬超时。
+    超时后挂起线程仍占用 _DEVICE_LOCK，后续调用会继续超时直至 MCP 重启——
+    宁可报错也不冻死服务器。
+    看门狗预算 = max(30, 12+timeout_ms)；若预热未完成（VISA 冷启动实测 30-40s，
+    且工作线程 import 会被预热线程的 import 锁串行阻塞）再放宽 90s，防误杀首调用。
+    """
+    budget = max(30.0, 12.0 + timeout_ms / 1000.0)
+    if not _PREWARM_DONE.is_set():
+        budget += 90.0
+    holder: dict = {}
+
+    def work():
+        holder["r"] = _call(resource, lambda: _visa(resource, timeout_ms), fn)
+
+    t = threading.Thread(target=work, daemon=True)
+    t.start()
+    t.join(budget)
+    if t.is_alive():
+        return _err("timeout",
+                    f"设备 {resource} 无响应超过 {budget:.0f}s（离线/总线挂起），"
+                    "已放弃本次调用；后续调用可能仍超时（挂起线程占用设备锁）",
+                    resource)
+    return holder.get("r") or _err("internal", "worker 未返回结果", resource)
+
+
+def _audit_scpi(tool: str, resource: str, cmd: str, **extra) -> str:
+    """通用 SCPI 写留痕：TEST_DATA/common/mcp_scpi_audit_YYYYMMDD.jsonl（含拒绝记录）。"""
+    d = Path(ROOT) / "TEST_DATA" / "common"
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / f"mcp_scpi_audit_{datetime.now():%Y%m%d}.jsonl"
+    entry = {"ts": datetime.now().isoformat(timespec="seconds"),
+             "tool": tool, "resource": resource, "cmd": cmd, **extra}
+    with open(p, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+    return str(p)
+
+
+@mcp.tool()
+def instr_query(resource: str, cmd: str, timeout_ms: int = 5000) -> str:
+    """通用 SCPI 查询——新设备零代码接入：拿到 resource 即可对照手册直发查询。
+    resource: 完整 VISA 资源串（instr_discover 可得）；
+    cmd: 单条查询命令，必须含 '?'（如 '*IDN?'、':VOLT:DC?'、'C1:BSWV WVTP?'）；
+    timeout_ms: IO 超时 500-30000，默认 5000。
+    串口(ASRL)设备按默认 9600 波特（EmoeCalibrator 实测值），暂不支持改波特率。
+    只读不留痕；写操作用 instr_write（有黑名单/confirm/审计三道护栏）。
+    设备无响应有硬超时看门狗（下限 30s，覆盖 VISA 冷启动），离线资源不会冻结 MCP。"""
+    if "?" not in cmd:
+        return _err("param_validation", f"查询命令必须含 '?': {cmd!r}", resource)
+
+    def fn(c):
+        return {"response": c.query(cmd)}
+
+    return _guarded_call(resource, timeout_ms, fn)
+
+
+@mcp.tool()
+def instr_write(resource: str, cmd: str, readback_cmd: str | None = None,
+                confirm: bool = False, timeout_ms: int = 5000) -> str:
+    """通用 SCPI 写——新设备零代码接入。⚠ 必须 confirm=True（raw 写权限大）。
+    内置护栏（对应 AGENTS.md 铁律2/3 与安全红线）：
+    1) 复位/存储覆写类（*RST/*SAV/*RCL/:SYST:RES|FACT|PRES，长短形式均拦）
+       一律拒绝（error_type=forbidden，confirm 也不放行）；
+    2) 写前 drain 错误队列、写后逐条排空 SYST:ERR?，返回 syst_errors；
+    3) readback_cmd 给定时自动回读（铁律3），如写 'VOLT 1' 后传 'VOLT?'；
+    4) 每次调用（含被拒绝的）落盘 TEST_DATA/common/mcp_scpi_audit_*.jsonl；
+    5) 离线/挂起资源硬超时看门狗，不会冻结 MCP。
+    返回 result: {written, pre_errors, syst_errors, readback}。"""
+    if _is_forbidden(cmd):
+        _audit_scpi("instr_write", resource, cmd, refused="forbidden")
+        return _err("forbidden", f"复位/存储覆写类命令禁止经 MCP 下发: {cmd!r}", resource)
+    if not confirm:
+        _audit_scpi("instr_write", resource, cmd, refused="confirm_required")
+        return _err("confirm_required", "通用写需 confirm=True（raw SCPI 写权限）", resource)
+    if readback_cmd and "?" not in readback_cmd:
+        return _err("param_validation",
+                    f"readback_cmd 是回读查询，必须含 '?': {readback_cmd!r}", resource)
+    _audit_scpi("instr_write", resource, cmd, refused=None)
+
+    def fn(c):
+        pre = _drain_errors(c)
+        c.write(cmd)
+        time.sleep(0.1)  # 设备解析入队延迟（串口/低速设备尤其需要）
+        post = _drain_errors(c)
+        rb = c.query(readback_cmd).strip() if readback_cmd else None
+        return {"written": cmd, "pre_errors": pre or None, "syst_errors": post,
+                "readback": {"cmd": readback_cmd, "response": rb}
+                if readback_cmd else None}
+
+    result = _guarded_call(resource, timeout_ms, fn)
+    _audit_scpi("instr_write", resource, cmd, executed=True,
+                outcome=json.loads(result))
+    return result
 
 
 # ============ SDS 示波器 ============
@@ -414,14 +559,15 @@ def psu_measure(resource: str = PSU_RES) -> str:
                  close_fn=_psu_close)
 
 
-def _prewarm_device_imports() -> None:
-    """后台预热重依赖（pyvisa/numpy 及各设备库），避免首次工具调用卡顿。
+def _prewarm_visa_rm() -> None:
+    """后台预热 VISA 运行时（visa32.dll 加载），历史上实测可 20s+。
 
-    pyvisa 首次 import 与首个 ResourceManager 初始化（加载 visa32.dll）可能
-    耗时 20s+，放 daemon 线程预热，不阻塞 initialize/tools-list 关键路径。
+    ⚠ 本线程内禁止任何 Python import（实测 2026-09-03：mcp.run() 事件循环与
+    后台线程 import pyvisa 互卡死锁——线程永远停在 import 上，首个设备工具
+    调用连锁冻结）。因此 import 一律在主线程模块加载期同步完成（实测 <1s），
+    线程只做 ResourceManager 初始化这个纯 DLL 调用。
     """
     try:
-        import pyvisa
         rm = pyvisa.ResourceManager()
         try:
             rm.close()
@@ -429,14 +575,19 @@ def _prewarm_device_imports() -> None:
             pass
     except Exception:
         pass
-    for _mod in ("sds_control", "sdg_control", "keysight_3446x", "dho_control"):
-        try:
-            __import__(_mod)
-        except Exception:
-            pass
+    _PREWARM_DONE.set()
 
 
-threading.Thread(target=_prewarm_device_imports, daemon=True).start()
+# 主线程同步预热：pyvisa + 五设备库（含 numpy 等重依赖）。
+# 必须先于 prewarm 线程与 mcp.run()——见 _prewarm_visa_rm 死锁注记。
+import pyvisa  # noqa: E402
+from common.visa_client import VisaClient  # noqa: E402
+import sds_control  # noqa: E402,F401
+import sdg_control  # noqa: E402,F401
+import keysight_3446x  # noqa: E402,F401
+import dho_control  # noqa: E402,F401
+
+threading.Thread(target=_prewarm_visa_rm, daemon=True).start()
 
 
 if __name__ == "__main__":

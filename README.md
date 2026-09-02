@@ -7,7 +7,7 @@
 ```
 instrumentControl/
 ├── common/                 # 通用层：VISA 客户端 VisaClient + 统一发现 find_device
-├── mcp_instruments/        # MCP 服务器：17 工具统一暴露五台仪器（server.py + SKILL.md）
+├── mcp_instruments/        # MCP 服务器：19 工具（17 专用 + 2 通用护栏）统一暴露（server.py + SKILL.md）
 ├── dh1766_control/         # DH1766 电源库（独立可安装：pip install -e ./dh1766_control）
 │   ├── src/dh1766_control/ # 驱动 + SCPI 命令常量 + VISA 客户端（自包含）
 │   └── docs/               # 手册提取 / 命令速查 / 经验总结
@@ -78,6 +78,15 @@ python TEST_SCRIPTS/dh1766/test_dh1766_full.py --safe     # 接入负载时（�
 - 2026-08-26/09-01：三轮审查修复（整体代码审查 17 项、MCP 专项、DH1766 远控文档建议：
   `find_dh1766` 上次成功地址缓存 `.last_good_resource.json`、`power_cycle` 高层 API——
   后者未暴露 MCP）。
+- 2026-09-03：MCP 增至 19 工具：新增 `instr_query`/`instr_write` 通用护栏（新设备零代码
+  接入——复位类黑名单 forbidden、通用写 confirm=True、写前 drain/写后 SYST:ERR?/自动
+  回读、审计落盘 `TEST_DATA/common/mcp_scpi_audit_*.jsonl`、离线资源硬超时看门狗）。
+  实测修复三缺陷：(a) `mcp.run()` 事件循环与后台线程 import pyvisa 死锁（冷进程首个
+  设备调用永久冻结）→ 重依赖 import 移主线程（<1s）；(b) `instr_discover` LAN 分支
+  `probe_alive`/`identify_lan` 未导入 NameError（存量 bug）→ 补导入+LAN 异常降级；
+  (c) 串口探测每线程各建 RM 原生崩溃（8 串口实测）→ 共享单例 RM。真机验证：SDG 整查/
+  等值写三步闭环（状态零变更）、串口新设备发现并零接入识别 EmoeR&D ADS127L11-DAQ-EV
+  （ASRL5；校准器 ASRL31 已离线/换号，串口号会漂移，接入先 `instr_discover` 重定位）。
 
 ## 安全模式（接入负载后使用）
 

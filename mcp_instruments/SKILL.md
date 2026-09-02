@@ -5,7 +5,7 @@ description: instrument MCP 服务器使用指引 — 五台仪器（SDS 示波�
 
 # instrument MCP 使用指引
 
-MCP server：`mcp_instruments/server.py`（17 工具，五台设备）。
+MCP server：`mcp_instruments/server.py`（19 工具 = 17 专用 + 2 通用护栏，五台设备）。
 本文是 AI 选择工具/参数时的决策依据。
 
 ## 一、工具选择决策树
@@ -13,7 +13,11 @@ MCP server：`mcp_instruments/server.py`（17 工具，五台设备）。
 ```
 需要知道有哪些设备在线？
   → instr_discover（LAN 网段 + USB/GPIB/串口全探测；串口被占用给提示，
-    驱动挂起 6s 硬超时；代理 fake-IP 干扰 LAN 时降级 warning 不影响 VISA 结果）
+    驱动挂起 6s 硬超时；代理 fake-IP 干扰 LAN 时降级 warning 不影响 VISA 结果；
+    串口换号/新设备进场后用它重新定位）
+
+新设备 / 无专用库的设备 / 库里没有的能力？
+  → instr_query + instr_write（对照手册直发 SCPI，零代码接入，见下方"通用护栏"）
 
 示波器（SDS）：
   看波形显示是否正常 → sds_diagnose（触发链路）→ 异常则 sds_auto_scale
@@ -33,6 +37,23 @@ MCP server：`mcp_instruments/server.py`（17 工具，五台设备）。
 DHO 示波器 → dho_status / dho_measure_item
 电源（DH1766）→ psu_status / psu_measure
 ```
+
+## 一.五、通用护栏工具（新设备零代码接入）
+
+有专用库的设备优先用专用工具；以下用于骨架设备（如 emoe）、临时设备、
+或库尚未覆盖的能力。命令语法必须先对照该设备手册/`commands.py`（铁律1），
+**禁止猜测**——设备对不认识的命令静默不应答→超时（如 SDG 不支持
+`C1:BSWV WVTP?` 单键查询，只支持整查 `C1:BSWV?`，见 sdg_control/commands.py）。
+
+| 工具 | 用法要点 |
+|---|---|
+| `instr_query(resource, cmd, timeout_ms?)` | cmd 必须含 `?`；只读不留痕 |
+| `instr_write(resource, cmd, readback_cmd?, confirm, timeout_ms?)` | **必须 confirm=True**；写前 drain、写后 SYST:ERR?、readback_cmd 给定即自动回读（铁律2/3）；每次调用含拒绝均落盘 `TEST_DATA/common/mcp_scpi_audit_*.jsonl` |
+
+护栏语义：复位/存储覆写类（`*RST`/`*SAV`/`*RCL`/`:SYST:RES|FACT|PRES`，长短形式均拦）
+一律 `forbidden` 拒绝，confirm 也不放行（复位需显式授权场景走测试脚本）；
+设备无响应有硬超时看门狗（≥30s），离线资源不会冻结 MCP；
+串口(ASRL)按 9600 波特。
 
 ## 二、参数语义速查
 
@@ -74,7 +95,9 @@ DHO 示波器 → dho_status / dho_measure_item
 
 统一返回 `{ok, error_type, error}`：
 - `confirm_required`：补 confirm=True 重试
-- `param_validation`：改参数（枚举/范围错）
+- `forbidden`：复位/存储覆写类，不可重试（不经 MCP，走测试脚本+显式授权）
+- `param_validation`：改参数（枚举/范围错、查询缺 `?`）
 - `connection`：设备离线（instr_discover 确认）
 - `device_error`：设备拒绝/测量超时（读 error 文本，多为信号/触发问题）
 - `communication`：IO 异常（重试一次，仍失败检查连接）
+- `timeout`：设备无响应超看门狗（离线/总线挂起），可能需等设备锁释放或重启 MCP

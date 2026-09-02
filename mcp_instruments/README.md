@@ -16,6 +16,8 @@ MCP 注册（opencode/cursor 等）：command 用 python 全路径，args 为本
 | 工具 | 说明 | 安全 |
 |---|---|---|
 | `instr_discover(cidr?)` | 全网段+VISA 发现所有仪器 | 只读 |
+| `instr_query(resource, cmd, timeout_ms?)` | 通用 SCPI 查询（新设备零接入；cmd 必须含 `?`） | 只读 |
+| `instr_write(resource, cmd, readback_cmd?, confirm, timeout_ms?)` | 通用 SCPI 写：黑名单拦截/drain+SYST:ERR?/自动回读/审计落盘/看门狗 | **confirm=True**；`*RST` 等一律 forbidden |
 | `sds_status` | SDS 快照（采集/时基/触发/通道） | 只读 |
 | `sds_auto_scale(ch, use_autoset?)` | 自动定标；use_autoset 破坏性需理解语义 | 改配置 |
 | `sds_measure(item, ch)` | SIMPLE 测量（PKPK/FREQ/RMS...） | 只读 |
@@ -30,8 +32,9 @@ MCP 注册（opencode/cursor 等）：command 用 python 全路径，args 为本
 | `dho_status` / `dho_measure_item` | DHO 快照 / 测量 | 只读 |
 | `psu_status` / `psu_measure` | DH1766 快照 / 三路回读 | 只读 |
 
-安全约定：复位类命令不暴露；关机/开输出必须 `confirm=True`；
-每次调用连接→操作→关闭（无状态）+ 全局锁串行化；错误统一
+安全约定：复位类命令不暴露（instr_write 黑名单亦不放行）；关机/开输出/
+通用写必须 `confirm=True`；每次调用连接→操作→关闭（无状态）+ 全局锁串行化 +
+通用写硬超时看门狗（离线资源不冻结 MCP）；错误统一
 `{ok:false, error_type, error}` 分类返回。
 
 ## 依赖

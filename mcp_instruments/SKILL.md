@@ -59,14 +59,14 @@ DHO 示波器 → dho_status / dho_measure_item
 
 | 工具 | 参数 | 语义 |
 |---|---|---|
-| sds_auto_scale | ch=1-4；use_autoset | **use_autoset=True 破坏性**（重置所有通道），仅简单周期信号+无其他已调通道时用 |
+| sds_auto_scale | ch=1-4；use_autoset | **use_autoset=True 破坏性**（重置所有通道），仅简单周期信号+无其他已调通道时用；无信号/小信号时逐档重试最长约 60s，最终优雅报错 |
 | sds_measure | item | SDS 缩写：PKPK/MAX/MIN/AMPL/RMS/PER/FREQ/PWID/DUTY/RISE...；ch=1-4 |
 | sds_measure | 无信号测 FREQ | 超时报 device_error（正常现象，非故障） |
 | sdg_set_wave | wvtp | SINE/SQUARE/RAMP/PULSE/NOISE/DC；amp_v 高阻下即 Vpp |
 | sdg_output | on=True | **必须 confirm=True**（真实信号） |
 | dmm_measure | function | volt_dc/volt_ac/curr_dc/curr_ac/res/fres/cont/cap/diod/freq |
 | dmm_configure | range_v | 设定量程后 :CONF? 回读滞后一拍，以实测为准 |
-| dho_measure_item | item | RIGOL 长名：VPP/VMAX/VAVG/PERiod/FREQuency...；无值返回 9.9E37 |
+| dho_measure_item | item | RIGOL 长名：VPP/VMAX/VAVG/PERiod/FREQuency...；无值报 param_validation 错误（文案含 9.9E37）|
 | psu_* | 三路 | CH1-3；带载读数即实际输出；上电后 ≥2s 再读（过渡态） |
 
 ## 三、安全门

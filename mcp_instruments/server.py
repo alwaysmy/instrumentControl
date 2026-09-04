@@ -147,7 +147,13 @@ def instr_discover(cidr: str | None = None) -> str:
     默认自动探测本机 /24（代理虚拟网卡环境需显式传）。"""
     import ipaddress
     import concurrent.futures as cf
-    from common.discovery import list_resources, identify, probe_alive, identify_lan
+    from common.discovery import (
+        detect_cidr,
+        identify,
+        identify_lan,
+        list_resources,
+        probe_alive,
+    )
 
     def fn(_):
         # VISA 资源（USB/串口/GPIB）先探测——不依赖网段，代理干扰不影响
@@ -537,7 +543,7 @@ def dho_status(resource: str = DHO_RES) -> str:
 def dho_measure_item(item: str, ch: int = 1, resource: str = DHO_RES) -> str:
     """DHO 单次测量查询。item 枚举（RIGOL 表）: VPP/VMAX/VMIN/VAMP/VAVG/VRMS/
     PERiod/FREQuency/PWIDth/NWIDth/PDUTy/RTIMe/FTIMe 等；ch=1-4。
-    无有效测量返回 9.9E37 量级值。"""
+    无有效测量（如通道无信号）报 param_validation 错误，文案含 9.9E37。"""
     return _call("DHO", lambda: _dho(resource), lambda s: s.measure_item(item, ch))
 
 

@@ -266,7 +266,8 @@ class DHO:
 
     # ---------- 测量 ----------
     def measure_item(self, item: str, src: int) -> float:
-        """:MEASure:ITEM? <item>,<src> 单次测量查询（无效测量返回 9.9E37）。"""
+        """:MEASure:ITEM? <item>,<src> 单次测量查询（设备对无效测量返回 9.9E37，
+        本库检测后抛 ValueError，文案含原值）。"""
         item_up = item.strip()
         if item_up not in C.MEAS_ITEMS:
             raise ValueError(f"未知测量项 {item!r}，可用: {', '.join(C.MEAS_ITEMS)}")

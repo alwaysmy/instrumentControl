@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 # dg832-control 是独立 git 仓库，由它自身版本控制
 dg832-control/
+# 运行时缓存（上次成功连接地址）
+.last_good_resource.json

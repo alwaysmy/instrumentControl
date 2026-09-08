@@ -1,0 +1,166 @@
+{
+  "steps": [
+    {
+      "name": "idn",
+      "value": "Siglent Technologies,SDS824X HD,SDS08A0C8R0274,2.8.12.1.1.6.5"
+    },
+    {
+      "name": "meas_mode_orig",
+      "value": "ADVanced"
+    },
+    {
+      "name": "pslots",
+      "P1": "ON",
+      "P2": "OFF",
+      "P3": "OFF",
+      "P4": "OFF",
+      "P5": "OFF",
+      "P6": "OFF",
+      "P7": "OFF",
+      "P8": "OFF",
+      "P9": "OFF",
+      "P10": "OFF",
+      "P11": "OFF",
+      "P12": "OFF"
+    },
+    {
+      "name": "free_slot",
+      "value": 2
+    },
+    {
+      "name": "trig_status",
+      "value": "Trig'd"
+    },
+    {
+      "name": "trig_source",
+      "value": "C2"
+    },
+    {
+      "name": "trig_level",
+      "value": 0.0
+    },
+    {
+      "name": "ch1",
+      "display": "ON",
+      "scale": "3.00E-01V"
+    },
+    {
+      "name": "ch2",
+      "display": "ON",
+      "scale": "5.00E-01V"
+    },
+    {
+      "name": "timebase",
+      "value": 2e-05
+    },
+    {
+      "name": "signals_simple",
+      "C1_FREQ": "50014.36",
+      "C1_PKPK": "0.828125",
+      "C2_FREQ": "49996.67",
+      "C2_PKPK": "2.015625"
+    },
+    {
+      "name": "drain_before",
+      "removed": 0,
+      "leftovers": []
+    },
+    {
+      "name": "write",
+      "cmd": ":MEASure:MODE ADVanced",
+      "err": "clean"
+    },
+    {
+      "name": "write",
+      "cmd": ":MEASure:ADVanced:P2:SOURce1 C2",
+      "err": "clean"
+    },
+    {
+      "name": "write",
+      "cmd": ":MEASure:ADVanced:P2:SOURce2 C1",
+      "err": "clean"
+    },
+    {
+      "name": "write",
+      "cmd": ":MEASure:ADVanced:P2:TYPE PHA",
+      "err": "clean"
+    },
+    {
+      "name": "write",
+      "cmd": ":MEASure:ADVanced:P2 ON",
+      "err": "clean"
+    },
+    {
+      "name": "readback",
+      "SOURce1": "C2",
+      "SOURce2": "C1",
+      "TYPE": "PHA",
+      "STATE": "ON"
+    },
+    {
+      "name": "phase_C2C1",
+      "value": 94.664,
+      "raw": "9.4664E+01"
+    },
+    {
+      "name": "swap_sources",
+      "err1": "clean",
+      "err2": "clean"
+    },
+    {
+      "name": "phase_C1C2",
+      "value": 265.218,
+      "raw": "2.65218E+02"
+    },
+    {
+      "name": "sign_check",
+      "sum_deg": 359.882,
+      "note": "若互为相反数(+360归一)，则 PHA=B相对A的相位"
+    },
+    {
+      "name": "restore_slot_off",
+      "err": "clean"
+    },
+    {
+      "name": "restore_mode",
+      "err": "clean"
+    },
+    {
+      "name": "restore_simple_clear",
+      "err": "clean"
+    },
+    {
+      "name": "restore_drain",
+      "leftovers": []
+    },
+    {
+      "name": "fail_MEAS_PHAS",
+      "resp": "VisaIOError: VI_ERROR_TMO (-1073807339): Timeout expired before operation",
+      "queue": []
+    },
+    {
+      "name": "fail_MEAS_MEAS1_TYPE",
+      "resp": "VisaIOError: VI_ERROR_TMO (-1073807339): Timeout expired before operation",
+      "queue": []
+    },
+    {
+      "name": "fail_MEAD_write",
+      "resp": "(None, 'WRITE_OK')",
+      "queue": [
+        "-113,\"Undefined header;MEAS:PHAS? C1,C2\"",
+        "-113,\"Undefined header;MEAS:MEAS1:TYPE?\""
+      ]
+    },
+    {
+      "name": "fail_PAVA",
+      "resp": "VisaIOError: VI_ERROR_TMO (-1073807339): Timeout expired before operation",
+      "queue": []
+    },
+    {
+      "name": "fail_MEAS_FREQ_C1",
+      "resp": "VisaIOError: VI_ERROR_TMO (-1073807339): Timeout expired before operation",
+      "queue": []
+    }
+  ],
+  "timestamp": "20260908_205228"
+}

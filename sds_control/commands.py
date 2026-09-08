@@ -39,10 +39,22 @@ TRIG_EDGE_LEV_W = "TRIG:EDGE:LEV {val}V"
 TRIG_EDGE_SLOP = "TRIG:EDGE:SLOP?"
 
 MEAS_ALL = "MEAS?"                 # 打开的测量项统计值
+MEAS_MODE = ":MEASure:MODE"       # SIMPle/ADVanced（回读短格式 SIMP/ADV）
 MEAS_ADV_CLEAR = ":MEASure:ADVanced:CLEar"
+MEAS_ADV_SLOT = ":MEASure:ADVanced:P{n}"          # P 槽独立开关，n∈[1,12]
 MEAS_ADV_TYPE_Q = ":MEASure:ADVanced:P{n}:TYPE?"
 MEAS_ADV_TYPE_W = ":MEASure:ADVanced:P{n}:TYPE {t}"
+MEAS_ADV_SOUR1 = ":MEASure:ADVanced:P{n}:SOURce1"  # 信源A
+MEAS_ADV_SOUR2 = ":MEASure:ADVanced:P{n}:SOURce2"  # 信源B（双通道测量用）
 MEAS_ADV_VAL = ":MEASure:ADVanced:P{n}:VALue?"
+
+# 双通道测量类型（手册表 5-1）。PHA 已实测（2026-09-08：A=C2/B=C1 得 94.664°，
+# 交换后 265.218°，和 359.882≈360，符号约定= B 相对 A 的相位）；其余仅手册出处。
+MEAS_DUAL_TYPES = (
+    "PHA", "SKEW",
+    "FRR", "FRF", "FFR", "FFF",
+    "LRR", "LRF", "LFR", "LFF",
+)
 
 WAV_SOUR = ":WAVeform:SOURce"
 WAV_PREAMBLE = ":WAVeform:PREamble?"

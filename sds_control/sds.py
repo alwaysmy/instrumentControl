@@ -277,14 +277,105 @@ class SDS:
         "RISE", "FALL", "EDGES", "PPULSES", "NPULSES", "PSLOPE", "NSLOPE",
     )
 
-    def adv_measure_setup(self, slot: int, mtype: str, src: str = "C1") -> None:
-        """配置高级测量槽 P<n>（TYPE + 信源）。slot 1~8，mtype 见 MEAS_TYPES。"""
-        if not (1 <= int(slot) <= 8):
-            raise ValueError(f"invalid slot: {slot}")
-        if mtype not in self.MEAS_TYPES:
-            raise ValueError(f"未知测量类型 {mtype!r}，可用: {', '.join(self.MEAS_TYPES)}")
-        self.write(f":MEASure:ADVanced:P{int(slot)}:SOURce1 {src.upper()}")
-        self.write(f":MEASure:ADVanced:P{int(slot)}:TYPE {mtype}")
+    def meas_mode(self, mode: Optional[str] = None) -> Optional[str]:
+        """:MEASure:MODE 测量模式 SIMPle/ADVanced（回读短格式 SIMP/ADV）。
+
+        ADVanced 槽位制测量要求 MODE=ADVanced；SIMPLE 组在 ADVANCED 下整体失效。
+        """
+        if mode is None:
+            return self.query(C.MEAS_MODE + "?").strip() or None
+        self.write(f"{C.MEAS_MODE} {mode}")
+        return None
+
+    def adv_slot(self, slot: int, on: Optional[bool] = None) -> Optional[bool]:
+        """:MEASure:ADVanced:P<n> 槽位独立开关（n∈[1,12]）。VALue? 出值的前提是槽已开。"""
+        n = int(slot)
+        if not 1 <= n <= 12:
+            raise ValueError(f"invalid slot: {slot!r}（P 槽范围 1~12）")
+        if on is None:
+            return self.query(f"{C.MEAS_ADV_SLOT.format(n=n)}?").strip() in ("1", "ON")
+        self.write(f"{C.MEAS_ADV_SLOT.format(n=n)} {'ON' if on else 'OFF'}")
+        return None
+
+    def adv_measure_setup(
+        self,
+        slot: int,
+        mtype: str,
+        src: str = "C1",
+        src2: Optional[str] = None,
+        enable: bool = True,
+    ) -> None:
+        """配置高级测量槽 P<n>（TYPE + 信源A/信源B + 开槽），逐条查错。
+
+        双通道测量（PHA/SKEW/FRR…）必须同时给 src（=A）与 src2（=B）；
+        槽开关默认打开（此前缺这步是 VALue? 恒 '****' 的根因之一）。
+        """
+        n = int(slot)
+        if not 1 <= n <= 12:
+            raise ValueError(f"invalid slot: {slot!r}（P 槽范围 1~12）")
+        if mtype not in self.MEAS_TYPES + C.MEAS_DUAL_TYPES:
+            raise ValueError(
+                f"未知测量类型 {mtype!r}，可用单通道: {', '.join(self.MEAS_TYPES)}；"
+                f"双通道: {', '.join(C.MEAS_DUAL_TYPES)}"
+            )
+        drain_errors(self)
+        self.write(f"{C.MEAS_ADV_SOUR1.format(n=n)} {src.upper()}")
+        err = self.query(C.SYST_ERR).strip()
+        if not err.startswith("+0") and "No error" not in err:
+            raise RuntimeError(f"P{n} SOURce1 被拒: {err}")
+        if src2 is not None:
+            self.write(f"{C.MEAS_ADV_SOUR2.format(n=n)} {src2.upper()}")
+            err = self.query(C.SYST_ERR).strip()
+            if not err.startswith("+0") and "No error" not in err:
+                raise RuntimeError(f"P{n} SOURce2 被拒: {err}")
+        self.write(C.MEAS_ADV_TYPE_W.format(n=n, t=mtype))
+        err = self.query(C.SYST_ERR).strip()
+        if not err.startswith("+0") and "No error" not in err:
+            raise RuntimeError(f"P{n} TYPE 被拒: {err}")
+        if enable:
+            self.write(f"{C.MEAS_ADV_SLOT.format(n=n)} ON")
+            err = self.query(C.SYST_ERR).strip()
+            if not err.startswith("+0") and "No error" not in err:
+                raise RuntimeError(f"P{n} 开槽被拒: {err}")
+
+    def measure_phase(
+        self, src_a: str = "C2", src_b: str = "C1",
+        slot: Optional[int] = None, timeout_s: float = 12.0,
+    ) -> dict:
+        """双通道相位差（度）：A/B 第一个上升沿中值点间相位 = B 相对 A 的相位。
+
+        完整序列（手册 CN11G §3.17/表 5-1，2026-09-08 实测）：
+        MODE ADVanced → Pn SOURce1=A → Pn SOURce2=B → Pn TYPE PHA →
+        Pn ON → Pn VALue?。要求两通道完整周期在屏内。
+        slot=None 时自动选用首个 OFF 空槽；返回 {"degrees","slot","raw"}。
+        用后请 adv_slot(slot, False) 关闭并恢复 MODE（调用方负责恢复）。
+        """
+        if slot is None:
+            slot = next(
+                (i for i in range(1, 13) if not self.adv_slot(i)),
+                None,
+            )
+            if slot is None:
+                raise RuntimeError("P1..P12 全开，无空闲槽（拒绝覆盖已有配置）")
+        n = int(slot)
+        self.write(f"{C.MEAS_MODE} ADVanced")
+        time.sleep(0.2)
+        self.adv_measure_setup(n, "PHA", src_a, src2=src_b, enable=True)
+        last_raw = ""
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < timeout_s:
+            time.sleep(1.0)
+            last_raw = self.query(C.MEAS_ADV_VAL.format(n=n)).strip()
+            try:
+                v = float(last_raw)
+                if abs(v) < 9.0e36:
+                    return {"degrees": v, "slot": n, "raw": last_raw}
+            except ValueError:
+                pass
+        raise RuntimeError(
+            f"PHA@{src_a}/{src_b}(P{n}) 在 {timeout_s}s 内无有效值"
+            f"（最后响应: {last_raw!r}）；请确认两通道完整周期在屏内且已触发"
+        )
 
     def adv_measure_value(self, slot: int) -> Optional[float]:
         """读取高级测量槽 P<n> 当前值；'****'(无有效读数) 返回 None，

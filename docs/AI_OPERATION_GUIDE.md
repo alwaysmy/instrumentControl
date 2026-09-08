@@ -32,17 +32,24 @@
 ```python
 with SDS(resource) as scope:
     scope.auto_scale(4)                    # 修触发+自动定标（推荐第一步）
-    vpp = scope.measure_simple("PKPK", "C4")   # SIMPLE 模式测量
+    vpp = scope.measure_simple("PKPK", "C4")   # SIMPLE 模式单通道测量
+    ph = scope.measure_phase("C2", "C1")       # ADVanced 双通道相位（度）
     wf = ...                               # 波形读取（DESC 布局待专研）
     png = scope.screenshot_png(path)       # 截图供视觉判断
 ```
-测量项枚举 MEAS_TYPES：PKPK/MAX/MIN/RMS/FREQ/PER/PWID/DUTY...（SDS 缩写表）
+测量项枚举 MEAS_TYPES：PKPK/MAX/MIN/RMS/FREQ/PER/PWID/DUTY...（SDS 缩写表）；
+双通道枚举 MEAS_DUAL_TYPES：PHA/SKEW/FRR/FRF/FFR/FFF...
 
 关键教训（固件特性）：
 - `MEASure:MODE` 默认 ADVANCED，SIMPLE 组失效；measure_simple 自动切换
-- 命令用短形式（ACQ:MDEP? 通，:ACQuire:MDEPth? 超时）
+- 命令用短形式（ACQ:MDEP? 通，`:ACQuire:MDEPth?` 超时）
 - 响应带回显头+单位后缀，query() 已自动剥离
-- ADVANCED P 槽 VALue? 恒 '****'（疑似选件），勿用
+- ADVanced P 槽 VALue? 出值三前提（缺一即 `****`）：槽已 `Pn ON`、
+  `MODE=ADVanced`、两通道完整周期在屏内——此前"恒 ****"结论已推翻，
+  真因是库从未开槽（2026-09-08 实测 PHA 正常出值）
+- 双通道相位 `measure_phase(src_a, src_b)`：PHA = B 相对 A 的相位（度，
+  实测交换 A/B 得互补角）；未知命令查询无响应会超时（如 PAVA?/MEAS:FREQ?），
+  未知写入可能被静默吞掉（MEAD），一律先 drain 再逐条查错
 - 触发源挂空/电平过高 = 屏幕无波形的头号根因
 
 ### 示波器调试标准流程（先读后写，截图辅助）

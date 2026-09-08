@@ -65,6 +65,35 @@ MEAS_DUAL_TYPES = (
     "LRR", "LRF", "LFR", "LFF",
 )
 
+# ---- 测量扩展（手册 3.17，p.172-185；2026-09-09 补全）----
+MEAS_THR_SOUR = ":MEASure:THReshold:SOURce"     # 测量阈值源
+MEAS_THR_TYPE = ":MEASure:THReshold:TYPE"       # PERCent|ABSolute
+MEAS_THR_ABS = ":MEASure:THReshold:ABSolute"    # high,mid,low (NR3)
+MEAS_THR_PERC = ":MEASure:THReshold:PERCent"    # high,mid,low (整型)
+MEAS_GATE = ":MEASure:GATE"                     # ON|OFF 测量门限
+MEAS_GATE_GA = ":MEASure:GATE:GA"               # 门限A位置 (NR3)
+MEAS_GATE_GB = ":MEASure:GATE:GB"               # 门限B位置 (NR3)
+MEAS_RDISP = ":MEASure:RDISplay"                # EMBedded|FLOating
+MEAS_STAT = ":MEASure:ADVanced:STATistics"      # ON|OFF 统计开关
+MEAS_STAT_AIM = ":MEASure:ADVanced:STATistics:AIMLimit"    # AIM 次数
+MEAS_STAT_HIST = ":MEASure:ADVanced:STATistics:HISTOGram"  # ON|OFF
+MEAS_STAT_MAX = ":MEASure:ADVanced:STATistics:MAXCount"    # [0,1024]
+MEAS_STAT_RESET = ":MEASure:ADVanced:STATistics:RESet"     # 写
+MEAS_ADV_STAT_Q = ":MEASure:ADVanced:P{n}:STATistics?"     # <type> 统计查询
+MEAS_ADV_HIST_Q = ":MEASure:ADVanced:P{n}:SHIStory?"       # [n] 历史
+MEAS_ADV_LINE = ":MEASure:ADVanced:LINenumber"             # [1,12]
+MEAS_ADV_STYLE = ":MEASure:ADVanced:STYLe"                 # M1|M2
+MEAS_ASTRATEGY = ":MEASure:ASTRategy"                      # AUTO|MANual
+MEAS_ASTRA_BASE = ":MEASure:ASTRategy:BASE"                # HISTogram|MAX
+MEAS_ASTRA_TOP = ":MEASure:ASTRategy:TOP"                  # HISTogram|MAX
+MEAS_DTIME = ":MEASure:DTIMe{n}"                           # n∈[1,4]
+MEAS_DTIME_NODES = ("EDGE1", "EDGE2", "SLOPe1", "SLOPe2",
+                    "THReshold1", "THReshold2")
+
+# P<n>:STATistics? 的查询类型
+MEAS_STAT_TYPES = ("ALL", "CURRent", "MEAN", "MAXimum", "MINimum",
+                   "STDev", "COUNt")
+
 WAV_SOUR = ":WAVeform:SOURce"
 WAV_PREAMBLE = ":WAVeform:PREamble?"
 WAV_MAXPOINT = ":WAVeform:MAXPoint?"

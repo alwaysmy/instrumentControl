@@ -610,6 +610,19 @@ def psu_mode(resource: str = PSU_RES) -> str:
 
 
 @mcp.tool()
+def psu_pre_check(resource: str = PSU_RES) -> str:
+    """DH1766 **上电（开输出）前安全检查**：一次查全输出模式/三路设定/OVP/OCP/
+    输出状态/状态寄存器/通道耦合，返回 {safe, warnings, state}。
+    **开输出前必调**——safe=False 时逐条说明风险：
+    - TRAC 模式 CH2 会输出负压（跟随 CH1）；
+    - OVP/OCP ≤ 设定值 → 一开输出即触发保护；
+    - 已有通道带电 → 防重复上电；
+    - QUES 寄存器非零 → 实时告警。"""
+    return _call("DH1766", lambda: _psu_connect(resource),
+                 lambda p: p.pre_power_check(), close_fn=_psu_close)
+
+
+@mcp.tool()
 def psu_set_mode(mode: str, resource: str = PSU_RES) -> str:
     """DH1766 设置输出模式：NORM/TRAC/SERI/PARA（写后回读比对）。
     ⚠ 继电器联动拓扑变化：输出必须全关，否则直接拒绝（库内无条件强制）。

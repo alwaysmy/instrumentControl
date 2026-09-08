@@ -36,7 +36,7 @@ MCP server：`mcp_instruments/server.py`（19 工具 = 17 专用 + 2 通用护�
   看配置 → dmm_status
 
 DHO 示波器 → dho_status / dho_measure_item
-电源（DH1766）→ psu_status / psu_measure / psu_mode（先查输出模式！）/ psu_set_mode
+电源（DH1766）→ psu_status / psu_measure / psu_mode（先查输出模式！）/ psu_set_mode / **psu_pre_check（开输出前必调）**
 ```
 
 ## 一.五、通用护栏工具（新设备零代码接入）
@@ -71,6 +71,7 @@ DHO 示波器 → dho_status / dho_measure_item
 | dmm_configure | range_v | 设定量程后 :CONF? 回读滞后一拍，以实测为准 |
 | dho_measure_item | item | RIGOL 长名：VPP/VMAX/VAVG/PERiod/FREQuency...；无值报 param_validation 错误（文案含 9.9E37）|
 | psu_measure | 三路 | CH1-3；带载读数即实际输出；上电后 ≥2s 再读（过渡态） |
+| psu_pre_check | — | **开输出前必调**：返回 {safe, warnings, state}——TRAC 负压/OVP≤设定/已带电/QUES 告警逐条提示 |
 | psu_mode / psu_set_mode | mode | **操作电源前先查模式**：NORM/TRAC/SERI/PARA；TRAC 下 CH2 跟随 CH1 输出负压（非故障，手册§3.8）；切换前输出必须全关（库内强制）|
 
 ## 三、安全门

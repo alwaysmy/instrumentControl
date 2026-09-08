@@ -454,6 +454,60 @@ class DH1766:
             "after": self.measure_voltage_dict(),
         }
 
+    def pre_power_check(self) -> dict:
+        """上电（开输出）前安全检查：一次查全关键状态并给出风险提示。
+
+        检查项（手册 §3.8 输出模式 / §4.2.2 状态寄存器 / §4.2.8 测量）：
+        - 输出模式（TRAC/SERI/PARA 改变拓扑，误判风险；CH2 负压是 TRAC 跟随）；
+        - 三路输出状态（是否已带电，防重复上电）；
+        - 设定电压/电流 vs OVP/OCP 保护值（保护值须大于设定值，否则一开就保护）；
+        - 状态寄存器 QUES 条件位（OT/OVP/OCP 等实时告警）；
+        - 通道耦合（非 NONE 时设定会联动）。
+
+        返回 {"safe": bool, "warnings": [...], "state": {...}}。
+        safe=False 时 warnings 逐条说明风险，上电前应逐项确认。
+        """
+        state = {
+            "output_mode": self.output_mode(),
+            "output_on": self.get_output_state(),
+            "set_voltage_v": self.apply_voltage(),
+            "set_current_a": self.apply_current(),
+            "ovp_v": [self.get_ovp(i) for i in (1, 2, 3)],
+            "ocp_a": [self.get_ocp(i) for i in (1, 2, 3)],
+            "measure_voltage_v": self.measure_voltage_all(),
+            "measure_current_a": self.measure_current_all(),
+            "couple_trig": self.couple_trig(),
+            "ques_cond": self.stat_ques_cond(),
+            "oper_cond": self.stat_oper_cond(),
+        }
+        warnings: list[str] = []
+
+        if state["output_mode"] != "NORM":
+            warnings.append(
+                f"输出模式为 {state['output_mode']}（非 NORM）：拓扑已改变，"
+                f"{'CH2 跟随 CH1 输出负电压' if state['output_mode'] == 'TRAC' else '通道间已联动'}"
+            )
+        if any(state["output_on"]):
+            on = [f"CH{i+1}" for i, v in enumerate(state["output_on"]) if v]
+            warnings.append(f"已有通道带电（{'/'.join(on)}）——重复上电前请确认负载状态")
+
+        for i, (vset, ovp) in enumerate(zip(state["set_voltage_v"], state["ovp_v"]), 1):
+            if ovp <= vset:
+                warnings.append(
+                    f"CH{i} OVP({ovp:.3f}V) ≤ 设定电压({vset:.3f}V)：一开输出即触发过压保护"
+                )
+        for i, (iset, ocp) in enumerate(zip(state["set_current_a"], state["ocp_a"]), 1):
+            if ocp <= iset:
+                warnings.append(
+                    f"CH{i} OCP({ocp:.3f}A) ≤ 设定电流({iset:.3f}A)：一开输出即触发过流保护"
+                )
+        if state["ques_cond"]:
+            warnings.append(f"QUES 条件寄存器非零（0x{state['ques_cond']:X}）：存在实时告警")
+        if state["couple_trig"] and state["couple_trig"] != ["NONE"]:
+            warnings.append(f"通道耦合已启用（{state['couple_trig']}）：设定会联动")
+
+        return {"safe": not warnings, "warnings": warnings, "state": state}
+
     # ================= 复合控制命令 4.2.9（设备扩展） =================
     def apply_voltage(self, values: Optional[list[float]] = None) -> Optional[list[float]]:
         """APPL:VOLT 三路电压设定（读写，一次完成，无通道切换延时）。

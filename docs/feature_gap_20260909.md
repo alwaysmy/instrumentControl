@@ -21,15 +21,20 @@
 
 ## 二、差距清单（按对测量工作的价值排序）
 
-### P1 测量判据与统计（直接影响相位/稳定性测量）
+### P1 测量判据与统计 ✅ 已补齐（2026-09-09，实测 28/28 PASS）
 
-| # | 命令 | 手册 | 用途 |
+| # | 命令 | 手册 | 库方法 |
 |---|---|---|---|
-| 1 | `MEASure:THReshold:SOURce/TYPE/ABSolute/PERCent` | p.183-185 | 测量阈值源与判据（ABS/PERcent）——所有边沿类测量的基础 |
-| 2 | `MEASure:ADVanced:STATistics` + `:AIMLimit/:HISTOGram/:MAXCount/:RESet` | p.172-174 | 统计开关/上限/直方图/样本数/重置 |
-| 3 | `MEASure:ADVanced:P<n>:STATistics` / `:SHIStory` | p.166-167 | 单槽统计与历史（相位抖动、长期稳定性） |
-| 4 | `MEASure:DTIMe<n>:EDGE1/EDGE2/SLOPe1/SLOPe2/THReshold1/2` | p.176-178 | 延迟测量边沿与阈值配置 |
-| 5 | `MEASure:GATE` + `:GA/:GB` | p.179-180 | 测量门限（只统计窗口内波形） |
+| 1 | `MEASure:THReshold:SOURce/TYPE/ABSolute/PERCent` | p.183-185 | `meas_threshold_source/type/absolute/percent` |
+| 2 | `MEASure:ADVanced:STATistics` + `:AIMLimit/:HISTOGram/:MAXCount/:RESet` | p.172-174 | `meas_statistics/stat_max_count/stat_histogram/stat_reset` |
+| 3 | `MEASure:ADVanced:P<n>:STATistics` / `:SHIStory` | p.166-167 | `adv_statistics/adv_history` |
+| 4 | `MEASure:DTIMe<n>:EDGE1/EDGE2/SLOPe1/SLOPe2/THReshold1/2` | p.176-178 | `dtime_config` |
+| 5 | `MEASure:GATE` + `:GA/:GB` | p.179-180 | `meas_gate/meas_gate_pos` |
+| + | `RDISplay` / `STYLe` / `LINenumber` / `ASTRategy[:BASE/TOP]` | p.174-181 | `meas_result_display/adv_style/adv_line_number/amp_strategy/amp_strategy_base_top` |
+
+实测疑点（待深挖）：阈值类型为 PERCent 时查询 `THR:ABS?` 返回的也是百分比值
+（90/50/10），与 `THR:PERC?`（9.00E+01/5.00E+01/1.00E+01）相同——疑为固件共用
+存储或查询语义与手册不符，写绝对阈值前需实测确认。
 
 ### P2 测量辅助
 

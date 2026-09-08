@@ -398,6 +398,179 @@ class SDS:
     def clear_adv_measurements(self) -> None:
         self.write(C.MEAS_ADV_CLEAR)
 
+    # ---------- 测量扩展（手册 3.17 p.172-185；2026-09-09 补全） ----------
+    def _rw(self, cmd: str, value=None, cast=None):
+        """通用读写：value=None 查询（cast 转换），否则写入并返回 None。"""
+        if value is None:
+            raw = self.query(cmd if cmd.endswith("?") else cmd + "?").strip()
+            return cast(raw) if cast else raw
+        self.write(f"{cmd} {value}")
+        return None
+
+    def _rw3(self, cmd: str, high=None, mid=None, low=None, cast=float):
+        """三值命令（阈值 high/mid/low）：三者都给才写，否则查询返回三元组。"""
+        if high is None and mid is None and low is None:
+            raw = self.query(cmd + "?").strip()
+            parts = [p.strip() for p in raw.split(",")]
+            try:
+                return tuple(cast(p) for p in parts[:3])
+            except (ValueError, TypeError):
+                return tuple(parts)
+        if None in (high, mid, low):
+            raise ValueError("high/mid/low 必须同时给出")
+        self.write(f"{cmd} {high},{mid},{low}")
+        return None
+
+    def meas_threshold_source(self, src: Optional[str] = None):
+        """:MEASure:THReshold:SOURce 测量阈值源（C<n>/F<x>/M<m>/REF<r> 等）。"""
+        return self._rw(C.MEAS_THR_SOUR, src.upper() if src else None)
+
+    def meas_threshold_type(self, ttype: Optional[str] = None):
+        """:MEASure:THReshold:TYPE 阈值类型 PERCent|ABSolute。"""
+        return self._rw(C.MEAS_THR_TYPE, ttype)
+
+    def meas_threshold_absolute(self, high=None, mid=None, low=None):
+        """:MEASure:THReshold:ABSolute 绝对阈值 high,mid,low（V，NR3）。
+
+        注意：绝对阈值取决于通道档位/垂直位移/探头系数，设置前应先设好这些值。
+        """
+        return self._rw3(C.MEAS_THR_ABS, high, mid, low)
+
+    def meas_threshold_percent(self, high=None, mid=None, low=None):
+        """:MEASure:THReshold:PERCent 百分比阈值 high,mid,low（整型）。
+
+        手册范围：high∈[3,99]、mid∈[2,98]、low∈[1,97]，且 low≤mid≤high。
+        """
+        return self._rw3(C.MEAS_THR_PERC, high, mid, low, cast=int)
+
+    def meas_gate(self, on: Optional[bool] = None):
+        """:MEASure:GATE 测量门限开关（只统计 GA~GB 窗口内波形）。"""
+        if on is None:
+            return self.query(C.MEAS_GATE + "?").strip() in ("1", "ON")
+        self.write(f"{C.MEAS_GATE} {'ON' if on else 'OFF'}")
+        return None
+
+    def meas_gate_pos(self, ga=None, gb=None):
+        """:MEASure:GATE:GA/GB 门限位置（秒，相对触发的水平位置）。
+
+        手册：GA 不得大于 GB（超限自动等于对方）；范围随时基/水平延时变化。
+        """
+        if ga is None and gb is None:
+            return (_num(self.query(C.MEAS_GATE_GA + "?")),
+                    _num(self.query(C.MEAS_GATE_GB + "?")))
+        if ga is not None:
+            self.write(f"{C.MEAS_GATE_GA} {ga}")
+        if gb is not None:
+            self.write(f"{C.MEAS_GATE_GB} {gb}")
+        return None
+
+    def meas_result_display(self, style: Optional[str] = None):
+        """:MEASure:RDISplay 测量结果显示样式 EMBedded（内嵌压缩波形）|FLOating（悬浮）。"""
+        return self._rw(C.MEAS_RDISP, style.upper() if style else None)
+
+    def meas_statistics(self, on: Optional[bool] = None):
+        """:MEASure:ADVanced:STATistics 高级测量统计开关。"""
+        if on is None:
+            return self.query(C.MEAS_STAT + "?").strip() in ("1", "ON")
+        self.write(f"{C.MEAS_STAT} {'ON' if on else 'OFF'}")
+        return None
+
+    def meas_stat_max_count(self, n: Optional[int] = None):
+        """:MEASure:ADVanced:STATistics:MAXCount 最大统计次数 [0,1024]（0=无限）。"""
+        return self._rw(C.MEAS_STAT_MAX, n, cast=int)
+
+    def meas_stat_histogram(self, on: Optional[bool] = None):
+        """:MEASure:ADVanced:STATistics:HISTOGram 统计直方图开关。"""
+        if on is None:
+            return self.query(C.MEAS_STAT_HIST + "?").strip() in ("1", "ON")
+        self.write(f"{C.MEAS_STAT_HIST} {'ON' if on else 'OFF'}")
+        return None
+
+    def meas_stat_reset(self) -> None:
+        """:MEASure:ADVanced:STATistics:RESet 重置统计结果。"""
+        self.write(C.MEAS_STAT_RESET)
+
+    def adv_statistics(self, slot: int, which: str = "ALL"):
+        """P<n>:STATistics? 单槽统计查询。
+
+        which: ALL|CURRent|MEAN|MAXimum|MINimum|STDev|COUNt（手册 p.166）。
+        ALL 返回逗号分隔的完整统计串。
+        """
+        n = int(slot)
+        if not 1 <= n <= 12:
+            raise ValueError(f"invalid slot: {slot!r}（P 槽范围 1~12）")
+        if which not in C.MEAS_STAT_TYPES:
+            raise ValueError(f"未知统计类型 {which!r}，可用: {', '.join(C.MEAS_STAT_TYPES)}")
+        raw = self.query(f"{C.MEAS_ADV_STAT_Q.format(n=n)} {which}").strip()
+        if which == "ALL":
+            return [p.strip() for p in raw.split(",")]
+        try:
+            return float(raw)
+        except ValueError:
+            return raw
+
+    def adv_history(self, slot: int, count: Optional[int] = None):
+        """P<n>:SHIStory? 单槽历史统计（仅在 MAXCount 有限制时有效）。"""
+        n = int(slot)
+        if not 1 <= n <= 12:
+            raise ValueError(f"invalid slot: {slot!r}（P 槽范围 1~12）")
+        cmd = C.MEAS_ADV_HIST_Q.format(n=n)
+        raw = self.query(f"{cmd} {count}" if count is not None else cmd).strip()
+        parts = [p.strip() for p in raw.split(",")]
+        try:
+            return [float(p) for p in parts]
+        except ValueError:
+            return parts
+
+    def adv_line_number(self, n: Optional[int] = None):
+        """:MEASure:ADVanced:LINenumber M2 模式显示测量项总数 [1,12]。"""
+        return self._rw(C.MEAS_ADV_LINE, n, cast=int)
+
+    def adv_style(self, style: Optional[str] = None):
+        """:MEASure:ADVanced:STYLe 统计显示模式 M1（垂直，含直方图）|M2（水平）。"""
+        return self._rw(C.MEAS_ADV_STYLE, style.upper() if style else None)
+
+    def amp_strategy(self, mode: Optional[str] = None):
+        """:MEASure:ASTRategy 幅值计算策略 AUTO（自动）|MANual（手动）。"""
+        return self._rw(C.MEAS_ASTRATEGY, mode.upper() if mode else None)
+
+    def amp_strategy_base_top(self, base: Optional[str] = None, top: Optional[str] = None):
+        """:MEASure:ASTRategy:BASE/TOP 手动策略的底端/顶端计算方式 HISTogram|MAX。"""
+        if base is None and top is None:
+            return (self.query(C.MEAS_ASTRA_BASE + "?").strip(),
+                    self.query(C.MEAS_ASTRA_TOP + "?").strip())
+        if base is not None:
+            self.write(f"{C.MEAS_ASTRA_BASE} {base.upper()}")
+        if top is not None:
+            self.write(f"{C.MEAS_ASTRA_TOP} {top.upper()}")
+        return None
+
+    def dtime_config(self, idx: int, **nodes):
+        """MEASure:DTIMe<n> 延迟测量配置（n∈[1,4]）。
+
+        nodes 可用键（手册 p.176-178）：edge1/edge2（沿序号，-1=最后沿）、
+        slope1/slope2（POSitive|NEGative）、threshold1/threshold2（V）。
+        无参数时返回全部六项查询结果。
+        """
+        n = int(idx)
+        if not 1 <= n <= 4:
+            raise ValueError(f"invalid DTIMe index: {idx!r}（范围 1~4）")
+        base = C.MEAS_DTIME.format(n=n)
+        key_map = {
+            "edge1": "EDGE1", "edge2": "EDGE2",
+            "slope1": "SLOPe1", "slope2": "SLOPe2",
+            "threshold1": "THReshold1", "threshold2": "THReshold2",
+        }
+        if not nodes:
+            return {
+                k: self.query(f"{base}:{v}?").strip() for k, v in key_map.items()
+            }
+        for k, v in nodes.items():
+            if k not in key_map:
+                raise ValueError(f"未知参数 {k!r}，可用: {', '.join(key_map)}")
+            self.write(f"{base}:{key_map[k]} {v}")
+        return None
+
     # ---------- 自动定标与诊断 ----------
     # Siglent SDS800X HD 默认通道色（RGB，容差量化匹配）
     CH_COLORS = {

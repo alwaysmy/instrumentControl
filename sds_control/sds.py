@@ -415,7 +415,11 @@ class SDS:
         return self._strip_tmc(data) if data.find(b"#") == 0 else data
 
     def screenshot_png(self, save_path: Path) -> Path:
-        """截屏并存为 PNG（供人工/AI 查看）。"""
+        """截屏并存为 PNG（供人工/AI 查看）。
+
+        注意：SDS 的 BMP alpha 字节恒为 0，若直接存 RGBA 会得到全透明图
+        （查看器/模型渲染为纯白）——必须转 RGB 丢弃 alpha（2026-09-09 实测）。
+        """
         import struct
 
         from PIL import Image
@@ -434,6 +438,7 @@ class SDS:
         )
         if h_raw > 0:
             img = img.transpose(0)
+        img = img.convert("RGB")  # 丢弃全 0 的 alpha，否则 PNG 全透明
         save_path.parent.mkdir(parents=True, exist_ok=True)
         img.save(save_path)
         return save_path

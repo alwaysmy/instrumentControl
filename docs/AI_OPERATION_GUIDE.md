@@ -64,7 +64,8 @@ with SDS(resource) as scope:
 3. 修正（auto_scale 一键完成）
    触发源→目标通道 → 模式 AUTO → 电平→信号中点 → 通道开启 → 定标
 4. 截图验证（唯一物理真相）
-   scope.screenshot_png(path)   # 超屏时设备测量值被钳制，像素不骗人
+   scope.screenshot_png(path)   # PNG 可直接读图（2026-09-09 修 alpha=0 全透明问题）
+   # 无视觉能力时用 analyze_screen() 像素分析兜底
 ```
 
 ### auto_scale 两条路径（多信号场景必读）

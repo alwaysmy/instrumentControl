@@ -379,8 +379,9 @@ class DH1766:
     def measure_voltage_dict(self) -> dict[str, float]:
         """MEAS:VOLT:ALL? 按通道名返回 {"CH1": v, "CH2": v, "CH3": v}。
 
-        语义提示：CH2 常用负轨（如 -12V 模拟负供电），断电验证时 CH1/CH2
-        都要归零。
+        语义提示：CH1/CH2 有正常/串联/并联/跟踪四种输出模式（手册 §3.8）；
+        跟踪模式下 CH2 跟随 CH1 输出同等值的负电压（如 CH1 设 12V 则 CH2
+        为 -12V，范围可到 -32V）。断电验证时 CH1/CH2 都要归零才算真断电。
         """
         vals = self.measure_voltage_all()
         return {f"CH{i + 1}": vals[i] for i in range(len(vals))}

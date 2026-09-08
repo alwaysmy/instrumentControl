@@ -1,0 +1,83 @@
+[
+  {
+    "step": "idn",
+    "value": "BJDH,DH1766A-1,0,V0.1.4.3"
+  },
+  {
+    "step": "baseline_modes",
+    "TRAC": "True",
+    "SERI": "False",
+    "PARA": "False"
+  },
+  {
+    "step": "baseline_outputs",
+    "value": [
+      true,
+      true,
+      false
+    ]
+  },
+  {
+    "step": "baseline_vset",
+    "value": [
+      12.0,
+      12.0,
+      5.0
+    ]
+  },
+  {
+    "step": "outputs_off",
+    "value": [
+      true,
+      true,
+      false
+    ]
+  },
+  {
+    "step": "after_SERI_ON",
+    "TRAC": "False",
+    "SERI": "True",
+    "PARA": "False",
+    "err": "clean"
+  },
+  {
+    "step": "after_PARA_ON",
+    "TRAC": "False",
+    "SERI": "False",
+    "PARA": "True",
+    "err": "clean"
+  },
+  {
+    "step": "after_TRAC_ON",
+    "TRAC": "True",
+    "SERI": "False",
+    "PARA": "False",
+    "err": "clean"
+  },
+  {
+    "step": "after_ALL_OFF",
+    "TRAC": "False",
+    "SERI": "False",
+    "PARA": "False",
+    "err": "clean"
+  },
+  {
+    "step": "restore_modes",
+    "TRAC": "True",
+    "SERI": "False",
+    "PARA": "False"
+  },
+  {
+    "step": "restore_outputs",
+    "outputs": [
+      false,
+      false,
+      false
+    ],
+    "voltage_v": [
+      0.000449,
+      -0.006349,
+      0.001527
+    ]
+  }
+]

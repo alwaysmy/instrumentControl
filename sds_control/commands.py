@@ -48,6 +48,15 @@ MEAS_ADV_SOUR1 = ":MEASure:ADVanced:P{n}:SOURce1"  # 信源A
 MEAS_ADV_SOUR2 = ":MEASure:ADVanced:P{n}:SOURce2"  # 信源B（双通道测量用）
 MEAS_ADV_VAL = ":MEASure:ADVanced:P{n}:VALue?"
 
+# ADVanced 单通道专用类型（手册表 5-1 有、SIMPle:ITEM 表无；2026-09-09 核对）。
+# DTIMe1-4 需配合 THReshold1/2 使用。
+MEAS_ADV_SINGLES = (
+    "RISE10T90", "FALL90T10",
+    "PSLOPE", "NSLOPE",
+    "TSR", "TSF", "THR", "THF",
+    "DTIMe1", "DTIMe2", "DTIMe3", "DTIMe4",
+)
+
 # 双通道测量类型（手册表 5-1）。PHA 已实测（2026-09-08：A=C2/B=C1 得 94.664°，
 # 交换后 265.218°，和 359.882≈360，符号约定= B 相对 A 的相位）；其余仅手册出处。
 MEAS_DUAL_TYPES = (

@@ -270,11 +270,18 @@ class SDS:
             f"请检查信号接入/触发配置"
         )
 
+    # SIMPLE 模式允许表 = 手册 §p.181 SIMPle:ITEM 参数表逐字（2026-09-09 核对）。
+    # 注意：PSLOPE/NSLOPE 不在 SIMPLE 表内（实测 SIMPle:ITEM PSLOPE,ON 不报错
+    # 但 VALue? 恒 'The number of measurements is zero'，属 ADV 专用）。
     MEAS_TYPES = (
-        "PKPK", "MAX", "MIN", "AMPL", "TOP", "BASE", "CMEAN", "MEAN",
-        "STDEV", "VSTD", "RMS", "CRMS", "MEDIAN", "OVSP", "OVSN",
-        "PER", "FREQ", "TMAX", "TMIN", "PWID", "NWID", "DUTY", "NDUTY",
-        "RISE", "FALL", "EDGES", "PPULSES", "NPULSES", "PSLOPE", "NSLOPE",
+        "PKPK", "MAX", "MIN", "AMPL", "TOP", "BASE", "LEVELX", "CMEAN",
+        "MEAN", "STDEV", "VSTD", "RMS", "CRMS", "MEDIAN", "CMEDIAN",
+        "OVSN", "FPRE", "OVSP", "RPRE", "ULOWer", "PER", "FREQ",
+        "TMAX", "TMIN", "PWID", "NWID", "DUTY", "NDUTY", "WID", "NBWID",
+        "DELAY", "TIMEL", "RISE", "FALL", "RISE20T90", "FALL80T20",
+        "CCJ", "PAREA", "NAREA", "AREA", "ABSAREA", "CYCLES",
+        "REDGES", "FEDGES", "EDGES", "PPULSES", "NPULSES",
+        "PACArea", "NACArea", "ACArea", "ABSACArea",
     )
 
     def meas_mode(self, mode: Optional[str] = None) -> Optional[str]:
@@ -313,9 +320,11 @@ class SDS:
         n = int(slot)
         if not 1 <= n <= 12:
             raise ValueError(f"invalid slot: {slot!r}（P 槽范围 1~12）")
-        if mtype not in self.MEAS_TYPES + C.MEAS_DUAL_TYPES:
+        allowed = self.MEAS_TYPES + C.MEAS_ADV_SINGLES + C.MEAS_DUAL_TYPES
+        if mtype not in allowed:
             raise ValueError(
-                f"未知测量类型 {mtype!r}，可用单通道: {', '.join(self.MEAS_TYPES)}；"
+                f"未知测量类型 {mtype!r}。单通道: {', '.join(self.MEAS_TYPES)}；"
+                f"ADV 专用: {', '.join(C.MEAS_ADV_SINGLES)}；"
                 f"双通道: {', '.join(C.MEAS_DUAL_TYPES)}"
             )
         drain_errors(self)

@@ -418,11 +418,39 @@ def sds_auto_scale(ch: int, use_autoset: bool = False, resource: str = SDS_RES) 
 @mcp.tool()
 def sds_measure(item: str, ch: int = 4, resource: str = SDS_RES) -> str:
     """SDS 单次测量（SIMPLE 模式，自动切模式+设信源）。ch=1-4。
-    item 枚举（SDS 缩写表）：PKPK/MAX/MIN/AMPL/TOP/BASE/RMS/CRMS/MEAN/VSTD/
-    PER/FREQ/PWID/NWID/DUTY/NDUTY/RISE/FALL/EDGES/PPULSES 等。
+    item 枚举（SIMPle:ITEM 表，51 项全支持）：PKPK/MAX/MIN/AMPL/TOP/BASE/
+    LEVELX/CMEAN/MEAN/STDEV/VSTD/RMS/CRMS/MEDIAN/CMEDIAN/OVSN/FPRE/OVSP/
+    RPRE/ULOWer/PER/FREQ/TMAX/TMIN/PWID/NWID/DUTY/NDUTY/WID/NBWID/DELAY/
+    TIMEL/RISE/FALL/RISE20T90/FALL80T20/CCJ/PAREA/NAREA/AREA/ABSAREA/
+    CYCLES/REDGES/FEDGES/EDGES/PPULSES/NPULSES/PACArea/NACArea/ACArea/ABSACArea。
     无有效读数（如无信号测频率）会在超时后返回 device_error。"""
     return _call("SDS", lambda: _sds(resource),
                  lambda s: s.measure_simple(item, f"C{ch}"))
+
+
+@mcp.tool()
+def sds_measure_phase(src_a: str = "C2", src_b: str = "C1",
+                      resource: str = SDS_RES) -> str:
+    """SDS 双通道相位差（度）= B 相对 A 的相位（A/B 第一个上升沿中值点间）。
+    用后自动关闭占用槽并恢复测量模式。用前请确认两通道完整周期在屏内
+    （否则无有效值返回 device_error）。2026-09-08 实测：A=C2/B=C1 得 94.664°，
+    交换后 265.218°（互补，符号约定验证通过）。"""
+    def fn(s: SDS):
+        prev_mode = s.meas_mode()
+        slot = None
+        try:
+            r = s.measure_phase(src_a.upper(), src_b.upper())
+            slot = r["slot"]
+            return r
+        finally:
+            try:
+                if slot is not None:
+                    s.adv_slot(slot, False)
+                if prev_mode:
+                    s.meas_mode(prev_mode)
+            except Exception:
+                pass
+    return _call("SDS", lambda: _sds(resource), fn)
 
 
 @mcp.tool()
@@ -562,6 +590,28 @@ def psu_measure(resource: str = PSU_RES) -> str:
     return _call("DH1766", lambda: _psu_connect(resource),
                  lambda p: {"voltage_v": p.measure_voltage_all(),
                             "current_a": p.measure_current_all()},
+                 close_fn=_psu_close)
+
+
+@mcp.tool()
+def psu_mode(resource: str = PSU_RES) -> str:
+    """DH1766 输出模式查询（只读）：NORM（正常三路独立）/TRAC（跟踪：
+    CH2 跟随 CH1 输出同等值负电压）/SERI（串联）/PARA（并联）。
+    操作电源前先查模式——CH2 负压是跟踪模式跟随，不是固定负轨（手册§3.8）。"""
+    return _call("DH1766", lambda: _psu_connect(resource),
+                 lambda p: {"output_mode": p.output_mode()},
+                 close_fn=_psu_close)
+
+
+@mcp.tool()
+def psu_set_mode(mode: str, resource: str = PSU_RES) -> str:
+    """DH1766 设置输出模式：NORM/TRAC/SERI/PARA（写后回读比对）。
+    ⚠ 继电器联动拓扑变化：输出必须全关，否则直接拒绝（库内无条件强制）。
+    切换范例：跟踪 ±12V 供电用 TRAC；单路独立用 NORM。"""
+    def fn(p):
+        p.set_output_mode(mode)
+        return {"output_mode": p.output_mode()}
+    return _call("DH1766", lambda: _psu_connect(resource), fn,
                  close_fn=_psu_close)
 
 

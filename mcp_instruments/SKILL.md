@@ -35,7 +35,7 @@ MCP server：`mcp_instruments/server.py`（19 工具 = 17 专用 + 2 通用护�
   看配置 → dmm_status
 
 DHO 示波器 → dho_status / dho_measure_item
-电源（DH1766）→ psu_status / psu_measure
+电源（DH1766）→ psu_status / psu_measure / psu_mode（先查输出模式！）/ psu_set_mode
 ```
 
 ## 一.五、通用护栏工具（新设备零代码接入）
@@ -60,14 +60,16 @@ DHO 示波器 → dho_status / dho_measure_item
 | 工具 | 参数 | 语义 |
 |---|---|---|
 | sds_auto_scale | ch=1-4；use_autoset | **use_autoset=True 破坏性**（重置所有通道），仅简单周期信号+无其他已调通道时用；无信号/小信号时逐档重试最长约 60s，最终优雅报错 |
-| sds_measure | item | SDS 缩写：PKPK/MAX/MIN/AMPL/RMS/PER/FREQ/PWID/DUTY/RISE...；ch=1-4 |
+| sds_measure | item | SIMPle:ITEM 表 51 项：PKPK/MAX/MIN/AMPL/TOP/BASE/RMS/CRMS/MEAN/STDEV/MEDIAN/OVSP/OVSN/PER/FREQ/TMAX/TMIN/PWID/NWID/DUTY/NDUTY/RISE/FALL/EDGES/PPULSES...；ch=1-4 |
+| sds_measure_phase | src_a, src_b | 双通道相位差（度）= B 相对 A（PHA）；用后自动清槽恢复模式；两通道都要有完整周期（C1 无信号时正确报 device_error）|
 | sds_measure | 无信号测 FREQ | 超时报 device_error（正常现象，非故障） |
 | sdg_set_wave | wvtp | SINE/SQUARE/RAMP/PULSE/NOISE/DC；amp_v 高阻下即 Vpp |
 | sdg_output | on=True | **必须 confirm=True**（真实信号） |
 | dmm_measure | function | volt_dc/volt_ac/curr_dc/curr_ac/res/fres/cont/cap/diod/freq |
 | dmm_configure | range_v | 设定量程后 :CONF? 回读滞后一拍，以实测为准 |
 | dho_measure_item | item | RIGOL 长名：VPP/VMAX/VAVG/PERiod/FREQuency...；无值报 param_validation 错误（文案含 9.9E37）|
-| psu_* | 三路 | CH1-3；带载读数即实际输出；上电后 ≥2s 再读（过渡态） |
+| psu_measure | 三路 | CH1-3；带载读数即实际输出；上电后 ≥2s 再读（过渡态） |
+| psu_mode / psu_set_mode | mode | **操作电源前先查模式**：NORM/TRAC/SERI/PARA；TRAC 下 CH2 跟随 CH1 输出负压（非故障，手册§3.8）；切换前输出必须全关（库内强制）|
 
 ## 三、安全门
 

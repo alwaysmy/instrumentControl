@@ -20,7 +20,8 @@ MCP 注册（opencode/cursor 等）：command 用 python 全路径，args 为本
 | `instr_write(resource, cmd, readback_cmd?, confirm, timeout_ms?)` | 通用 SCPI 写：黑名单拦截/drain+SYST:ERR?/自动回读/审计落盘/看门狗 | **confirm=True**；`*RST` 等一律 forbidden |
 | `sds_status` | SDS 快照（采集/时基/触发/通道） | 只读 |
 | `sds_auto_scale(ch, use_autoset?)` | 自动定标；use_autoset 破坏性需理解语义 | 改配置 |
-| `sds_measure(item, ch)` | SIMPLE 测量（PKPK/FREQ/RMS...） | 只读 |
+| `sds_measure(item, ch)` | SIMPLE 测量（51 项：PKPK/FREQ/RMS/PER/PWID...） | 只读 |
+| `sds_measure_phase(src_a, src_b)` | 双通道相位差（度，PHA，用后自动清槽） | 只读 |
 | `sds_screenshot` | 截屏存 PNG 返回路径 | 只读 |
 | `sds_diagnose` | 触发链路诊断 | 只读 |
 | `sds_shutdown(confirm)` | 远程关机 | **confirm=True** |
@@ -31,6 +32,8 @@ MCP 注册（opencode/cursor 等）：command 用 python 全路径，args 为本
 | `dmm_status` / `dmm_configure` | 快照 / 配置 | 只读/改配置 |
 | `dho_status` / `dho_measure_item` | DHO 快照 / 测量 | 只读 |
 | `psu_status` / `psu_measure` | DH1766 快照 / 三路回读 | 只读 |
+| `psu_mode` | 电源输出模式（NORM/TRAC/SERI/PARA，**操作前先查**） | 只读 |
+| `psu_set_mode(mode)` | 电源模式设置（输出必须全关，库内强制） | 改配置 |
 
 安全约定：复位类命令不暴露（instr_write 黑名单亦不放行）；关机/开输出/
 通用写必须 `confirm=True`；每次调用连接→操作→关闭（无状态）+ 全局锁串行化 +

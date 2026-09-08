@@ -64,6 +64,8 @@ AI/Agent 操作仪器必须遵守以下规范。
 - **信号源输出开关必须声明负载**（`set_output(ch, on, expect_load)` /
   MCP `sdg_output(..., expect_load)`）：HZ=高阻（AMP 即 Vpp）/ 50=50Ω
   （实际幅度减半），仅校验不设置，不符立即拒绝并回传实际值。
+- **禁止远程锁定命令**：`SYSTem:REMote ON`（SDS：禁用触摸屏/面板按键，界面显示 Remote）及 `SYST:REM`/`SYST:LOCK` 类——妨碍现场人工操作。
+  MCP `instr_write` 已黑名单拦截；查询 `SYST:REM?` 保留（诊断用）。
 - **禁止复位类命令**：`*RST`、`:SYST:RESet`、`:SYST:FACT`、DMM `*RCL/*SAV` 覆写。
   `*RST` 需用户显式授权（dh1766 用 `--allow-rst` 模式）。
 - **输出/信号类操作**（SDG 输出开关、电源输出开关）需明确场景授权：

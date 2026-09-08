@@ -274,6 +274,11 @@ def instr_discover(cidr: str | None = None) -> str:
 _FORBIDDEN_RE = re.compile(
     r"\*(RST|SAV|RCL)"  # *RST / *SAV n / *RCL n（含带参写法）
     r"|:?(SYST|SYSTEM):(RESET|RES|FACTORY|FACT|PRESET|PRES)(:|\?|$)"
+    # 远程锁定类：SDS :SYSTem:REMote ON 会禁用触摸屏/面板按键（界面显示 Remote），
+    # 影响人工操作——自动化一律禁止（skill instrument-mcp 明文约定）。
+    # 注意：_is_forbidden 先做空白归一（"SYST:REM ON"→"SYST:REMON"），
+    # 故此处不能用结尾断言，前缀匹配即可（REM 开头的 SYSTem 子命令仅远程锁定类）。
+    r"|:?(SYST|SYSTEM):(REMOTE|REM|LOCK|LOCKED)"
 )
 
 

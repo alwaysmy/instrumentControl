@@ -33,6 +33,7 @@ MCP 注册（opencode/cursor 等）：command 用 python 全路径，args 为本
 | `dho_status` / `dho_measure_item` | DHO 快照 / 测量 | 只读 |
 | `psu_status` / `psu_measure` | DH1766 快照 / 三路回读 | 只读 |
 | `psu_mode` | 电源输出模式（NORM/TRAC/SERI/PARA，**操作前先查**） | 只读 |
+| `psu_power_cycle(ch, expect_mode, cycles, off_delay_s, on_delay_s, confirm)` | 上下电循环（默认 1 次/延迟 1s）；**confirm 必填** | 改配置 |
 | `psu_pre_check` | **开输出前安全检查**：模式/设定/OVP/OCP/输出状态/寄存器 → {safe, warnings} | 只读 |
 | `psu_output(ch, on, expect_mode, confirm)` | 输出开关；**expect_mode 必填**（仅校验，不符拒绝）；**开/关都需 confirm=True** | **confirm 必填** |
 | `psu_set_mode(mode)` | 电源模式设置（输出必须全关，库内强制） | 改配置 |

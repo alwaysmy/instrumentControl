@@ -71,6 +71,7 @@ DHO 示波器 → dho_status / dho_measure_item
 | dmm_configure | range_v | 设定量程后 :CONF? 回读滞后一拍，以实测为准 |
 | dho_measure_item | item | RIGOL 长名：VPP/VMAX/VAVG/PERiod/FREQuency...；无值报 param_validation 错误（文案含 9.9E37）|
 | psu_measure | 三路 | CH1-3；带载读数即实际输出；上电后 ≥2s 再读（过渡态） |
+| psu_power_cycle | ch, expect_mode, cycles=1, off_delay_s=1.0, on_delay_s=1.0, confirm | 上下电循环（关→延迟→开→延迟）；**confirm 必填**（授权同输出开关）；放电不足时调大 off_delay_s（电容残留需 ≥6s）|
 | psu_pre_check | — | **开输出前必调**：返回 {safe, warnings, state}——TRAC 负压/OVP≤设定/已带电/QUES 告警逐条提示 |
 | psu_mode / psu_set_mode | mode | **操作电源前先查模式**：NORM/TRAC/SERI/PARA；TRAC 下 CH2 跟随 CH1 输出负压（非故障，手册§3.8）；切换前输出必须全关（库内强制）|
 | psu_output | ch, on, **expect_mode**, confirm | 单通道输出开关；**expect_mode 必填**（仅校验，不符拒绝并回传实际模式）；**开/关都需 confirm=True**（关闭可能中断供电）|
@@ -88,7 +89,7 @@ DHO 示波器 → dho_status / dho_measure_item
 
 `confirm=True` 不是"我知道要关"就填——它代表**已获得关断授权**。满足以下之一才可关断：
 
-1. **用户本轮明确要求关闭**该输出（如"把信号源关掉"）；
+1. **用户本轮明确要求关闭**该输出（如"把信号源关掉"），或**明确要求做上下电/上下电循环**；
 2. **用户明确声明独占使用**："只有你在用这块供电/供信号的板子"、"没有别人在用"。
 
 不满足时**不要关断**：实验台可能是共享的（同一电源可能给别人的板子供电、

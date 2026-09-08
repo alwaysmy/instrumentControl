@@ -666,6 +666,35 @@ def psu_set_mode(mode: str, resource: str = PSU_RES) -> str:
                  close_fn=_psu_close)
 
 
+@mcp.tool()
+def psu_power_cycle(ch: int, expect_mode: str, cycles: int = 1,
+                    off_delay_s: float = 1.0, on_delay_s: float = 1.0,
+                    confirm: bool = False, resource: str = PSU_RES) -> str:
+    """DH1766 上下电循环：关断→延迟→开启→延迟，重复 cycles 次。
+
+    ⚠ **需 confirm=True**——授权同 psu_output：① 用户本轮明确要求做上下电/循环，
+    或 ② 用户明确声明独占使用；否则先向用户确认（可能打断他人实验/板子供电）。
+
+    **expect_mode 必填**（仅校验，不符拒绝）。
+    off_delay_s 默认 1s（需保证下电放电时调大，如实测电容残留需 ≥6s）；
+    on_delay_s 默认 1s；cycles 默认 1。延迟由主机 sleep 控制，不精准，
+    用于保证放电/上电时序（非精密时序）。
+    返回 {"cycles","records":[每次循环延迟与电压],"after"}。
+    """
+    if not confirm:
+        return _err("confirm_required",
+                    "上下电循环需 confirm=True——授权来源：用户明确要求做上下电循环，"
+                    "或用户声明独占使用；否则先确认（可能打断他人实验/板子供电）",
+                    "DH1766")
+
+    def fn(p):
+        return p.power_cycle(ch, expect_mode, off_delay_s=off_delay_s,
+                             on_delay_s=on_delay_s, cycles=cycles)
+
+    return _call("DH1766", lambda: _psu_connect(resource), fn,
+                 close_fn=_psu_close)
+
+
 def _prewarm_visa_rm() -> None:
     """后台预热 VISA 运行时（visa32.dll 加载），历史上实测可 20s+。
 

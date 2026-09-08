@@ -458,24 +458,42 @@ class DH1766:
         return {f"CH{i + 1}": vals[i] for i in range(len(vals))}
 
     def power_cycle(self, ch: Channel, expect_mode: str,
-                    off_s: float = 6.0, on_settle_s: float = 2.0) -> dict:
-        """断电→上电高层 API（断电验证场景高频操作）。
+                    off_delay_s: float = 1.0, on_delay_s: float = 1.0,
+                    cycles: int = 1) -> dict:
+        """上下电循环：关断→延迟→开启→延迟，重复 cycles 次。
 
         expect_mode（必填）：声明的当前工作模式，仅校验不设置（同 set_output）。
-        off_s: 断电时长（实测电容残留需 ≥6s 放完）；on_settle_s: 上电后
-        等待过渡态（EXPERIENCE.md §5.1：上电后 ≥2s 读数才稳定）。
-        返回 {"off_s": 实际断电时长, "settle_s": 实际等待, "after": 上电稳定后读数 dict}。
+        off_delay_s：关断后延迟（默认 1s）——需保证下电放电时调大（如 6s，
+        实测电容残留需 ≥6s 放完）；on_delay_s：开启后延迟（默认 1s）；
+        cycles：循环次数（默认 1）。
+        延迟由主机 sleep 控制，不精准（用于保证放电/上电时序，非精密时序）。
+        返回 {"cycles", "records": [每次循环的实测延迟与电压], "after"}。
         """
+        n = int(cycles)
+        if n < 1:
+            raise ValueError(f"cycles 必须 ≥1，收到 {cycles!r}")
         self._check_mode(expect_mode)
-        self.set_output(ch, False, expect_mode)
-        t0 = time.monotonic()
-        time.sleep(off_s)
-        off_actual = time.monotonic() - t0
-        self.set_output(ch, True, expect_mode)
-        time.sleep(on_settle_s)
+        records = []
+        for i in range(1, n + 1):
+            self.set_output(ch, False, expect_mode)
+            t0 = time.monotonic()
+            time.sleep(off_delay_s)
+            off_actual = time.monotonic() - t0
+            self.set_output(ch, True, expect_mode)
+            t1 = time.monotonic()
+            time.sleep(on_delay_s)
+            on_actual = time.monotonic() - t1
+            records.append({
+                "cycle": i,
+                "off_delay_s": round(off_actual, 3),
+                "on_delay_s": round(on_actual, 3),
+                "voltage_v": self.measure_voltage_all(),
+            })
         return {
-            "off_s": round(off_actual, 2),
-            "settle_s": on_settle_s,
+            "cycles": n,
+            "off_delay_s": off_delay_s,
+            "on_delay_s": on_delay_s,
+            "records": records,
             "after": self.measure_voltage_dict(),
         }
 

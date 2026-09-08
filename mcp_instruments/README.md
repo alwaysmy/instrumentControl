@@ -27,14 +27,14 @@ MCP 注册（opencode/cursor 等）：command 用 python 全路径，args 为本
 | `sds_shutdown(confirm)` | 远程关机 | **confirm=True** |
 | `sdg_status` | SDG 快照 | 只读 |
 | `sdg_set_wave(ch, wvtp, freq, amp, ofst)` | 设波形参数（不动输出开关） | 改配置 |
-| `sdg_output(ch, on, expect_load, confirm)` | 输出开关；**expect_load 必填**（HZ/50，仅校验，不符拒绝）；on=True 需 confirm | **on=True 需 confirm** |
+| `sdg_output(ch, on, expect_load, confirm)` | 输出开关；**expect_load 必填**（HZ/50，仅校验）；**开/关都需 confirm=True** | **confirm 必填** |
 | `dmm_measure(function)` | 34465A 测量（10 种） | 只读 |
 | `dmm_status` / `dmm_configure` | 快照 / 配置 | 只读/改配置 |
 | `dho_status` / `dho_measure_item` | DHO 快照 / 测量 | 只读 |
 | `psu_status` / `psu_measure` | DH1766 快照 / 三路回读 | 只读 |
 | `psu_mode` | 电源输出模式（NORM/TRAC/SERI/PARA，**操作前先查**） | 只读 |
 | `psu_pre_check` | **开输出前安全检查**：模式/设定/OVP/OCP/输出状态/寄存器 → {safe, warnings} | 只读 |
-| `psu_output(ch, on, expect_mode, confirm)` | 输出开关；**expect_mode 必填**（声明模式仅校验，不符拒绝并回传实际模式）；on=True 需 confirm | 改配置 |
+| `psu_output(ch, on, expect_mode, confirm)` | 输出开关；**expect_mode 必填**（仅校验，不符拒绝）；**开/关都需 confirm=True** | **confirm 必填** |
 | `psu_set_mode(mode)` | 电源模式设置（输出必须全关，库内强制） | 改配置 |
 
 安全约定：复位类命令不暴露（instr_write 黑名单亦不放行）；关机/开输出/

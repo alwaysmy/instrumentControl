@@ -28,7 +28,7 @@ MCP server：`mcp_instruments/server.py`（19 工具 = 17 专用 + 2 通用护�
 
 信号源（SDG）：
   设波形 → sdg_set_wave（不动输出开关）
-  开/关输出 → sdg_output（on=True 必须 confirm=True）
+  开/关输出 → sdg_output（**开/关都需 confirm=True**，expect_load 必填）
   看当前配置 → sdg_status
 
 万用表（DMM）：
@@ -66,31 +66,32 @@ DHO 示波器 → dho_status / dho_measure_item
 | sds_measure_phase | src_a, src_b | 双通道相位差（度）= B 相对 A（PHA）；用后自动清槽恢复模式；两通道都要有完整周期（C1 无信号时正确报 device_error）|
 | sds_measure | 无信号测 FREQ | 超时报 device_error（正常现象，非故障） |
 | sdg_set_wave | wvtp | SINE/SQUARE/RAMP/PULSE/NOISE/DC；amp_v 高阻下即 Vpp |
-| sdg_output | ch, on, **expect_load** | 输出开关；**expect_load 必填**（HZ 高阻/50Ω，仅校验，不符拒绝并回传实际值）；on=True 还需 confirm=True |
+| sdg_output | ch, on, **expect_load**, confirm | 输出开关；**expect_load 必填**（HZ/50Ω，仅校验，不符拒绝）；**开/关都需 confirm=True**（关闭可能打断测试/他人实验）|
 | dmm_measure | function | volt_dc/volt_ac/curr_dc/curr_ac/res/fres/cont/cap/diod/freq |
 | dmm_configure | range_v | 设定量程后 :CONF? 回读滞后一拍，以实测为准 |
 | dho_measure_item | item | RIGOL 长名：VPP/VMAX/VAVG/PERiod/FREQuency...；无值报 param_validation 错误（文案含 9.9E37）|
 | psu_measure | 三路 | CH1-3；带载读数即实际输出；上电后 ≥2s 再读（过渡态） |
 | psu_pre_check | — | **开输出前必调**：返回 {safe, warnings, state}——TRAC 负压/OVP≤设定/已带电/QUES 告警逐条提示 |
 | psu_mode / psu_set_mode | mode | **操作电源前先查模式**：NORM/TRAC/SERI/PARA；TRAC 下 CH2 跟随 CH1 输出负压（非故障，手册§3.8）；切换前输出必须全关（库内强制）|
-| psu_output | ch, on, **expect_mode** | 单通道输出开关；**expect_mode 必填**（声明当前模式，仅校验）——不符立即拒绝并回传实际模式；on=True 还需 confirm=True |
+| psu_output | ch, on, **expect_mode**, confirm | 单通道输出开关；**expect_mode 必填**（仅校验，不符拒绝并回传实际模式）；**开/关都需 confirm=True**（关闭可能中断供电）|
 
 ## 三、安全门
 
 | 工具 | 门 | 说明 |
 |---|---|---|
 | sds_shutdown | confirm=True | 设备离线需面板手动开机 |
-| sdg_output(on=True) | confirm=True | 真实信号输出 |
+| sdg_output（开/关） | confirm=True | 开=真实信号；关=可能打断测试/他人实验 |
+| psu_output（开/关） | confirm=True | 开=真实电压；关=可能中断供电 |
 | （未暴露）| — | 复位类命令一律不可用 |
 
 ## 四、典型工作流
 
 **信号链验证**（SDG 输出 → SDS 测量）：
 1. `sdg_set_wave(ch=2, wvtp="SINE", freq_hz=1000, amp_v=2)` 
-2. `sdg_output(ch=2, on=True, confirm=True)`
+2. `sdg_output(ch=2, on=True, expect_load="HZ", confirm=True)`
 3. `sds_auto_scale(ch=4)`（信号接在 C4）
 4. `sds_measure(item="PKPK")` + `sds_measure(item="FREQ")` 断言
-5. 结束 `sdg_output(ch=2, on=False)`
+5. 结束 `sdg_output(ch=2, on=False, expect_load="HZ", confirm=True)`
 
 **示波器无波形**：
 1. `sds_diagnose` 看触发源/电平/模式

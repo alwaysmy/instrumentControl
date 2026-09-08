@@ -525,15 +525,18 @@ def sdg_set_wave(ch: int, wvtp: str, freq_hz: float, amp_v: float,
 @mcp.tool()
 def sdg_output(ch: int, on: bool, expect_load: str, confirm: bool = False,
                resource: str = SDG_RES) -> str:
-    """SDG 开关通道 ch(1-2) 输出。⚠ on=True 输出真实信号，必须 confirm=True。
+    """SDG 开关通道 ch(1-2) 输出。⚠ 开/关都需 confirm=True（关闭可能打断
+    正在进行的测试或他人实验，同样是状态变更）。
 
     **expect_load 必填**：调用方声明的当前负载设置（HZ=高阻 / 50=50Ω），
     仅校验不设置——与实际不符立即拒绝并回传实际值。SDG 的 AMP 设定与负载
     强相关（HZ 下即 Vpp，50Ω 下实际幅度减半），输出前必须声明避免误判。
     建议先 sdg_status 查看。
     """
-    if on and not confirm:
-        return _err("confirm_required", "开启输出需 confirm=True（真实信号输出）", "SDG")
+    if not confirm:
+        return _err("confirm_required",
+                    f"输出开关（{'ON' if on else 'OFF'}）需 confirm=True——"
+                    f"关闭同样可能打断正在进行的测试/实验", "SDG")
 
     def fn(g: SDG):
         g.set_output(ch, on, expect_load)
@@ -630,14 +633,17 @@ def psu_pre_check(resource: str = PSU_RES) -> str:
 @mcp.tool()
 def psu_output(ch: int, on: bool, expect_mode: str, confirm: bool = False,
                resource: str = PSU_RES) -> str:
-    """DH1766 单通道输出开关。⚠ on=True 输出真实电压，需 confirm=True。
+    """DH1766 单通道输出开关。⚠ 开/关都需 confirm=True（关闭可能中断供电，
+    影响被测电路/他人实验，同样是状态变更）。
 
     **expect_mode 必填**：调用方声明的当前工作模式（NORM/TRAC/SERI/PARA），
     仅校验不设置——与实际不符立即拒绝并回传当前模式（防拓扑误判：TRAC 下
     CH2 跟随 CH1 输出负压、SERI/PARA 通道合并）。建议先调 psu_mode/psu_pre_check。
     """
-    if on and not confirm:
-        return _err("confirm_required", "开启输出需 confirm=True（真实电压输出）", "DH1766")
+    if not confirm:
+        return _err("confirm_required",
+                    f"输出开关（{'ON' if on else 'OFF'}）需 confirm=True——"
+                    f"关闭可能中断供电影响被测电路", "DH1766")
 
     def fn(p):
         p.set_output(ch, on, expect_mode)

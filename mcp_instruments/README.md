@@ -26,15 +26,16 @@ MCP 注册（opencode/cursor 等）：command 用 python 全路径，args 为本
 | `sds_diagnose` | 触发链路诊断 | 只读 |
 | `sds_shutdown(confirm)` | 远程关机 | **confirm=True** |
 | `sdg_status` | SDG 快照 | 只读 |
+| `sdg_counter(on?)` | 内置频率计 FCNT（FRQ/PW/NW/DUTY/FRQDEV）| 只读 |
 | `sdg_set_wave(ch, wvtp, freq, amp, ofst)` | 设波形参数（不动输出开关） | 改配置 |
 | `sdg_output(ch, on, expect_load, confirm)` | 输出开关；**expect_load 必填**（HZ/50，仅校验）；**开/关都需 confirm=True** | **confirm 必填** |
+| `dmm_nplc(value?)` | 电压 DC 积分时间 NPLC（0.02~100）| 改配置 |
 | `dmm_measure(function)` | 34465A 测量（10 种） | 只读 |
 | `dmm_status` / `dmm_configure` | 快照 / 配置 | 只读/改配置 |
 | `dho_status` / `dho_measure_item` | DHO 快照 / 测量 | 只读 |
-| `psu_status` / `psu_measure` | DH1766 快照 / 三路回读 | 只读 |
+| `psu_status` | DH1766 状态总览（含电压/电流/模式 + safe/warnings 安全检查）| 只读 |
 | `psu_mode` | 电源输出模式（NORM/TRAC/SERI/PARA，**操作前先查**） | 只读 |
 | `psu_power_cycle(ch, expect_mode, cycles, off_delay_s, on_delay_s, confirm)` | 上下电循环（默认 1 次/延迟 1s）；**confirm 必填** | 改配置 |
-| `psu_pre_check` | **开输出前安全检查**：模式/设定/OVP/OCP/输出状态/寄存器 → {safe, warnings} | 只读 |
 | `psu_output(ch, on, expect_mode, confirm)` | 输出开关；**expect_mode 必填**（仅校验，不符拒绝）；**开/关都需 confirm=True** | **confirm 必填** |
 | `psu_set_mode(mode)` | 电源模式设置（输出必须全关，库内强制） | 改配置 |
 

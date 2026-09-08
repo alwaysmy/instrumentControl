@@ -36,7 +36,7 @@ MCP server：`mcp_instruments/server.py`（19 工具 = 17 专用 + 2 通用护�
   看配置 → dmm_status
 
 DHO 示波器 → dho_status / dho_measure_item
-电源（DH1766）→ psu_status / psu_measure / psu_mode（先查输出模式！）/ psu_set_mode / **psu_pre_check（开输出前必调）**
+电源（DH1766）→ **psu_status（先查！含安全 warnings）** / psu_mode / psu_set_mode / psu_output / psu_power_cycle
 ```
 
 ## 一.五、通用护栏工具（新设备零代码接入）
@@ -65,14 +65,15 @@ DHO 示波器 → dho_status / dho_measure_item
 | sds_screenshot | resource | 截屏存 PNG 并返回路径，**可直接 Read 读图**；看波形形态/削顶/居中/菜单/光标/测量栏；无视觉能力时用 analyze_screen 像素分析兜底 |
 | sds_measure_phase | src_a, src_b | 双通道相位差（度）= B 相对 A（PHA）；用后自动清槽恢复模式；两通道都要有完整周期（C1 无信号时正确报 device_error）|
 | sds_measure | 无信号测 FREQ | 超时报 device_error（正常现象，非故障） |
+| sdg_counter | on? | 内置频率计 FCNT（SDG2000X；SDG7000A 才是 :SENSe:COUNTer:*）；返回 FRQ/PW/NW/DUTY/FRQDEV 等；无信号 FRQ=0HZ |
 | sdg_set_wave | wvtp | SINE/SQUARE/RAMP/PULSE/NOISE/DC；amp_v 高阻下即 Vpp |
 | sdg_output | ch, on, **expect_load**, confirm | 输出开关；**expect_load 必填**（HZ/50Ω，仅校验，不符拒绝）；**开/关都需 confirm=True**（关闭可能打断测试/他人实验）|
+| dmm_nplc | value? | 电压 DC 积分时间 NPLC（0.02/0.2/1/10/100，越大越准越慢）；无参查询，有参设置后回读 |
 | dmm_measure | function | volt_dc/volt_ac/curr_dc/curr_ac/res/fres/cont/cap/diod/freq |
 | dmm_configure | range_v | 设定量程后 :CONF? 回读滞后一拍，以实测为准 |
 | dho_measure_item | item | RIGOL 长名：VPP/VMAX/VAVG/PERiod/FREQuency...；无值报 param_validation 错误（文案含 9.9E37）|
-| psu_measure | 三路 | CH1-3；带载读数即实际输出；上电后 ≥2s 再读（过渡态） |
+| psu_status | — | **电源状态总览（操作前先调）**：三路电压/电流/功率/设定/OVP/OCP/输出/模式/耦合 + **safe/warnings** 安全检查（原 measure 与 pre_check 已并入）|
 | psu_power_cycle | ch, expect_mode, cycles=1, off_delay_s=1.0, on_delay_s=1.0, confirm | 上下电循环（关→延迟→开→延迟）；**confirm 必填**（授权同输出开关）；放电不足时调大 off_delay_s（电容残留需 ≥6s）|
-| psu_pre_check | — | **开输出前必调**：返回 {safe, warnings, state}——TRAC 负压/OVP≤设定/已带电/QUES 告警逐条提示 |
 | psu_mode / psu_set_mode | mode | **操作电源前先查模式**：NORM/TRAC/SERI/PARA；TRAC 下 CH2 跟随 CH1 输出负压（非故障，手册§3.8）；切换前输出必须全关（库内强制）|
 | psu_output | ch, on, **expect_mode**, confirm | 单通道输出开关；**expect_mode 必填**（仅校验，不符拒绝并回传实际模式）；**开/关都需 confirm=True**（关闭可能中断供电）|
 

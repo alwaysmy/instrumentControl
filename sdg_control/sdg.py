@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -152,6 +153,29 @@ class SDG:
     def mod_wave(self, ch: int | str) -> dict:
         """:MDWV? 调制参数查询（STATE/TYPE/SRC 等）。"""
         return self._kv_query(f"{C.MDWV_Q.format(ch=self._ch(ch))}")
+
+    def counter(self, on: Optional[bool] = None) -> Optional[dict]:
+        """FCNT 频率计（手册 §3.24）。
+
+        ⚠ 命令集因系列而异：SDG2000X 用 `FCNT`（键值对整体查询）；
+        SDG7000A 才用 `:SENSe:COUNTer:*`（手册注明）。本机 SDG2122X 实测
+        `FCNT?` 正常、子参数式 `FCNT STATE?` 超时。
+
+        on=None 仅查询；on=True/False 先开关再查询。返回参数字典：
+        STATE/FRQ/PW/NW/DUTY/FRQDEV/REFQ/TRG/MODE/HFR/TYPE。
+        注意 [Counter] 输入口无信号时 FRQ=0HZ（正常，非故障）。
+        """
+        if on is not None:
+            self.write(f"FCNT STATE,{'ON' if on else 'OFF'}")
+            time.sleep(0.3)
+        raw = self.query("FCNT?").strip()
+        parts = raw.split(" ", 1)
+        out: dict = {"raw": raw}
+        if len(parts) == 2:
+            tokens = parts[1].split(",")
+            for i in range(0, len(tokens) - 1, 2):
+                out[tokens[i]] = tokens[i + 1]
+        return out
 
     def sweep_wave(self, ch: int | str) -> dict:
         """:SWWV? 扫频参数查询（STATE/START/STOP/TIME 等）。"""

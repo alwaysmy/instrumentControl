@@ -523,6 +523,17 @@ def sdg_set_wave(ch: int, wvtp: str, freq_hz: float, amp_v: float,
 
 
 @mcp.tool()
+def sdg_counter(on: bool | None = None, resource: str = SDG_RES) -> str:
+    """SDG 内置频率计（FCNT，手册 §3.24）。on=None 仅查询；True/False 先开关再查。
+
+    返回 STATE/FRQ/PW/NW/DUTY/FRQDEV/REFQ/TRG/MODE/HFR/TYPE。
+    ⚠ 命令集因系列而异：SDG2000X 用 FCNT（本机实测），SDG7000A 才用
+    `:SENSe:COUNTer:*`。输入口无信号时 FRQ=0HZ（正常）。
+    """
+    return _call("SDG", lambda: _sdg(resource), lambda g: g.counter(on))
+
+
+@mcp.tool()
 def sdg_output(ch: int, on: bool, expect_load: str, confirm: bool = False,
                resource: str = SDG_RES) -> str:
     """SDG 开关通道 ch(1-2) 输出。⚠ 开/关都需 confirm=True（关闭可能打断
@@ -573,6 +584,22 @@ def dmm_configure(function: str, range_v: float | None = None,
                             d.configuration())[1])
 
 
+@mcp.tool()
+def dmm_nplc(value: float | None = None, resource: str = DMM_RES) -> str:
+    """34465A 电压 DC 积分时间 NPLC（手册 [SENSe:]VOLTage[:DC]:NPLC）。
+
+    value=None 查询；给出则设置后回读。取值 0.02/0.2/1/10/100（默认 10）——
+    越大越准越慢。注意：NPLC 与 APERture 互斥（设孔径会把 NPLC 置 0）。
+    """
+    def fn(d):
+        if value is None:
+            return {"nplc": d.get_nplc()}
+        d.set_nplc(value)
+        time.sleep(0.2)
+        return {"nplc": d.get_nplc()}
+    return _call("DMM", lambda: _dmm(resource), fn)
+
+
 # ============ DHO 示波器 ============
 
 @mcp.tool()
@@ -593,41 +620,28 @@ def dho_measure_item(item: str, ch: int = 1, resource: str = DHO_RES) -> str:
 
 @mcp.tool()
 def psu_status(resource: str = PSU_RES) -> str:
-    """DH1766 电源只读快照：三路(CH1-3)电压/电流/功率/设定值/OVP/OCP/输出状态/跟踪模式。"""
-    return _call("DH1766", lambda: _psu_connect(resource),
-                 lambda p: p.snapshot(), close_fn=_psu_close)
-
-
-@mcp.tool()
-def psu_measure(resource: str = PSU_RES) -> str:
-    """DH1766 三路输出电压/电流回读（CH1/2/3，单位 V/A）。带载时读数为实际输出。"""
-    return _call("DH1766", lambda: _psu_connect(resource),
-                 lambda p: {"voltage_v": p.measure_voltage_all(),
-                            "current_a": p.measure_current_all()},
-                 close_fn=_psu_close)
+    """DH1766 只读状态总览（**操作电源前先调这个**）：三路(CH1-3)电压/电流/功率/
+    设定值/OVP/OCP/输出状态/**输出模式**/耦合，并附**安全检查**：
+    safe + warnings（TRAC 负压跟随 / OVP·OCP ≤ 设定值 / 已有通道带电 /
+    QUES 寄存器告警 / 通道耦合）。
+    （原 psu_measure 的电压电流读数已并入本工具，原 psu_pre_check 的安全判断
+    亦并入 warnings。）"""
+    def fn(p):
+        snap = p.snapshot()
+        check = p.pre_power_check()
+        return {"state": snap, "safe": check["safe"], "warnings": check["warnings"]}
+    return _call("DH1766", lambda: _psu_connect(resource), fn, close_fn=_psu_close)
 
 
 @mcp.tool()
 def psu_mode(resource: str = PSU_RES) -> str:
-    """DH1766 输出模式查询（只读）：NORM（正常三路独立）/TRAC（跟踪：
+    """DH1766 输出模式查询（只读，轻量）：NORM（正常三路独立）/TRAC（跟踪：
     CH2 跟随 CH1 输出同等值负电压）/SERI（串联）/PARA（并联）。
-    操作电源前先查模式——CH2 负压是跟踪模式跟随，不是固定负轨（手册§3.8）。"""
+    操作电源前先查模式——CH2 负压是跟踪模式跟随，不是固定负轨（手册§3.8）。
+    需要完整状态用 psu_status。"""
     return _call("DH1766", lambda: _psu_connect(resource),
                  lambda p: {"output_mode": p.output_mode()},
                  close_fn=_psu_close)
-
-
-@mcp.tool()
-def psu_pre_check(resource: str = PSU_RES) -> str:
-    """DH1766 **上电（开输出）前安全检查**：一次查全输出模式/三路设定/OVP/OCP/
-    输出状态/状态寄存器/通道耦合，返回 {safe, warnings, state}。
-    **开输出前必调**——safe=False 时逐条说明风险：
-    - TRAC 模式 CH2 会输出负压（跟随 CH1）；
-    - OVP/OCP ≤ 设定值 → 一开输出即触发保护；
-    - 已有通道带电 → 防重复上电；
-    - QUES 寄存器非零 → 实时告警。"""
-    return _call("DH1766", lambda: _psu_connect(resource),
-                 lambda p: p.pre_power_check(), close_fn=_psu_close)
 
 
 @mcp.tool()
@@ -638,7 +652,7 @@ def psu_output(ch: int, on: bool, expect_mode: str, confirm: bool = False,
 
     **expect_mode 必填**：调用方声明的当前工作模式（NORM/TRAC/SERI/PARA），
     仅校验不设置——与实际不符立即拒绝并回传当前模式（防拓扑误判：TRAC 下
-    CH2 跟随 CH1 输出负压、SERI/PARA 通道合并）。建议先调 psu_mode/psu_pre_check。
+    CH2 跟随 CH1 输出负压、SERI/PARA 通道合并）。建议先调 psu_status。
     """
     if not confirm:
         return _err("confirm_required",

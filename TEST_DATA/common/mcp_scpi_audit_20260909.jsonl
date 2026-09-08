@@ -1,0 +1,2 @@
+{"ts": "2026-09-09T00:11:31", "tool": "instr_write", "resource": "dummy", "cmd": "VOLT 1", "refused": "confirm_required"}
+{"ts": "2026-09-09T00:11:31", "tool": "instr_write", "resource": "dummy", "cmd": "*RST", "refused": "forbidden"}

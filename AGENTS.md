@@ -104,6 +104,10 @@ AI/Agent 操作仪器必须遵守以下规范。
 
 ## 五、已知待办
 
+- **MCP 工具按配置选择性加载**（2026-09-09 调研完成，未实施）：opencode 客户端
+  支持 `tools` 配置 + glob（`"instruments_sds_*": false`，工具名带 server 名前缀
+  `instruments_`）；server 端可用 FastMCP `remove_tool()` 或环境变量条件注册做
+  更彻底的控制（tools/list 就不含）。短期用客户端配置即可（零代码）。
 - sds_control 波形读取：SDS800X HD 的 PREamble DESC 布局与手册示例不符（读出全零），
   待专研该型号结构体
 - waveform_matrix 遗留：带偏置信号（OFST≠0）的细调精度（居中残差×细调交互）

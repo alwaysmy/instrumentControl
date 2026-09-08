@@ -55,36 +55,41 @@ DHO_RES = "TCPIP0::192.168.31.146::5555::SOCKET"
 PSU_RES = "TCPIP0::192.168.31.144::5025::SOCKET"
 
 
-def _ok(model, result):
-    return json.dumps({"ok": True, "model": model, "result": result},
-                      ensure_ascii=False, default=str)
-
-
-def _err(error_type, msg, model=None):
-    d = {"ok": False, "error_type": error_type, "error": msg}
-    if model:
-        d["model"] = model
+def _ok(model, result, resource=None):
+    d = {"ok": True, "model": model, "result": result}
+    if resource:
+        d["resource"] = resource
     return json.dumps(d, ensure_ascii=False, default=str)
 
 
-def _call(model_name, connect_fn, fn, close_fn=None):
+def _err(error_type, msg, model=None, resource=None):
+    d = {"ok": False, "error_type": error_type, "error": msg}
+    if model:
+        d["model"] = model
+    if resource:
+        d["resource"] = resource
+    return json.dumps(d, ensure_ascii=False, default=str)
+
+
+def _call(model_name, connect_fn, fn, close_fn=None, resource=None):
     """统一执行：连接→操作→关闭，错误分类，全局锁串行化。
 
     close_fn 缺省时调 dev.close()（DH1766 无该方法，须显式传 _psu_close）。
+    resource 仅通用工具传（用于错误结构区分设备模型与资源串）。
     """
     with _DEVICE_LOCK:
         try:
             dev = connect_fn()
         except Exception as e:
-            return _err("connection", f"{type(e).__name__}: {e}", model_name)
+            return _err("connection", f"{type(e).__name__}: {e}", model_name, resource)
         try:
-            return _ok(model_name, fn(dev))
+            return _ok(model_name, fn(dev), resource)
         except ValueError as e:
-            return _err("param_validation", str(e), model_name)
+            return _err("param_validation", str(e), model_name, resource)
         except RuntimeError as e:
-            return _err("device_error", str(e), model_name)
+            return _err("device_error", str(e), model_name, resource)
         except Exception as e:
-            return _err("communication", f"{type(e).__name__}: {e}", model_name)
+            return _err("communication", f"{type(e).__name__}: {e}", model_name, resource)
         finally:
             try:
                 if close_fn is not None:
@@ -316,7 +321,8 @@ def _guarded_call(resource: str, timeout_ms: int, fn) -> str:
     holder: dict = {}
 
     def work():
-        holder["r"] = _call(resource, lambda: _visa(resource, timeout_ms), fn)
+        holder["r"] = _call("instruments", lambda: _visa(resource, timeout_ms), fn,
+                            resource=resource)
 
     t = threading.Thread(target=work, daemon=True)
     t.start()
@@ -325,8 +331,8 @@ def _guarded_call(resource: str, timeout_ms: int, fn) -> str:
         return _err("timeout",
                     f"设备 {resource} 无响应超过 {budget:.0f}s（离线/总线挂起），"
                     "已放弃本次调用；后续调用可能仍超时（挂起线程占用设备锁）",
-                    resource)
-    return holder.get("r") or _err("internal", "worker 未返回结果", resource)
+                    "instruments", resource)
+    return holder.get("r") or _err("internal", "worker 未返回结果", "instruments", resource)
 
 
 def _audit_scpi(tool: str, resource: str, cmd: str, **extra) -> str:
@@ -351,7 +357,8 @@ def instr_query(resource: str, cmd: str, timeout_ms: int = 5000) -> str:
     只读不留痕；写操作用 instr_write（有黑名单/confirm/审计三道护栏）。
     设备无响应有硬超时看门狗（下限 30s，覆盖 VISA 冷启动），离线资源不会冻结 MCP。"""
     if "?" not in cmd:
-        return _err("param_validation", f"查询命令必须含 '?': {cmd!r}", resource)
+        return _err("param_validation", f"查询命令必须含 '?': {cmd!r}",
+                    "instruments", resource)
 
     def fn(c):
         return {"response": c.query(cmd)}
@@ -373,13 +380,16 @@ def instr_write(resource: str, cmd: str, readback_cmd: str | None = None,
     返回 result: {written, pre_errors, syst_errors, readback}。"""
     if _is_forbidden(cmd):
         _audit_scpi("instr_write", resource, cmd, refused="forbidden")
-        return _err("forbidden", f"复位/存储覆写类命令禁止经 MCP 下发: {cmd!r}", resource)
+        return _err("forbidden", f"复位/存储覆写类命令禁止经 MCP 下发: {cmd!r}",
+                    "instruments", resource)
     if not confirm:
         _audit_scpi("instr_write", resource, cmd, refused="confirm_required")
-        return _err("confirm_required", "通用写需 confirm=True（raw SCPI 写权限）", resource)
+        return _err("confirm_required", "通用写需 confirm=True（raw SCPI 写权限）",
+                    "instruments", resource)
     if readback_cmd and "?" not in readback_cmd:
         return _err("param_validation",
-                    f"readback_cmd 是回读查询，必须含 '?': {readback_cmd!r}", resource)
+                    f"readback_cmd 是回读查询，必须含 '?': {readback_cmd!r}",
+                    "instruments", resource)
     _audit_scpi("instr_write", resource, cmd, refused=None)
 
     def fn(c):

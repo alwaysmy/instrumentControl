@@ -15,7 +15,7 @@ scope = SDS("TCPIP0::192.168.31.220::inst0::INSTR")
 gen.connect()
 scope.connect()
 try:
-    gen.set_output(2, True)
+    gen.set_output(2, True, gen.output_state(2).get("LOAD", "HZ"))
     time.sleep(0.5)
     r = scope.auto_scale(4)
     print(json.dumps(r, ensure_ascii=False, indent=2))
@@ -24,6 +24,6 @@ try:
     ok = abs(freq - 1000) / 1000 < 0.05 and abs(vpp - 2.0) / 2.0 < 0.2
     print(f"终测: Vpp={vpp:.3f}V Freq={freq:.1f}Hz -> {'PASS' if ok else 'FAIL'}")
 finally:
-    gen.set_output(2, False)
+    gen.set_output(2, False, gen.output_state(2).get("LOAD", "HZ"))
     gen.close()
     scope.close()

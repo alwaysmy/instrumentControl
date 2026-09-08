@@ -523,15 +523,20 @@ def sdg_set_wave(ch: int, wvtp: str, freq_hz: float, amp_v: float,
 
 
 @mcp.tool()
-def sdg_output(ch: int, on: bool, confirm: bool = False,
+def sdg_output(ch: int, on: bool, expect_load: str, confirm: bool = False,
                resource: str = SDG_RES) -> str:
     """SDG 开关通道 ch(1-2) 输出。⚠ on=True 输出真实信号，必须 confirm=True。
-    on=False 关闭输出无需 confirm。返回输出状态（state/LOAD/PLRT）。"""
+
+    **expect_load 必填**：调用方声明的当前负载设置（HZ=高阻 / 50=50Ω），
+    仅校验不设置——与实际不符立即拒绝并回传实际值。SDG 的 AMP 设定与负载
+    强相关（HZ 下即 Vpp，50Ω 下实际幅度减半），输出前必须声明避免误判。
+    建议先 sdg_status 查看。
+    """
     if on and not confirm:
         return _err("confirm_required", "开启输出需 confirm=True（真实信号输出）", "SDG")
 
     def fn(g: SDG):
-        g.set_output(ch, on)
+        g.set_output(ch, on, expect_load)
         time.sleep(0.3)
         return g.output_state(ch)
 

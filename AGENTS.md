@@ -61,6 +61,9 @@ AI/Agent 操作仪器必须遵守以下规范。
   `set_output_all(states, expect_mode)` / MCP `psu_output(..., expect_mode)`）：
   仅校验不设置，与实际不符立即拒绝并回传当前模式——防止在不知拓扑
   （TRAC 联动/SERI/PARA 合并）时误操作输出。
+- **信号源输出开关必须声明负载**（`set_output(ch, on, expect_load)` /
+  MCP `sdg_output(..., expect_load)`）：HZ=高阻（AMP 即 Vpp）/ 50=50Ω
+  （实际幅度减半），仅校验不设置，不符立即拒绝并回传实际值。
 - **禁止复位类命令**：`*RST`、`:SYST:RESet`、`:SYST:FACT`、DMM `*RCL/*SAV` 覆写。
   `*RST` 需用户显式授权（dh1766 用 `--allow-rst` 模式）。
 - **输出/信号类操作**（SDG 输出开关、电源输出开关）需明确场景授权。

@@ -38,7 +38,7 @@ def main() -> int:
     finally:
         print("\n-- finally 恢复 --")
         try:
-            gen.set_output(2, False)
+            gen.set_output(2, False, gen.output_state(2).get("LOAD", "HZ"))
             rec("finally: SDG CH2 输出关闭", gen.output_state(2).get("state") == "OFF")
         except Exception as e:
             rec("finally: SDG 恢复", False, str(e))
@@ -70,7 +70,7 @@ def _run_tests(gen: SDG, scope: SDS) -> None:
                           f"{ch2_bswv_backup.get('FRQ')} C4_disp={c4_disp} C4_VDIV={c4_vdiv}")
 
         # ---- 1. 生成：开 CH2 输出 ----
-        gen.set_output(2, True)
+        gen.set_output(2, True, gen.output_state(2).get("LOAD", "HZ"))
         time.sleep(0.5)
         st = gen.output_state(2).get("state")
         rec("SDG CH2 输出 ON", st == "ON", f"state={st}")
@@ -129,7 +129,7 @@ def _run_tests(gen: SDG, scope: SDS) -> None:
         time.sleep(1.0)
 
         # ---- 恢复 ----
-        gen.set_output(2, False)
+        gen.set_output(2, False, gen.output_state(2).get("LOAD", "HZ"))
         rec("SDG CH2 输出关闭", gen.output_state(2).get("state") == "OFF")
         scope.clear_adv_measurements()
         scope.write(f"C4:TRA {'ON' if 'ON' in c4_disp.upper() else 'OFF'}")

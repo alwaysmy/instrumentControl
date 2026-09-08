@@ -27,7 +27,7 @@ MCP 注册（opencode/cursor 等）：command 用 python 全路径，args 为本
 | `sds_shutdown(confirm)` | 远程关机 | **confirm=True** |
 | `sdg_status` | SDG 快照 | 只读 |
 | `sdg_set_wave(ch, wvtp, freq, amp, ofst)` | 设波形参数（不动输出开关） | 改配置 |
-| `sdg_output(ch, on, confirm)` | 输出开关 | **on=True 需 confirm** |
+| `sdg_output(ch, on, expect_load, confirm)` | 输出开关；**expect_load 必填**（HZ/50，仅校验，不符拒绝）；on=True 需 confirm | **on=True 需 confirm** |
 | `dmm_measure(function)` | 34465A 测量（10 种） | 只读 |
 | `dmm_status` / `dmm_configure` | 快照 / 配置 | 只读/改配置 |
 | `dho_status` / `dho_measure_item` | DHO 快照 / 测量 | 只读 |

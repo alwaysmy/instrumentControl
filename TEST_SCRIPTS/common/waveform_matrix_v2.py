@@ -64,7 +64,7 @@ def main() -> int:
                     2, WVTP=wave, FRQ="%gHZ" % freq, AMP=amp_arg, OFST="%gV" % ofst
                 )
                 time.sleep(0.3)
-                gen.set_output(2, True)
+                gen.set_output(2, True, gen.output_state(2).get("LOAD", "HZ"))
                 time.sleep(1.0)
 
                 scale = scope.auto_scale(4)
@@ -94,7 +94,7 @@ def main() -> int:
     finally:
         print("-- 恢复 --")
         try:
-            gen.set_output(2, False)
+            gen.set_output(2, False, gen.output_state(2).get("LOAD", "HZ"))
             print("   CH2:", gen.output_state(2).get("state"))
         except Exception as e:
             print("   恢复失败:", e)

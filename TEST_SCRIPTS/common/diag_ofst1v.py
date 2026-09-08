@@ -20,7 +20,7 @@ gen.connect()
 scope.connect()
 try:
     gen.set_basic_wave(2, WVTP="SINE", FRQ="1000HZ", AMP="2V", OFST="1V")
-    gen.set_output(2, True)
+    gen.set_output(2, True, gen.output_state(2).get("LOAD", "HZ"))
     time.sleep(1.5)
     print("SDG 回读:", {k: gen.basic_wave(2).get(k) for k in ("WVTP", "FRQ", "AMP", "OFST")})
 
@@ -43,6 +43,6 @@ try:
     print("MIN :", scope.query(":MEASure:SIMPle:VALue? MIN"))
     print("OFST:", scope.query("C4:OFST?"), " VDIV:", scope.query("C4:VDIV?"))
 finally:
-    gen.set_output(2, False)
+    gen.set_output(2, False, gen.output_state(2).get("LOAD", "HZ"))
     gen.close()
     scope.close()

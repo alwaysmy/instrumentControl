@@ -107,8 +107,29 @@ class SDG:
                 out[tokens[i].strip(",")] = tokens[i + 1]
         return out
 
-    def set_output(self, ch: int | str, on: bool) -> None:
-        """⚠ 开关通道输出（真实信号变化）。"""
+    def _check_load(self, ch: int | str, expect_load: str) -> str:
+        """负载设置校验（防幅度误判）：声明值与实际不符时抛错并回传实际值。
+
+        仅校验不设置——SDG 的 AMP 设定值与负载强相关（HZ 高阻下即 Vpp，
+        50Ω 下实际幅度减半），输出开关前必须声明当前负载避免误判。
+        """
+        st = self.output_state(ch)
+        actual = str(st.get("LOAD", "")).strip().upper()
+        claimed = str(expect_load).strip().upper()
+        if claimed != actual:
+            raise RuntimeError(
+                f"负载设置校验失败：声明 {claimed}，实际 {actual}。"
+                f"请先 output_state(ch) 确认当前 LOAD（HZ=高阻 / 50=50Ω）后重试"
+            )
+        return actual
+
+    def set_output(self, ch: int | str, on: bool, expect_load: str) -> None:
+        """⚠ 开关通道输出（真实信号变化）。
+
+        expect_load（必填）：调用方声明的当前负载设置（HZ 高阻 / 50 欧），
+        仅校验不设置；与实际不符立即拒绝并回传实际值（防幅度误判）。
+        """
+        self._check_load(ch, expect_load)
         self.write(f"{C.OUTP_W.format(ch=self._ch(ch), state='ON' if on else 'OFF')}")
 
     def basic_wave(self, ch: int | str) -> dict:

@@ -31,7 +31,7 @@ def main() -> int:
 
     try:
         drain("初始")
-        gen.set_output(2, True)
+        gen.set_output(2, True, gen.output_state(2).get("LOAD", "HZ"))
         time.sleep(0.3)
         for cmd in (
             ":MEASure:SIMPle:SOURce C4",
@@ -48,7 +48,7 @@ def main() -> int:
             print(f"  >>> {q} = {v}")
         drain("读值后")
     finally:
-        gen.set_output(2, False)
+        gen.set_output(2, False, gen.output_state(2).get("LOAD", "HZ"))
         gen.close()
         scope.close()
     return 0

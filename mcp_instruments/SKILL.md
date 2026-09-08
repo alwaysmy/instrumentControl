@@ -66,7 +66,7 @@ DHO 示波器 → dho_status / dho_measure_item
 | sds_measure_phase | src_a, src_b | 双通道相位差（度）= B 相对 A（PHA）；用后自动清槽恢复模式；两通道都要有完整周期（C1 无信号时正确报 device_error）|
 | sds_measure | 无信号测 FREQ | 超时报 device_error（正常现象，非故障） |
 | sdg_set_wave | wvtp | SINE/SQUARE/RAMP/PULSE/NOISE/DC；amp_v 高阻下即 Vpp |
-| sdg_output | on=True | **必须 confirm=True**（真实信号） |
+| sdg_output | ch, on, **expect_load** | 输出开关；**expect_load 必填**（HZ 高阻/50Ω，仅校验，不符拒绝并回传实际值）；on=True 还需 confirm=True |
 | dmm_measure | function | volt_dc/volt_ac/curr_dc/curr_ac/res/fres/cont/cap/diod/freq |
 | dmm_configure | range_v | 设定量程后 :CONF? 回读滞后一拍，以实测为准 |
 | dho_measure_item | item | RIGOL 长名：VPP/VMAX/VAVG/PERiod/FREQuency...；无值报 param_validation 错误（文案含 9.9E37）|

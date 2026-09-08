@@ -20,7 +20,7 @@ try:
     gen.set_basic_wave(2, WVTP="SQUARE", FRQ="1000HZ", AMP="2V", OFST="0V")
     time.sleep(0.3)
     print("SDG 设置后 ERR:", scope.query(":SYST:ERR?").strip())
-    gen.set_output(2, True)
+    gen.set_output(2, True, gen.output_state(2).get("LOAD", "HZ"))
     time.sleep(1.0)
 
     diag = scope.diagnose_trigger()
@@ -44,6 +44,6 @@ try:
     scope.screenshot_png(png)
     print("截图:", png)
 finally:
-    gen.set_output(2, False)
+    gen.set_output(2, False, gen.output_state(2).get("LOAD", "HZ"))
     gen.close()
     scope.close()

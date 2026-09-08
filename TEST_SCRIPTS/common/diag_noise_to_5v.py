@@ -14,7 +14,7 @@ scope = SDS("TCPIP0::192.168.31.220::inst0::INSTR")
 gen.connect()
 scope.connect()
 try:
-    gen.set_output(2, True)
+    gen.set_output(2, True, gen.output_state(2).get("LOAD", "HZ"))
     time.sleep(0.3)
 
     print("-- NOISE case --")
@@ -33,6 +33,6 @@ try:
     time.sleep(1.0)
     print("  SDS PKPK:", scope.query(":MEASure:SIMPle:VALue? PKPK"))
 finally:
-    gen.set_output(2, False)
+    gen.set_output(2, False, gen.output_state(2).get("LOAD", "HZ"))
     gen.close()
     scope.close()

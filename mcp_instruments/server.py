@@ -623,6 +623,27 @@ def psu_pre_check(resource: str = PSU_RES) -> str:
 
 
 @mcp.tool()
+def psu_output(ch: int, on: bool, expect_mode: str, confirm: bool = False,
+               resource: str = PSU_RES) -> str:
+    """DH1766 单通道输出开关。⚠ on=True 输出真实电压，需 confirm=True。
+
+    **expect_mode 必填**：调用方声明的当前工作模式（NORM/TRAC/SERI/PARA），
+    仅校验不设置——与实际不符立即拒绝并回传当前模式（防拓扑误判：TRAC 下
+    CH2 跟随 CH1 输出负压、SERI/PARA 通道合并）。建议先调 psu_mode/psu_pre_check。
+    """
+    if on and not confirm:
+        return _err("confirm_required", "开启输出需 confirm=True（真实电压输出）", "DH1766")
+
+    def fn(p):
+        p.set_output(ch, on, expect_mode)
+        time.sleep(0.3)
+        return {"output_on": p.get_output_state(), "output_mode": p.output_mode()}
+
+    return _call("DH1766", lambda: _psu_connect(resource), fn,
+                 close_fn=_psu_close)
+
+
+@mcp.tool()
 def psu_set_mode(mode: str, resource: str = PSU_RES) -> str:
     """DH1766 设置输出模式：NORM/TRAC/SERI/PARA（写后回读比对）。
     ⚠ 继电器联动拓扑变化：输出必须全关，否则直接拒绝（库内无条件强制）。

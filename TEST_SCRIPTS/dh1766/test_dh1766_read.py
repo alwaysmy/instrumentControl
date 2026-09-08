@@ -68,18 +68,20 @@ def main() -> None:
         print(f"设定电流 A : {ps.apply_current()}")
         states = ps.get_output_state()
         print(f"输出状态   : {['ON' if s else 'OFF' for s in states]}")
+        cur_mode = ps.output_mode()
+        print(f"输出模式   : {cur_mode}")
 
         # ---- 开关通道演示：CH1 开 1 秒后关，恢复原状态 ----
         print("\n-- 开关通道演示（CH1，1 秒）--")
         was_on = states[0]
-        ps.set_output(1, True)
+        ps.set_output(1, True, cur_mode)
         time.sleep(0.5)
         print(f"CH1 开启后状态: {ps.get_output_state()}  电压: {ps.measure_voltage_all()}")
         if was_on:
             print("CH1 原本开启，按原状态保持开启")
         else:
             time.sleep(1.0)
-            ps.set_output(1, False)
+            ps.set_output(1, False, cur_mode)
             time.sleep(0.5)
             print(f"CH1 关闭后状态: {ps.get_output_state()}  电压: {ps.measure_voltage_all()}")
 

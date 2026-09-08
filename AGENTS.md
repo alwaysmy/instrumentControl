@@ -57,6 +57,10 @@ AI/Agent 操作仪器必须遵守以下规范。
   正常/串联/并联/跟踪四态（手册 §3.8）。跟踪(TRAC)下 CH2 跟随 CH1 输出同等值
   **负电压**——看到 CH2 负压不要当成故障或"固定负轨"。切换模式前输出必须全关
   （继电器联动，库内无条件强制）；三模式固件互斥（开一路自动清零其余）。
+- **电源输出开关必须声明当前模式**（`set_output(ch, state, expect_mode)` /
+  `set_output_all(states, expect_mode)` / MCP `psu_output(..., expect_mode)`）：
+  仅校验不设置，与实际不符立即拒绝并回传当前模式——防止在不知拓扑
+  （TRAC 联动/SERI/PARA 合并）时误操作输出。
 - **禁止复位类命令**：`*RST`、`:SYST:RESet`、`:SYST:FACT`、DMM `*RCL/*SAV` 覆写。
   `*RST` 需用户显式授权（dh1766 用 `--allow-rst` 模式）。
 - **输出/信号类操作**（SDG 输出开关、电源输出开关）需明确场景授权。

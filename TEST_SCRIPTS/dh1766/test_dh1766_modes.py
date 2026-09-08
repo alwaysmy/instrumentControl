@@ -62,7 +62,7 @@ def main() -> int:
 
         try:
             # ---- 输出全关 ----
-            ps.set_output_all([False, False, False])
+            ps.set_output_all([False, False, False], ps.output_mode())
             time.sleep(0.5)
             rec("outputs_off", value=ps.get_output_state())
             drain(ps)
@@ -112,7 +112,7 @@ def main() -> int:
                 err=drain(ps) or "clean")
 
             # ---- 带载切换必须被拒（无条件强制）----
-            ps.set_output_all([True, True, False])
+            ps.set_output_all([True, True, False], ps.output_mode())
             time.sleep(0.5)
             try:
                 ps.set_output_mode("SERI")
@@ -120,7 +120,7 @@ def main() -> int:
             except RuntimeError as e:
                 rec("loaded_switch_blocked", ok=True, err=str(e)[:60])
             finally:
-                ps.set_output_all([False, False, False])
+                ps.set_output_all([False, False, False], ps.output_mode())
                 time.sleep(0.5)
         finally:
             # ---- 恢复原模式 ----
@@ -131,7 +131,7 @@ def main() -> int:
                     time.sleep(0.6)
             rec("restore_modes", **{k: str(v) for k, v in modes(ps).items()})
             # ---- 恢复原输出 ----
-            ps.set_output_all(base_out)
+            ps.set_output_all(base_out, ps.output_mode())
             time.sleep(2.5)
             rec("restore_outputs", outputs=ps.get_output_state(),
                 voltage_v=ps.measure_voltage_all())

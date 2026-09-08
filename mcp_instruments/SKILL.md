@@ -73,6 +73,7 @@ DHO 示波器 → dho_status / dho_measure_item
 | psu_measure | 三路 | CH1-3；带载读数即实际输出；上电后 ≥2s 再读（过渡态） |
 | psu_pre_check | — | **开输出前必调**：返回 {safe, warnings, state}——TRAC 负压/OVP≤设定/已带电/QUES 告警逐条提示 |
 | psu_mode / psu_set_mode | mode | **操作电源前先查模式**：NORM/TRAC/SERI/PARA；TRAC 下 CH2 跟随 CH1 输出负压（非故障，手册§3.8）；切换前输出必须全关（库内强制）|
+| psu_output | ch, on, **expect_mode** | 单通道输出开关；**expect_mode 必填**（声明当前模式，仅校验）——不符立即拒绝并回传实际模式；on=True 还需 confirm=True |
 
 ## 三、安全门
 

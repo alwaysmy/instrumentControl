@@ -280,8 +280,28 @@ class DH1766:
         return float(resp)
 
     # ================= 输出指令集 4.2.7 =================
-    def set_output(self, ch: Channel, state: bool) -> None:
-        """OUTP ON|OFF 单通道输出开关（布尔，SCPI-99 §7.3）。"""
+    def _check_mode(self, expect_mode: str) -> str:
+        """工作模式校验（防拓扑误判）：声明值与实际不符时抛错并回传当前模式。
+
+        只校验不设置——输出开关类操作必须先声明当前模式，避免在 TRAC（CH2 跟随
+        CH1 输出负压）/SERI/PARA（通道合并）等非预期拓扑下误操作。
+        """
+        actual = self.output_mode()
+        claimed = str(expect_mode).strip().upper()
+        if claimed != actual:
+            raise RuntimeError(
+                f"工作模式校验失败：声明 {claimed}，实际 {actual}。"
+                f"请先 psu_mode()/output_mode() 确认当前模式（当前为 {actual}）后重试"
+            )
+        return actual
+
+    def set_output(self, ch: Channel, state: bool, expect_mode: str) -> None:
+        """OUTP ON|OFF 单通道输出开关（布尔，SCPI-99 §7.3）。
+
+        expect_mode（必填）：调用方声明的当前工作模式（NORM/TRAC/SERI/PARA），
+        仅校验不设置；与实际不符立即拒绝并回传当前模式（防拓扑误判）。
+        """
+        self._check_mode(expect_mode)
         self.select_channel(ch)
         self.client.write(f"{C.OUTP} {'ON' if state else 'OFF'}")
         time.sleep(CMD_DELAY_S)
@@ -291,17 +311,19 @@ class DH1766:
         raw = self.client.query(C.APPL_OUTP + "?")
         return [p.strip() in ("1", "ON") for p in raw.split(",")]
 
-    def set_output_all(self, states: list[bool]) -> None:
+    def set_output_all(self, states: list[bool], expect_mode: str) -> None:
         """三路同时开关。
 
+        expect_mode（必填）：声明的当前工作模式，仅校验不设置（同 set_output）。
         固件实测（V0.1.4.3）：`APPL:OUT ...` 报 -113（命令头不存在），
         `APPL:OUTP ...` 报 -200（查询专用，不可写）——本机无三路联动开关命令。
         此处按单通道 `set_output` 循环实现（含通道切换间隔），写后回读比对。
         """
         if len(states) != 3:
             raise ValueError("states must have exactly 3 elements")
+        self._check_mode(expect_mode)
         for i, s in enumerate(states):
-            self.set_output(i + 1, bool(s))
+            self.set_output(i + 1, bool(s), expect_mode)
         got = self.get_output_state()
         if [bool(x) for x in got] != [bool(x) for x in states]:
             raise RuntimeError(f"三路开关回读不一致：期望 {states}，实得 {got}")
@@ -435,18 +457,21 @@ class DH1766:
         vals = self.measure_current_all()
         return {f"CH{i + 1}": vals[i] for i in range(len(vals))}
 
-    def power_cycle(self, ch: Channel, off_s: float = 6.0, on_settle_s: float = 2.0) -> dict:
+    def power_cycle(self, ch: Channel, expect_mode: str,
+                    off_s: float = 6.0, on_settle_s: float = 2.0) -> dict:
         """断电→上电高层 API（断电验证场景高频操作）。
 
+        expect_mode（必填）：声明的当前工作模式，仅校验不设置（同 set_output）。
         off_s: 断电时长（实测电容残留需 ≥6s 放完）；on_settle_s: 上电后
         等待过渡态（EXPERIENCE.md §5.1：上电后 ≥2s 读数才稳定）。
         返回 {"off_s": 实际断电时长, "settle_s": 实际等待, "after": 上电稳定后读数 dict}。
         """
-        self.set_output(ch, False)
+        self._check_mode(expect_mode)
+        self.set_output(ch, False, expect_mode)
         t0 = time.monotonic()
         time.sleep(off_s)
         off_actual = time.monotonic() - t0
-        self.set_output(ch, True)
+        self.set_output(ch, True, expect_mode)
         time.sleep(on_settle_s)
         return {
             "off_s": round(off_actual, 2),
@@ -598,7 +623,8 @@ class DH1766:
         n = _ch_num(ch)
         if states[n - 1]:
             raise RuntimeError(
-                f"safe_mode: CH{n} 输出开启中，拒绝修改设定；请先 set_output({n}, False)"
+                f"safe_mode: CH{n} 输出开启中，拒绝修改设定；"
+                f"请先 set_output({n}, False, expect_mode=<当前模式>)"
             )
 
     def measure_stable(

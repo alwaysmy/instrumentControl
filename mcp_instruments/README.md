@@ -21,6 +21,9 @@ MCP 注册（opencode/cursor 等）：command 用 python 全路径，args 为本
 | `sds_status` | SDS 快照（采集/时基/触发/通道） | 只读 |
 | `sds_auto_scale(ch, use_autoset?)` | 自动定标；use_autoset 破坏性需理解语义 | 改配置 |
 | `sds_measure(item, ch)` | SIMPLE 测量（51 项：PKPK/FREQ/RMS/PER/PWID...） | 只读 |
+| `sds_meas_threshold` / `sds_meas_gate` | 测量阈值 / 测量门限 | 改配置 |
+| `sds_meas_statistics` / `sds_meas_dtime` | 高级统计 / 延迟测量配置 | 改配置 |
+| `sds_meas_display` | 结果显示样式 / 统计模式 / 幅值策略 | 改配置 |
 | `sds_measure_phase(src_a, src_b)` | 双通道相位差（度，PHA，用后自动清槽） | 只读 |
 | `sds_screenshot` | 截屏存 PNG 返回路径，**可直接 Read 读图**（波形形态/削顶/菜单） | 只读 |
 | `sds_diagnose` | 触发链路诊断 | 只读 |

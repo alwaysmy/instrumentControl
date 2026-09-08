@@ -454,6 +454,178 @@ def sds_measure_phase(src_a: str = "C2", src_b: str = "C1",
 
 
 @mcp.tool()
+def sds_meas_threshold(source: str | None = None, thr_type: str | None = None,
+                       absolute: str | None = None, percent: str | None = None,
+                       resource: str = SDS_RES) -> str:
+    """SDS 测量阈值配置/查询（手册 p.183-185）——所有边沿类测量的判据基础。
+
+    source: 阈值源（C1-C4/F1/M1/REF A-D…）；thr_type: PERCent|ABSolute；
+    absolute: "high,mid,low" 绝对阈值（V，如 "3,1,-1.5"）；
+    percent: "high,mid,low" 百分比（整型，high∈[3,99]/mid∈[2,98]/low∈[1,97]）。
+    全部省略 = 查询当前配置。绝对阈值取决于档位/位移/探头系数，设置前先设好。
+    """
+    def fn(s: SDS):
+        out: dict = {}
+        if source is not None:
+            s.meas_threshold_source(source)
+            out["source"] = s.meas_threshold_source()
+        if thr_type is not None:
+            s.meas_threshold_type(thr_type)
+            out["type"] = s.meas_threshold_type()
+        if absolute is not None:
+            h, m, low = [float(x) for x in absolute.split(",")]
+            s.meas_threshold_absolute(h, m, low)
+            out["absolute"] = s.meas_threshold_absolute()
+        if percent is not None:
+            h, m, low = [int(x) for x in percent.split(",")]
+            s.meas_threshold_percent(h, m, low)
+            out["percent"] = s.meas_threshold_percent()
+        if not out:
+            out = {
+                "source": s.meas_threshold_source(),
+                "type": s.meas_threshold_type(),
+                "absolute": s.meas_threshold_absolute(),
+                "percent": s.meas_threshold_percent(),
+            }
+        return out
+    return _call("SDS", lambda: _sds(resource), fn)
+
+
+@mcp.tool()
+def sds_meas_gate(on: bool | None = None, ga: float | None = None,
+                  gb: float | None = None, resource: str = SDS_RES) -> str:
+    """SDS 测量门限（手册 p.179-180）：只统计 GA~GB 窗口内的波形。
+
+    on: 门限开关；ga/gb: 门限位置（秒，相对触发的水平位置，ga≤gb）。
+    全部省略 = 查询当前门限开关与位置。
+    """
+    def fn(s: SDS):
+        out: dict = {}
+        if on is not None:
+            s.meas_gate(on)
+            out["gate_on"] = s.meas_gate()
+        if ga is not None or gb is not None:
+            s.meas_gate_pos(ga, gb)
+            out["position"] = s.meas_gate_pos()
+        if not out:
+            out = {"gate_on": s.meas_gate(), "position": s.meas_gate_pos()}
+        return out
+    return _call("SDS", lambda: _sds(resource), fn)
+
+
+@mcp.tool()
+def sds_meas_statistics(on: bool | None = None, max_count: int | None = None,
+                        histogram: bool | None = None, reset: bool = False,
+                        slot: int | None = None, which: str = "ALL",
+                        resource: str = SDS_RES) -> str:
+    """SDS 高级测量统计（手册 p.166-174）。
+
+    配置：on=统计开关；max_count=最大统计次数 [0,1024]（0=无限，有限制时
+    历史统计才有效）；histogram=直方图开关；reset=True 重置统计结果。
+    查询：给 slot（P1-P12）则返回该槽统计，which=ALL|CURRent|MEAN|MAXimum|
+    MINimum|STDev|COUNt（ALL 返回完整串）。
+    全省略 = 返回统计配置。
+    """
+    def fn(s: SDS):
+        out: dict = {}
+        if on is not None:
+            s.meas_statistics(on)
+            out["statistics_on"] = s.meas_statistics()
+        if max_count is not None:
+            s.meas_stat_max_count(max_count)
+            out["max_count"] = s.meas_stat_max_count()
+        if histogram is not None:
+            s.meas_stat_histogram(histogram)
+            out["histogram"] = s.meas_stat_histogram()
+        if reset:
+            s.meas_stat_reset()
+            out["reset"] = True
+        if slot is not None:
+            out["slot"] = slot
+            out["value"] = s.adv_statistics(slot, which)
+        if not out:
+            out = {
+                "statistics_on": s.meas_statistics(),
+                "max_count": s.meas_stat_max_count(),
+                "histogram": s.meas_stat_histogram(),
+            }
+        return out
+    return _call("SDS", lambda: _sds(resource), fn)
+
+
+@mcp.tool()
+def sds_meas_dtime(index: int = 1, edge1: int | None = None,
+                   edge2: int | None = None, slope1: str | None = None,
+                   slope2: str | None = None, threshold1: float | None = None,
+                   threshold2: float | None = None, resource: str = SDS_RES) -> str:
+    """SDS 延迟测量（ΔTime）配置/查询（手册 p.176-178）。index=1-4。
+
+    edge1/edge2: 沿序号（-1=最后一个沿）；slope1/slope2: POSitive|NEGative；
+    threshold1/threshold2: 沿阈值（V 或百分比，依测量阈值类型）。
+    全省略 = 查询该 ΔTime 的六项配置。
+    """
+    def fn(s: SDS):
+        kwargs = {}
+        if edge1 is not None:
+            kwargs["edge1"] = edge1
+        if edge2 is not None:
+            kwargs["edge2"] = edge2
+        if slope1 is not None:
+            kwargs["slope1"] = slope1
+        if slope2 is not None:
+            kwargs["slope2"] = slope2
+        if threshold1 is not None:
+            kwargs["threshold1"] = threshold1
+        if threshold2 is not None:
+            kwargs["threshold2"] = threshold2
+        return s.dtime_config(index, **kwargs)
+    return _call("SDS", lambda: _sds(resource), fn)
+
+
+@mcp.tool()
+def sds_meas_display(rdisplay: str | None = None, style: str | None = None,
+                     linenumber: int | None = None, strategy: str | None = None,
+                     astra_base: str | None = None, astra_top: str | None = None,
+                     resource: str = SDS_RES) -> str:
+    """SDS 测量显示与幅值策略（手册 p.174-181）。
+
+    rdisplay: 结果显示样式 EMBedded（内嵌压缩波形）|FLOating（悬浮）；
+    style: 统计显示模式 M1（垂直，含直方图）|M2（水平）；
+    linenumber: M2 模式显示测量项总数 [1,12]；
+    strategy: 幅值计算策略 AUTO|MANual；
+    astra_base/astra_top: 手动策略的底端/顶端方式 HISTogram|MAX。
+    全省略 = 查询当前全部设置。
+    """
+    def fn(s: SDS):
+        out: dict = {}
+        if rdisplay is not None:
+            s.meas_result_display(rdisplay)
+            out["rdisplay"] = s.meas_result_display()
+        if style is not None:
+            s.adv_style(style)
+            out["style"] = s.adv_style()
+        if linenumber is not None:
+            s.adv_line_number(linenumber)
+            out["linenumber"] = s.adv_line_number()
+        if strategy is not None:
+            s.amp_strategy(strategy)
+            out["strategy"] = s.amp_strategy()
+        if astra_base is not None or astra_top is not None:
+            s.amp_strategy_base_top(astra_base, astra_top)
+            out["base_top"] = s.amp_strategy_base_top()
+        if not out:
+            out = {
+                "rdisplay": s.meas_result_display(),
+                "style": s.adv_style(),
+                "linenumber": s.adv_line_number(),
+                "strategy": s.amp_strategy(),
+                "base_top": s.amp_strategy_base_top(),
+            }
+        return out
+    return _call("SDS", lambda: _sds(resource), fn)
+
+
+@mcp.tool()
 def sds_screenshot(resource: str = SDS_RES) -> str:
     """SDS 截屏并保存 PNG，返回文件路径——**该 PNG 可直接用 Read 工具查看**（AI
     视觉判断波形形态/削顶/居中/菜单状态/光标/测量栏）。2026-09-09 修复

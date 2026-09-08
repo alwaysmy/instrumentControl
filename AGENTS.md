@@ -67,8 +67,10 @@ AI/Agent 操作仪器必须遵守以下规范。
 - **禁止复位类命令**：`*RST`、`:SYST:RESet`、`:SYST:FACT`、DMM `*RCL/*SAV` 覆写。
   `*RST` 需用户显式授权（dh1766 用 `--allow-rst` 模式）。
 - **输出/信号类操作**（SDG 输出开关、电源输出开关）需明确场景授权：
-  MCP 的 sdg_output/psu_output **开与关都必须 confirm=True**——关闭同样
+  MCP 的 `sdg_output`/`psu_output` **开与关都必须 confirm=True**——关闭同样
   可能打断正在进行的测试或他人实验（配合 expect_load/expect_mode 状态校验）。
+  **关断的 confirm=True 代表已获授权**，仅两种情况可填：① 用户本轮明确要求关闭；
+  ② 用户明确声明独占使用（"只有你在用这块板子"）。否则先向用户确认再执行。
 - **测试脚本必须 try/finally 恢复被改设定并关闭输出**（备份→改→回读→恢复）。
 - **留痕**：实测输出 JSON/CSV 到 `TEST_DATA/<device>/`，时间戳命名防覆盖。
 - **测试脚本**放 `TEST_SCRIPTS/<device>/`；手册提取放各库 `docs/`。

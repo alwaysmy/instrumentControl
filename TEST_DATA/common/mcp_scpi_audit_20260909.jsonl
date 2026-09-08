@@ -1,2 +1,6 @@
 {"ts": "2026-09-09T00:11:31", "tool": "instr_write", "resource": "dummy", "cmd": "VOLT 1", "refused": "confirm_required"}
 {"ts": "2026-09-09T00:11:31", "tool": "instr_write", "resource": "dummy", "cmd": "*RST", "refused": "forbidden"}
+{"ts": "2026-09-09T00:39:14", "tool": "instr_write", "resource": "TCPIP0::192.168.31.220::inst0::INSTR", "cmd": "*CLS", "refused": null}
+{"ts": "2026-09-09T00:39:15", "tool": "instr_write", "resource": "TCPIP0::192.168.31.220::inst0::INSTR", "cmd": "*CLS", "executed": true, "outcome": {"ok": true, "model": "instruments", "result": {"written": "*CLS", "pre_errors": null, "syst_errors": [], "readback": null}, "resource": "TCPIP0::192.168.31.220::inst0::INSTR"}}
+{"ts": "2026-09-09T00:39:15", "tool": "instr_write", "resource": "TCPIP0::192.168.31.206::inst0::INSTR", "cmd": "C2:BSWV PHSE,0", "refused": null}
+{"ts": "2026-09-09T00:39:15", "tool": "instr_write", "resource": "TCPIP0::192.168.31.206::inst0::INSTR", "cmd": "C2:BSWV PHSE,0", "executed": true, "outcome": {"ok": true, "model": "instruments", "result": {"written": "C2:BSWV PHSE,0", "pre_errors": null, "syst_errors": [], "readback": {"cmd": "C2:BSWV?", "response": "C2:BSWV WVTP,SINE,FRQ,50000HZ,PERI,2e-05S,AMP,2V,AMPVRMS,0.707Vrms,AMPDBM,0dBm,MAX_OUTPUT_AMP,20V,OFST,0V,HLEV,1V,LLEV,-1V,PHSE,0"}}, "resource": "TCPIP0::192.168.31.206::inst0::INSTR"}}

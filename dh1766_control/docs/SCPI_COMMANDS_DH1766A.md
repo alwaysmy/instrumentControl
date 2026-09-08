@@ -56,9 +56,10 @@
 |---|---|
 | `OUTP ON\|OFF` | 打开/关闭**当前通道**输出（先 `INST:NSEL n` 选通道） |
 | `OUTP?` | 查询当前通道输出状态，返回 0/1 |
-| `OUTP:TRAC ON\|OFF` | 跟踪模式开关 |
+| `OUTP:TRAC ON\|OFF` | 跟踪模式开关（CH2 跟随 CH1 输出同等值负电压，见手册 §3.8） |
 | `OUTP:SERI ON\|OFF` | 串联模式开关 |
 | `OUTP:PARA ON\|OFF` | 并联模式开关 |
+| 三模式互斥 | 实测 2026-09-08：开一路自动清零其余两路，全程无错误；库 `output_mode()` 返回 NORM/TRAC/SERI/PARA，`set_output_mode()` 统一设置（含回读比对） |
 | `OUTP:TIM:DATA <sec>` | 输出定时器（0=关闭） |
 
 ## 测量指令集（4.2.8）—— 读电压电流
@@ -79,7 +80,7 @@
 | `APPL:VOLT?` | 同时读取三路电压设定值 |
 | `APPL:CURR i1,i2,i3` | 同时设定三路电流 |
 | `APPL:CURR?` | 同时读取三路电流设定值 |
-| `APPL:OUT s1,s2,s3` | 同时开关三路（1\|0\|ON\|OFF） |
+| `APPL:OUT s1,s2,s3` | ⚠ 不存在：`APPL:OUT ...` 报 -113（命令头无），`APPL:OUTP ...` 报 -200（查询专用不可写）——V0.1.4.3 无三路联动开关，库内 `set_output_all` 按单通道循环实现 |
 | `APPL:OUTP?` | 同时读取三路输出状态，如 `0,0,0` |
 
 ## IEEE-488 子系统（4.2.10）

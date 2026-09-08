@@ -292,20 +292,33 @@ class DH1766:
         return [p.strip() in ("1", "ON") for p in raw.split(",")]
 
     def set_output_all(self, states: list[bool]) -> None:
-        """APPL:OUT s1,s2,s3 三路同时开关（布尔 1|0）。"""
+        """三路同时开关。
+
+        固件实测（V0.1.4.3）：`APPL:OUT ...` 报 -113（命令头不存在），
+        `APPL:OUTP ...` 报 -200（查询专用，不可写）——本机无三路联动开关命令。
+        此处按单通道 `set_output` 循环实现（含通道切换间隔），写后回读比对。
+        """
         if len(states) != 3:
             raise ValueError("states must have exactly 3 elements")
-        args = ",".join("1" if s else "0" for s in states)
-        self.client.write(f"{C.APPL_OUTP} {args}")
-        time.sleep(CMD_DELAY_S)
+        for i, s in enumerate(states):
+            self.set_output(i + 1, bool(s))
+        got = self.get_output_state()
+        if [bool(x) for x in got] != [bool(x) for x in states]:
+            raise RuntimeError(f"三路开关回读不一致：期望 {states}，实得 {got}")
 
     _MODE_CMDS = {"TRAC": "OUTP:TRAC", "SERI": "OUTP:SERI", "PARA": "OUTP:PARA"}
+    OUTPUT_MODES = ("NORM", "TRAC", "SERI", "PARA")
 
     def _set_mode_cmd(self, mode: str, on: bool) -> None:
-        """OUTP:TRAC/SERI/PARA 模式切换（继电器动作 >=500ms）。"""
+        """OUTP:TRAC/SERI/PARA 模式切换（继电器动作 >=500ms）。
+
+        硬件安全：继电器联动改变输出拓扑，切换前必须输出全关——无条件强制，
+        不依赖 safe_mode（带载切换有硬件风险；此前仅 safe_mode 下拦截）。
+        """
         if mode not in self._MODE_CMDS:
             raise ValueError(f"invalid mode: {mode!r}")
-        self._guard_all_outputs_off()
+        if any(self.get_output_state()):
+            raise RuntimeError("切换输出模式前必须先关闭全部输出（继电器联动拓扑变化）")
         self.client.write(f"{self._MODE_CMDS[mode]} {'ON' if on else 'OFF'}")
         time.sleep(RELAY_DELAY_S)
 
@@ -314,25 +327,56 @@ class DH1766:
         return resp.strip() in ("1", "ON")
 
     def track_mode(self, on: Optional[bool] = None) -> Optional[bool]:
-        """OUTP:TRAC 跟踪模式（读写）。safe_mode 下输出 ON 时拒绝写。"""
+        """OUTP:TRAC 跟踪模式（读写）。输出 ON 时拒绝写（无条件，继电器安全）。"""
         if on is None:
             return self._get_mode_cmd("TRAC")
         self._set_mode_cmd("TRAC", on)
         return None
 
     def series_mode(self, on: Optional[bool] = None) -> Optional[bool]:
-        """OUTP:SERI 串联模式（读写）。safe_mode 下输出 ON 时拒绝写。"""
+        """OUTP:SERI 串联模式（读写）。输出 ON 时拒绝写（无条件，继电器安全）。"""
         if on is None:
             return self._get_mode_cmd("SERI")
         self._set_mode_cmd("SERI", on)
         return None
 
     def parallel_mode(self, on: Optional[bool] = None) -> Optional[bool]:
-        """OUTP:PARA 并联模式（读写）。safe_mode 下输出 ON 时拒绝写。"""
+        """OUTP:PARA 并联模式（读写）。输出 ON 时拒绝写（无条件，继电器安全）。"""
         if on is None:
             return self._get_mode_cmd("PARA")
         self._set_mode_cmd("PARA", on)
         return None
+
+    def output_mode(self) -> str:
+        """当前输出模式：NORM（正常，三路独立）/TRAC（跟踪）/SERI（串联）/PARA（并联）。
+
+        由三路模式开关回读推导。固件互斥（实测 2026-09-08：开一路自动清零
+        其余，无错误）；若回读出现多路同开则抛错（状态异常）。
+        """
+        states = {m: self._get_mode_cmd(m) for m in ("TRAC", "SERI", "PARA")}
+        on = [m for m, v in states.items() if v]
+        if len(on) > 1:
+            raise RuntimeError(f"输出模式状态异常（多路同时开）：{states}")
+        return on[0] if on else "NORM"
+
+    def set_output_mode(self, mode: str) -> None:
+        """设置输出模式（NORM/TRAC/SERI/PARA），写后回读比对。
+
+        NORM = 三路模式开关全关（三路独立输出）。其余模式开对应开关，
+        固件自动清除其余两路。继电器联动：输出必须全关（无条件强制）。
+        """
+        m = mode.strip().upper()
+        if m not in self.OUTPUT_MODES:
+            raise ValueError(f"invalid mode: {mode!r}（可选 {self.OUTPUT_MODES}）")
+        if m == "NORM":
+            for k in ("TRAC", "SERI", "PARA"):
+                if self._get_mode_cmd(k):
+                    self._set_mode_cmd(k, False)
+        else:
+            self._set_mode_cmd(m, True)
+        got = self.output_mode()
+        if got != m:
+            raise RuntimeError(f"输出模式设置未生效：期望 {m}，实得 {got}")
 
     def output_timer(self, value: Optional[int] = None) -> Optional[int]:
         """OUTP:TIM:DATA 输出定时器（秒，读写；0=关闭）。
@@ -503,14 +547,6 @@ class DH1766:
                 f"safe_mode: CH{n} 输出开启中，拒绝修改设定；请先 set_output({n}, False)"
             )
 
-    def _guard_all_outputs_off(self) -> None:
-        """safe_mode 下，任一通道输出 ON 时拒绝模式切换（继电器联动）。"""
-        if not self.safe_mode:
-            return
-        states = self.get_output_state()
-        if any(states):
-            raise RuntimeError("safe_mode: 有通道输出开启中，拒绝切换输出模式")
-
     def measure_stable(
         self, samples: int = 3, settle_s: float = 2.0, interval_s: float = 1.0
     ) -> dict:
@@ -550,6 +586,7 @@ class DH1766:
             "ovp_v": [self.get_ovp(i) for i in (1, 2, 3)],
             "ocp_a": [self.get_ocp(i) for i in (1, 2, 3)],
             "output_on": self.get_output_state(),
+            "output_mode": self.output_mode(),
             "track_mode": self.track_mode(),
             "series_mode": self.series_mode(),
             "parallel_mode": self.parallel_mode(),

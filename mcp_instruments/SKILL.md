@@ -22,7 +22,8 @@ MCP server：`mcp_instruments/server.py`（19 工具 = 17 专用 + 2 通用护�
 示波器（SDS）：
   看波形显示是否正常 → sds_diagnose（触发链路）→ 异常则 sds_auto_scale
   读测量值 → sds_measure（item 见下）
-  判断削顶/居中/有无波形 → sds_screenshot（设备测量值超屏被钳制不可信）
+  判断削顶/居中/有无波形 → sds_screenshot（返回 PNG 路径，**直接 Read 即可看图**；
+  设备测量值超屏被钳制不可信，截图是物理真相）
   全量状态 → sds_status
 
 信号源（SDG）：
@@ -61,6 +62,7 @@ DHO 示波器 → dho_status / dho_measure_item
 |---|---|---|
 | sds_auto_scale | ch=1-4；use_autoset | **use_autoset=True 破坏性**（重置所有通道），仅简单周期信号+无其他已调通道时用；无信号/小信号时逐档重试最长约 60s，最终优雅报错 |
 | sds_measure | item | SIMPle:ITEM 表 51 项：PKPK/MAX/MIN/AMPL/TOP/BASE/RMS/CRMS/MEAN/STDEV/MEDIAN/OVSP/OVSN/PER/FREQ/TMAX/TMIN/PWID/NWID/DUTY/NDUTY/RISE/FALL/EDGES/PPULSES...；ch=1-4 |
+| sds_screenshot | resource | 截屏存 PNG 并返回路径，**可直接 Read 读图**；看波形形态/削顶/居中/菜单/光标/测量栏；无视觉能力时用 analyze_screen 像素分析兜底 |
 | sds_measure_phase | src_a, src_b | 双通道相位差（度）= B 相对 A（PHA）；用后自动清槽恢复模式；两通道都要有完整周期（C1 无信号时正确报 device_error）|
 | sds_measure | 无信号测 FREQ | 超时报 device_error（正常现象，非故障） |
 | sdg_set_wave | wvtp | SINE/SQUARE/RAMP/PULSE/NOISE/DC；amp_v 高阻下即 Vpp |
@@ -91,7 +93,13 @@ DHO 示波器 → dho_status / dho_measure_item
 **示波器无波形**：
 1. `sds_diagnose` 看触发源/电平/模式
 2. `sds_auto_scale` 修正
-3. `sds_screenshot` 像素确认（测量值超屏被钳制不可信）
+3. `sds_screenshot` → **Read 返回的 PNG 看图**确认（测量值超屏被钳制不可信）
+
+**截图能力（2026-09-09 修复 alpha 后）**：
+- `sds_screenshot` 返回 PNG 路径，**直接 Read 即可看图**（视觉判断最直观）
+- 看得到：波形形态/有无信号/削顶/居中/面板菜单/光标读数/底部测量栏
+- 与 SCPI 配合：截图看形态，SCPI 读精确数值
+- 无视觉能力时用库 `analyze_screen()` 像素分析兜底（轨迹 Y 分布/削顶判定）
 
 ## 五、错误处理
 

@@ -22,7 +22,7 @@ MCP 注册（opencode/cursor 等）：command 用 python 全路径，args 为本
 | `sds_auto_scale(ch, use_autoset?)` | 自动定标；use_autoset 破坏性需理解语义 | 改配置 |
 | `sds_measure(item, ch)` | SIMPLE 测量（51 项：PKPK/FREQ/RMS/PER/PWID...） | 只读 |
 | `sds_measure_phase(src_a, src_b)` | 双通道相位差（度，PHA，用后自动清槽） | 只读 |
-| `sds_screenshot` | 截屏存 PNG 返回路径 | 只读 |
+| `sds_screenshot` | 截屏存 PNG 返回路径，**可直接 Read 读图**（波形形态/削顶/菜单） | 只读 |
 | `sds_diagnose` | 触发链路诊断 | 只读 |
 | `sds_shutdown(confirm)` | 远程关机 | **confirm=True** |
 | `sdg_status` | SDG 快照 | 只读 |

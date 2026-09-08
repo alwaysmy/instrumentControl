@@ -455,13 +455,19 @@ def sds_measure_phase(src_a: str = "C2", src_b: str = "C1",
 
 @mcp.tool()
 def sds_screenshot(resource: str = SDS_RES) -> str:
-    """SDS 截屏并保存 PNG，返回路径（削顶/居中/有无波形的唯一物理真相）。"""
+    """SDS 截屏并保存 PNG，返回文件路径——**该 PNG 可直接用 Read 工具查看**（AI
+    视觉判断波形形态/削顶/居中/菜单状态/光标/测量栏）。2026-09-09 修复
+    BMP alpha=0 致全透明问题（存前 convert('RGB')）。
+
+    用途：设备测量值超屏时被钳制在屏界不可信，截图是"有无波形/是否削顶"的
+    物理真相；也可核对面板菜单/光标/测量栏等 SCPI 不便读取的信息。
+    无视觉能力时用库的 analyze_screen() 做像素分析兜底。"""
     def fn(s: SDS):
         from datetime import datetime
         p = Path(ROOT) / "TEST_DATA" / "common" / (
             f"mcp_sds_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
         saved = s.screenshot_png(p)
-        return {"png": str(saved)}
+        return {"png": str(saved), "hint": "直接 Read 该 PNG 即可看图"}
     return _call("SDS", lambda: _sds(resource), fn)
 
 

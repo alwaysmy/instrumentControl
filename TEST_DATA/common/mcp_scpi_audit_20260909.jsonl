@@ -20,3 +20,5 @@
 {"ts": "2026-09-09T01:11:42", "tool": "instr_write", "resource": "TCPIP0::192.168.31.220::inst0::INSTR", "cmd": "SYSTem:REMote ON", "refused": "forbidden"}
 {"ts": "2026-09-09T01:11:42", "tool": "instr_write", "resource": "TCPIP0::192.168.31.220::inst0::INSTR", "cmd": "SYST:LOCK ON", "refused": "forbidden"}
 {"ts": "2026-09-09T01:11:42", "tool": "instr_write", "resource": "TCPIP0::192.168.31.220::inst0::INSTR", "cmd": "SYST:REM OFF", "refused": "forbidden"}
+{"ts": "2026-09-09T02:42:37", "tool": "instr_write", "resource": "TCPIP0::192.168.31.220::inst0::INSTR", "cmd": "TDIV 2E-4", "refused": null}
+{"ts": "2026-09-09T02:42:37", "tool": "instr_write", "resource": "TCPIP0::192.168.31.220::inst0::INSTR", "cmd": "TDIV 2E-4", "executed": true, "outcome": {"ok": true, "model": "instruments", "result": {"written": "TDIV 2E-4", "pre_errors": null, "syst_errors": [], "readback": {"cmd": "TDIV?", "response": "2.00E-04S"}}, "resource": "TCPIP0::192.168.31.220::inst0::INSTR"}}

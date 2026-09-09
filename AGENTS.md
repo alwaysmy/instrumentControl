@@ -89,7 +89,7 @@ AI/Agent 操作仪器必须遵守以下规范。
 - 审计报告：`docs/command_audit_20260823.md`（零猜测命令结论）
 - 操作手册：`docs/AI_OPERATION_GUIDE.md`（API/固件特性/闭环范例）
 - 设备经验：`dh1766_control/docs/EXPERIENCE.md`（时序/固件差异/上电过渡态）
-- MCP 服务器：`mcp_instruments/server.py`（19 工具 = 17 专用 + 2 通用护栏
+- MCP 服务器：`mcp_instruments/server.py`（31 工具 = 28 专用 + 3 通用护栏
   instr_query/instr_write——新设备零代码接入；zcode 用户级 config 已注册
   `instruments`；工具选择/参数语义/安全门见 skill `instrument-mcp`）
 
@@ -104,14 +104,35 @@ AI/Agent 操作仪器必须遵守以下规范。
 | Keysight 34465A 万用表 | keysight_3446x | VXI-11（.123）|
 | Emoe 校准器（骨架） | emoe_control | 串口，仅发现+*IDN?（编程手册未提供）。**ASRL 端口号会漂移**：校准器原 ASRL31 现离线；ASRL5 现为另一台新设备 ADS127L11-DAQ-EV——接入新串口设备一律先 `instr_discover` 重新定位 |
 
-## 五、已知待办
+## 五、分析方法选择（2026-09-09 教训）
+
+**波形频率/周期分析优先用 FFT 或自相关，不要用朴素过零计数。**
+
+案例：验证 SDS 波形时间轴时，用"上行过零点间隔中位数"算出周期 4997 点，
+据此推断 interval 差 2 倍、采样率查询不可信。改用 FFT 后立刻定论：
+主峰 100.00kHz（与设备硬件测量 100.045kHz 吻合）→ interval 1ns、采样率 1GSa/s
+全部正确。
+
+原因：被测信号是**调幅信号**（载波 100kHz + 20kHz 调制，谱图有 80/120kHz 对称边带），
+包络使零点穿越不规则，朴素过零（无迟滞/去抖）会把每个载波周期数成多次。
+
+若必须用过零：需加迟滞带（如中值的 ±5%）、去抖窗口，或先解调包络；纯正弦才可直接用。
+**结论：不是"过零方法不可靠"，是朴素实现不可靠——复杂信号先用 FFT 定性。**
+
+## 六、已知待办
 
 - **MCP 工具按配置选择性加载**（2026-09-09 调研完成，未实施）：opencode 客户端
   支持 `tools` 配置 + glob（`"instruments_sds_*": false`，工具名带 server 名前缀
   `instruments_`）；server 端可用 FastMCP `remove_tool()` 或环境变量条件注册做
   更彻底的控制（tools/list 就不含）。短期用客户端配置即可（零代码）。
-- sds_control 波形读取：SDS800X HD 的 PREamble DESC 布局与手册示例不符（读出全零），
-  待专研该型号结构体
+- ~~sds_control 波形读取：PREamble DESC 布局不符~~ **已澄清（2026-09-09）**：
+  DESC 解析完全正确——`interval`(1ns) 与 `ACQ:SRAT?`(1GSa/s) 一致，FFT 主频与设备
+  硬件测量吻合，电压换算 Vpp 与测量值一致。此前"读出全零/interval 不可信"的判断
+  源于两点：① 旧诊断在通道无信号时读取；② **用朴素过零计数验证调幅信号**（边带
+  80/120kHz 导致每载波周期多次穿越，误判半周期）。教训见下方"分析工具选择"。
+- ~~sds_control `get_waveform` 未暴露为 MCP 工具~~ **已完成（2026-09-09）**：
+  新增 `sds_get_waveform(ch, points=50000, save_csv)`——返回摘要 + 可选 CSV 路径
+  （不返回完整数组防上下文爆炸），FFT 交叉验证时间轴可信。
 - waveform_matrix 遗留：带偏置信号（OFST≠0）的细调精度（居中残差×细调交互）
 - dg832-control skill/scripts 双副本需人工同步
 - 主项目 git 已建立；dg832-control 为嵌套独立仓库，改动前单独 commit

@@ -5,7 +5,7 @@ description: instrument MCP 服务器使用指引 — 五台仪器（SDS 示波�
 
 # instrument MCP 使用指引
 
-MCP server：`mcp_instruments/server.py`（19 工具 = 17 专用 + 2 通用护栏，五台设备）。
+MCP server：`mcp_instruments/server.py`（31 工具 = 28 专用 + 3 通用护栏，五台设备）。
 本文是 AI 选择工具/参数时的决策依据。
 
 ## 一、工具选择决策树
@@ -64,6 +64,7 @@ DHO 示波器 → dho_status / dho_measure_item
 |---|---|---|
 | sds_auto_scale | ch=1-4；use_autoset | **use_autoset=True 破坏性**（重置所有通道），仅简单周期信号+无其他已调通道时用；无信号/小信号时逐档重试最长约 60s，最终优雅报错 |
 | sds_measure | item | SIMPle:ITEM 表 51 项：PKPK/MAX/MIN/AMPL/TOP/BASE/RMS/CRMS/MEAN/STDEV/MEDIAN/OVSP/OVSN/PER/FREQ/TMAX/TMIN/PWID/NWID/DUTY/NDUTY/RISE/FALL/EDGES/PPULSES...；ch=1-4 |
+| sds_get_waveform | ch, points=50000, save_csv | 读通道波形（电压+时间轴，**FFT 交叉验证可信**）：返回摘要（点数/时间窗/Vpp/interval/档位），save_csv=True 存 CSV 到 TEST_DATA/common/ 并返回路径；**不返回完整数组**（防上下文爆炸）；分析频率用 FFT/自相关，朴素过零对调幅信号会误判 |
 | sds_screenshot | resource | 截屏存 PNG 并返回路径，**可直接 Read 读图**；看波形形态/削顶/居中/菜单/光标/测量栏；无视觉能力时用 analyze_screen 像素分析兜底 |
 | sds_meas_threshold | source, thr_type, absolute, percent | 测量阈值源/类型/绝对值/百分比（边沿判据基础，手册 p.183-185）|
 | sds_meas_gate | on, ga, gb | 测量门限：只统计 GA~GB 窗口内波形（p.179-180）|

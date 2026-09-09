@@ -1,0 +1,107 @@
+{
+  "steps": [
+    {
+      "name": "原TDIV",
+      "value": "5.00E-06S"
+    },
+    {
+      "name": "idn",
+      "value": "Siglent Technologies,SDS824X HD,SDS08A0C8R0274,2.8"
+    },
+    {
+      "name": "C2信号",
+      "freq": "99987.1Hz",
+      "vpp": "2.0135V"
+    },
+    {
+      "name": "TDIV=5.00E-06",
+      "tdiv_actual": "5.00E-06S",
+      "acq_poin": "5.00E+04",
+      "acq_srat": "1.00E+09",
+      "pre_point_num": 50000,
+      "pre_interval": "1e-09",
+      "pre_tdiv_idx": 13,
+      "got_points": 50000,
+      "up_crossings": 15,
+      "span_by_freq_s": "0.000150019",
+      "screen_span_expected_s": "5e-05",
+      "interval_by_freq_s": "3.00039e-09"
+    },
+    {
+      "name": "TDIV=5.00E-05",
+      "tdiv_actual": "5.00E-05S",
+      "acq_poin": "5.00E+05",
+      "acq_srat": "1.00E+09",
+      "pre_point_num": 50000,
+      "pre_interval": "1e-09",
+      "pre_tdiv_idx": 16,
+      "got_points": 50000,
+      "up_crossings": 15,
+      "span_by_freq_s": "0.000150019",
+      "screen_span_expected_s": "0.0005",
+      "interval_by_freq_s": "3.00039e-09"
+    },
+    {
+      "name": "TDIV=5.00E-04",
+      "tdiv_actual": "5.00E-04S",
+      "acq_poin": "5.00E+06",
+      "acq_srat": "1.00E+09",
+      "pre_point_num": 50000,
+      "pre_interval": "1e-09",
+      "pre_tdiv_idx": 19,
+      "got_points": 50000,
+      "up_crossings": 15,
+      "span_by_freq_s": "0.000150019",
+      "screen_span_expected_s": "0.005",
+      "interval_by_freq_s": "3.00039e-09"
+    },
+    {
+      "name": "恢复TDIV",
+      "value": "5.00E-06S"
+    }
+  ],
+  "results": [
+    {
+      "tdiv_set": "5.00E-06",
+      "tdiv_actual": "5.00E-06S",
+      "acq_poin": "5.00E+04",
+      "acq_srat": "1.00E+09",
+      "pre_point_num": 50000,
+      "pre_interval": 9.999999717180685e-10,
+      "pre_tdiv_idx": 13,
+      "got_points": 50000,
+      "up_crossings": 15,
+      "span_by_freq_s": 0.0001500193374926028,
+      "screen_span_expected_s": 5e-05,
+      "interval_by_freq_s": 3.0003867498520563e-09
+    },
+    {
+      "tdiv_set": "5.00E-05",
+      "tdiv_actual": "5.00E-05S",
+      "acq_poin": "5.00E+05",
+      "acq_srat": "1.00E+09",
+      "pre_point_num": 50000,
+      "pre_interval": 9.999999717180685e-10,
+      "pre_tdiv_idx": 16,
+      "got_points": 50000,
+      "up_crossings": 15,
+      "span_by_freq_s": 0.0001500193374926028,
+      "screen_span_expected_s": 0.0005,
+      "interval_by_freq_s": 3.0003867498520563e-09
+    },
+    {
+      "tdiv_set": "5.00E-04",
+      "tdiv_actual": "5.00E-04S",
+      "acq_poin": "5.00E+06",
+      "acq_srat": "1.00E+09",
+      "pre_point_num": 50000,
+      "pre_interval": 9.999999717180685e-10,
+      "pre_tdiv_idx": 19,
+      "got_points": 50000,
+      "up_crossings": 15,
+      "span_by_freq_s": 0.0001500193374926028,
+      "screen_span_expected_s": 0.005,
+      "interval_by_freq_s": 3.0003867498520563e-09
+    }
+  ]
+}

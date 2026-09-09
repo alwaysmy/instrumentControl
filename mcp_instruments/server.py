@@ -17,6 +17,7 @@ import os
 import re
 import sys
 import json
+import csv
 import time
 import threading
 from datetime import datetime
@@ -636,6 +637,48 @@ def sds_meas_display(rdisplay: str | None = None, style: str | None = None,
                 "strategy": s.amp_strategy(),
                 "base_top": s.amp_strategy_base_top(),
             }
+        return out
+    return _call("SDS", lambda: _sds(resource), fn)
+
+
+@mcp.tool()
+def sds_get_waveform(ch: int = 2, points: int = 50000, save_csv: bool = False,
+                     resource: str = SDS_RES) -> str:
+    """SDS 读取通道波形数据（电压 + 时间轴，2026-09-09 经 FFT 交叉验证可信）。
+
+    ch=1-4；points 读取点数（默认 50000，受设备 ACQ:POIN? 上限约束；过大很慢）。
+    save_csv=True 时存 CSV 到 TEST_DATA/common/ 并返回路径。
+    为避免上下文爆炸，返回**摘要**（点数/时间窗/Vpp/interval/档位）+ 可选 CSV 路径，
+    不返回完整数组；需要逐点数据请开 save_csv。
+
+    时间轴可信性依据：interval 与 ACQ:SRAT? 一致，FFT 主频与设备硬件测量吻合
+    （注意：分析频率请用 FFT，朴素过零对调幅信号会误判）。
+    """
+    def fn(s: SDS):
+        wf = s.get_waveform(ch, points=points)
+        vs = wf["v"]
+        out = {
+            "ch": ch,
+            "points": wf["points"],
+            "interval_s": wf["interval_s"],
+            "vdiv_v": wf["vdiv_v"],
+            "adc_bit": wf["adc_bit"],
+            "v_min": min(vs),
+            "v_max": max(vs),
+            "vpp": max(vs) - min(vs),
+            "t_start_s": wf["t"][0],
+            "t_end_s": wf["t"][-1],
+        }
+        if save_csv:
+            from datetime import datetime
+            p = Path(ROOT) / "TEST_DATA" / "common" / (
+                f"mcp_sds_wave_ch{ch}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with open(p, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow(["time_s", "voltage_v"])
+                w.writerows(zip(wf["t"], wf["v"]))
+            out["csv"] = str(p)
         return out
     return _call("SDS", lambda: _sds(resource), fn)
 

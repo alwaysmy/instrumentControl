@@ -8,8 +8,15 @@ instrument MCP Server — 五台仪器的统一 MCP 接口。
 dho_control(示波器) / dh1766_control(电源)，经 common 统一发现层。
 
 启动: python mcp_instruments/server.py
+
+地址解析：**server 内不写死任何 IP**。仪器地址随 DHCP/网段/换口/串口号变化，
+各专用工具的 `resource` 参数默认 None，由 `_resolve()` 依次取
+显式入参 → 环境变量 `INSTRUMENT_<KIND>_RES` → 用户配置 `devices.json`
+→ 上次成功缓存 → `find_device()` 自动发现。详见 `_resolve` 上方注释。
+
 安全约定：
-    - 复位类命令不暴露；
+    - 复位类命令不暴露（黑名单 confirm 也不放行）；
+    - 远程锁定类命令（SYST:REM/RWL/LOCK/COMM:RLST）同样黑名单拦截，纯查询放行；
     - 关机/输出类工具需显式 confirm=True；
     - 每次调用连接→操作→关闭（无状态）+ 全局设备锁串行化。
 """
@@ -49,11 +56,28 @@ for _req_type in (
 _DEVICE_LOCK = threading.Lock()
 _PREWARM_DONE = threading.Event()  # VISA/设备库冷启动完成前置位（看门狗放宽依据）
 
-SDS_RES = "TCPIP0::192.168.31.220::inst0::INSTR"
-SDG_RES = "TCPIP0::192.168.31.206::inst0::INSTR"
-DMM_RES = "TCPIP0::192.168.31.123::inst0::INSTR"
-DHO_RES = "TCPIP0::192.168.31.146::5555::SOCKET"
-PSU_RES = "TCPIP0::192.168.31.144::5025::SOCKET"
+# ============ 设备地址解析（不写死 IP）============
+#
+# 实现已下沉到 `common/resolver.py`：MCP 服务器与 `TEST_SCRIPTS/` 共用同一套
+# 地址来源（避免"两套缓存/两套键"）。解析顺序：
+#   ① 工具入参 resource（显式指定）
+#   ② 环境变量 INSTRUMENT_<KIND>_RES（如 INSTRUMENT_SDS_RES）
+#   ③ 用户配置 <配置目录>/devices.json（{"sds": "TCPIP0::…::inst0::INSTR", …}）
+#   ④ 上次成功缓存 <配置目录>/last_good_resources.json
+#      （instr_discover 发现成功后按 *IDN? 回写；连接成功后也会回写）
+#   ⑤ 自动发现 common.find_device(idn_contains=…, allow_scan=False)
+#      （只查 VISA 已注册资源；LAN 未注册设备请先跑 instr_discover；
+#        需要自动扫描可设 INSTRUMENT_ALLOW_SCAN=1）
+# 这里保留与既有调用点一致的别名，实现细节见 common/resolver.py。
+from common.resolver import (  # noqa: E402
+    DEVICE_KINDS,
+    idn_kind as _idn_kind,
+    known_resources as _known_resources,
+    remember as _remember,
+    remember_candidates as _remember_candidates,
+    resolve as _resolve,
+    resource_rank as _resource_rank,
+)
 
 
 def _ok(model, result, resource=None):
@@ -102,38 +126,55 @@ def _call(model_name, connect_fn, fn, close_fn=None, resource=None):
 
 
 
-def _sds(resource: str = SDS_RES) -> SDS:
+def _sds(resource: str | None = None) -> SDS:
     from sds_control import SDS
-    s = SDS(resource)
+
+    res = _resolve("sds", resource)
+    s = SDS(res)
     s.connect()
+    _remember("sds", res)
     return s
 
 
-def _sdg(resource: str = SDG_RES) -> SDG:
+def _sdg(resource: str | None = None) -> SDG:
     from sdg_control import SDG
-    g = SDG(resource)
+
+    res = _resolve("sdg", resource)
+    g = SDG(res)
     g.connect()
+    _remember("sdg", res)
     return g
 
 
-def _dmm(resource: str = DMM_RES) -> DMM:
+def _dmm(resource: str | None = None) -> DMM:
     from keysight_3446x import DMM
-    d = DMM(resource)
+
+    res = _resolve("dmm", resource)
+    d = DMM(res)
     d.connect()
+    _remember("dmm", res)
     return d
 
 
-def _dho(resource: str = DHO_RES) -> DHO:
+def _dho(resource: str | None = None) -> DHO:
     from dho_control import DHO
-    h = DHO(resource)
+
+    res = _resolve("dho", resource)
+    h = DHO(res)
     h.connect()
+    _remember("dho", res)
     return h
 
-def _psu_connect(resource: str = PSU_RES) -> DH1766:
+
+def _psu_connect(resource: str | None = None) -> DH1766:
     """DH1766 连接（DH1766 类无 close，退出经 _psu_close 关 client）。"""
     from dh1766_control import DH1766
     from dh1766_control.visa import VisaClient
-    return DH1766(VisaClient(resource, timeout_ms=5000))
+
+    res = _resolve("psu", resource)
+    p = DH1766(VisaClient(res, timeout_ms=5000))
+    _remember("psu", res)
+    return p
 
 
 def _psu_close(p: DH1766) -> None:
@@ -161,12 +202,18 @@ def _psu_close(p: DH1766) -> None:
 
 @mcp.tool()
 def instr_discover(cidr: str | None = None) -> str:
-    """发现本机所有仪器。返回三部分：
+    """发现本机所有仪器。返回：
     lan: 网段扫描（TCP 预筛 + 多协议 *IDN?，键=资源串 值=IDN）；
     visa: VISA 资源列表——USB/GPIB/串口均自动探测 *IDN?（串口被占用时
     返回占用提示，空闲则探测后立即断开，约 2s/口）；
-    cidr: 实际使用的网段。cidr 参数可选（如 '192.168.31.0/24'），
-    默认自动探测本机 /24（代理虚拟网卡环境需显式传）。"""
+    resolved: 地址解析层当前已知映射（配置+缓存，键=设备类 sds/sdg/dmm/dho/psu）；
+    recognised_now: 本次发现按 *IDN? 识别并写入缓存的设备地址。
+    cidr 参数可选（如 '10.0.0.0/24'），默认自动探测本机 /24
+    （代理虚拟网卡环境需显式传）。
+
+    **仪器地址不是固定资产**（DHCP/网段/换口/串口号都会漂移）：本工具发现的
+    结果会自动回写地址缓存，之后各专用工具不传 resource 也能连上；换了网段或
+    发现工具报连接失败时，先重新跑一次本工具即可。"""
     import ipaddress
     import concurrent.futures as cf
     from common.discovery import (
@@ -273,7 +320,15 @@ def instr_discover(cidr: str | None = None) -> str:
                                 lan[r[0]] = r[1]
         except Exception as e:
             warn = f"LAN 扫描异常降级（VISA 结果不受影响）: {type(e).__name__}: {e}"
-        out = {"cidr": seg, "lan": lan, "visa": visa}
+
+        # 把发现到的设备按 IDN 回写地址缓存：之后各专用工具无需显式传 resource
+        # 即可自动解析（IP 会变，所以地址只做"上次成功"缓存，不是固定资源配置）。
+        pairs: list[tuple[str, str]] = [(res, idn) for res, idn in lan.items()]
+        pairs += [(e.get("resource", ""), e.get("idn") or "") for e in visa]
+        recognised = _remember_candidates(pairs)
+
+        out = {"cidr": seg, "lan": lan, "visa": visa,
+               "resolved": _known_resources(), "recognised_now": recognised}
         if warn:
             out["warning"] = warn
         return out
@@ -451,13 +506,13 @@ def instr_write(resource: str, cmd: str, readback_cmd: str | None = None,
 # ============ SDS 示波器 ============
 
 @mcp.tool()
-def sds_status(resource: str = SDS_RES) -> str:
+def sds_status(resource: str | None = None) -> str:
     """SDS 示波器只读快照：IDN/采集/时基/触发/各通道档位耦合。"""
     return _call("SDS", lambda: _sds(resource), lambda s: s.snapshot())
 
 
 @mcp.tool()
-def sds_auto_scale(ch: int, use_autoset: bool = False, resource: str = SDS_RES) -> str:
+def sds_auto_scale(ch: int, use_autoset: bool = False, resource: str | None = None) -> str:
     """SDS 自动定标让通道 ch(1-4) 波形正确显示。
     use_autoset=True 为破坏性 :AUToset（重置所有通道档位/时基/触发），仅限
     简单周期信号且无其他已调好通道时显式启用；默认 SCPI 闭环只动目标通道。返回 actions/vpp/freq/adjusted。"""
@@ -466,7 +521,7 @@ def sds_auto_scale(ch: int, use_autoset: bool = False, resource: str = SDS_RES) 
 
 
 @mcp.tool()
-def sds_measure(item: str, ch: int = 4, resource: str = SDS_RES) -> str:
+def sds_measure(item: str, ch: int = 4, resource: str | None = None) -> str:
     """SDS 单次测量（SIMPLE 模式，自动切模式+设信源）。ch=1-4。
     item 枚举（SIMPle:ITEM 表，51 项全支持）：PKPK/MAX/MIN/AMPL/TOP/BASE/
     LEVELX/CMEAN/MEAN/STDEV/VSTD/RMS/CRMS/MEDIAN/CMEDIAN/OVSN/FPRE/OVSP/
@@ -480,7 +535,7 @@ def sds_measure(item: str, ch: int = 4, resource: str = SDS_RES) -> str:
 
 @mcp.tool()
 def sds_measure_phase(src_a: str = "C2", src_b: str = "C1",
-                      resource: str = SDS_RES) -> str:
+                      resource: str | None = None) -> str:
     """SDS 双通道相位差（度）= B 相对 A 的相位（A/B 第一个上升沿中值点间）。
     用后自动关闭占用槽并恢复测量模式。用前请确认两通道完整周期在屏内
     （否则无有效值返回 device_error）。2026-09-08 实测：A=C2/B=C1 得 94.664°，
@@ -506,7 +561,7 @@ def sds_measure_phase(src_a: str = "C2", src_b: str = "C1",
 @mcp.tool()
 def sds_meas_threshold(source: str | None = None, thr_type: str | None = None,
                        absolute: str | None = None, percent: str | None = None,
-                       resource: str = SDS_RES) -> str:
+                       resource: str | None = None) -> str:
     """SDS 测量阈值配置/查询（手册 p.183-185）——所有边沿类测量的判据基础。
 
     source: 阈值源（C1-C4/F1/M1/REF A-D…）；thr_type: PERCent|ABSolute；
@@ -543,7 +598,7 @@ def sds_meas_threshold(source: str | None = None, thr_type: str | None = None,
 
 @mcp.tool()
 def sds_meas_gate(on: bool | None = None, ga: float | None = None,
-                  gb: float | None = None, resource: str = SDS_RES) -> str:
+                  gb: float | None = None, resource: str | None = None) -> str:
     """SDS 测量门限（手册 p.179-180）：只统计 GA~GB 窗口内的波形。
 
     on: 门限开关；ga/gb: 门限位置（秒，相对触发的水平位置，ga≤gb）。
@@ -567,7 +622,7 @@ def sds_meas_gate(on: bool | None = None, ga: float | None = None,
 def sds_meas_statistics(on: bool | None = None, max_count: int | None = None,
                         histogram: bool | None = None, reset: bool = False,
                         slot: int | None = None, which: str = "ALL",
-                        resource: str = SDS_RES) -> str:
+                        resource: str | None = None) -> str:
     """SDS 高级测量统计（手册 p.166-174）。
 
     配置：on=统计开关；max_count=最大统计次数 [0,1024]（0=无限，有限制时
@@ -607,7 +662,7 @@ def sds_meas_statistics(on: bool | None = None, max_count: int | None = None,
 def sds_meas_dtime(index: int = 1, edge1: int | None = None,
                    edge2: int | None = None, slope1: str | None = None,
                    slope2: str | None = None, threshold1: float | None = None,
-                   threshold2: float | None = None, resource: str = SDS_RES) -> str:
+                   threshold2: float | None = None, resource: str | None = None) -> str:
     """SDS 延迟测量（ΔTime）配置/查询（手册 p.176-178）。index=1-4。
 
     edge1/edge2: 沿序号（-1=最后一个沿）；slope1/slope2: POSitive|NEGative；
@@ -636,7 +691,7 @@ def sds_meas_dtime(index: int = 1, edge1: int | None = None,
 def sds_meas_display(rdisplay: str | None = None, style: str | None = None,
                      linenumber: int | None = None, strategy: str | None = None,
                      astra_base: str | None = None, astra_top: str | None = None,
-                     resource: str = SDS_RES) -> str:
+                     resource: str | None = None) -> str:
     """SDS 测量显示与幅值策略（手册 p.174-181）。
 
     rdisplay: 结果显示样式 EMBedded（内嵌压缩波形）|FLOating（悬浮）；
@@ -677,7 +732,7 @@ def sds_meas_display(rdisplay: str | None = None, style: str | None = None,
 
 @mcp.tool()
 def sds_get_waveform(ch: int = 2, points: int = 50000, save_csv: bool = False,
-                     resource: str = SDS_RES) -> str:
+                     resource: str | None = None) -> str:
     """SDS 读取通道波形数据（电压 + 时间轴，2026-09-09 经 FFT 交叉验证可信）。
 
     ch=1-4；points 读取点数（默认 50000，受设备 ACQ:POIN? 上限约束；过大很慢）。
@@ -718,7 +773,7 @@ def sds_get_waveform(ch: int = 2, points: int = 50000, save_csv: bool = False,
 
 
 @mcp.tool()
-def sds_screenshot(resource: str = SDS_RES) -> str:
+def sds_screenshot(resource: str | None = None) -> str:
     """SDS 截屏并保存 PNG，返回文件路径——**该 PNG 可直接用 Read 工具查看**（AI
     视觉判断波形形态/削顶/居中/菜单状态/光标/测量栏）。2026-09-09 修复
     BMP alpha=0 致全透明问题（存前 convert('RGB')）。
@@ -736,13 +791,13 @@ def sds_screenshot(resource: str = SDS_RES) -> str:
 
 
 @mcp.tool()
-def sds_diagnose(resource: str = SDS_RES) -> str:
+def sds_diagnose(resource: str | None = None) -> str:
     """SDS 触发链路诊断：模式/状态/源/电平/时基（无波形时第一步）。"""
     return _call("SDS", lambda: _sds(resource), lambda s: s.diagnose_trigger())
 
 
 @mcp.tool()
-def sds_shutdown(confirm: bool, resource: str = SDS_RES) -> str:
+def sds_shutdown(confirm: bool, resource: str | None = None) -> str:
     """SDS 远程关机。⚠ 破坏性：设备离线需面板手动开机。必须 confirm=True。"""
     if not confirm:
         return _err("confirm_required", "关机需 confirm=True（设备将离线，需手动开机）", "SDS")
@@ -764,14 +819,14 @@ def sds_shutdown(confirm: bool, resource: str = SDS_RES) -> str:
 # ============ SDG 信号源 ============
 
 @mcp.tool()
-def sdg_status(resource: str = SDG_RES) -> str:
+def sdg_status(resource: str | None = None) -> str:
     """SDG 信号源快照：输出状态/波形参数/调制（两通道）。"""
     return _call("SDG", lambda: _sdg(resource), lambda g: g.snapshot())
 
 
 @mcp.tool()
 def sdg_set_wave(ch: int, wvtp: str, freq_hz: float, amp_v: float,
-                 offset_v: float = 0.0, resource: str = SDG_RES) -> str:
+                 offset_v: float = 0.0, resource: str | None = None) -> str:
     """SDG 设置通道 ch(1-2) 波形参数。wvtp: SINE/SQUARE/RAMP/PULSE/NOISE/DC；
     freq_hz 单位 Hz；amp_v 单位 V（高阻负载下即 Vpp）；offset_v 单位 V。
     注意：不改变输出开关状态；输出开启时参数实时生效。返回含设备回读。"""
@@ -787,7 +842,7 @@ def sdg_set_wave(ch: int, wvtp: str, freq_hz: float, amp_v: float,
 
 
 @mcp.tool()
-def sdg_counter(on: bool | None = None, resource: str = SDG_RES) -> str:
+def sdg_counter(on: bool | None = None, resource: str | None = None) -> str:
     """SDG 内置频率计（FCNT，手册 §3.24）。on=None 仅查询；True/False 先开关再查。
 
     返回 STATE/FRQ/PW/NW/DUTY/FRQDEV/REFQ/TRG/MODE/HFR/TYPE。
@@ -799,7 +854,7 @@ def sdg_counter(on: bool | None = None, resource: str = SDG_RES) -> str:
 
 @mcp.tool()
 def sdg_output(ch: int, on: bool, expect_load: str, confirm: bool = False,
-               resource: str = SDG_RES) -> str:
+               resource: str | None = None) -> str:
     """SDG 开关通道 ch(1-2) 输出。⚠ 开/关都需 confirm=True（关闭可能打断
     正在进行的测试或他人实验，同样是状态变更）。
 
@@ -824,14 +879,14 @@ def sdg_output(ch: int, on: bool, expect_load: str, confirm: bool = False,
 # ============ Keysight 34465A ============
 
 @mcp.tool()
-def dmm_measure(function: str, resource: str = DMM_RES) -> str:
+def dmm_measure(function: str, resource: str | None = None) -> str:
     """34465A 单次测量。function: volt_dc/volt_ac/curr_dc/curr_ac/res/fres/
     cont/cap/diod/freq。"""
     return _call("DMM", lambda: _dmm(resource), lambda d: d.measure(function))
 
 
 @mcp.tool()
-def dmm_status(resource: str = DMM_RES) -> str:
+def dmm_status(resource: str | None = None) -> str:
     """34465A 快照：IDN/选件/配置/最近读数。"""
     return _call("DMM", lambda: _dmm(resource), lambda d: d.snapshot())
 
@@ -839,7 +894,7 @@ def dmm_status(resource: str = DMM_RES) -> str:
 @mcp.tool()
 def dmm_configure(function: str, range_v: float | None = None,
                   resolution: float | None = None,
-                  resource: str = DMM_RES) -> str:
+                  resource: str | None = None) -> str:
     """34465A 配置测量功能/量程/分辨率（不触发测量）。function: volt_dc/
     volt_ac/curr_dc/curr_ac/res/fres/cap/freq；range_v/resolution 可选。
     注意 :CONF? 回读有滞后一拍特性，以实测值为准。"""
@@ -849,7 +904,7 @@ def dmm_configure(function: str, range_v: float | None = None,
 
 
 @mcp.tool()
-def dmm_nplc(value: float | None = None, resource: str = DMM_RES) -> str:
+def dmm_nplc(value: float | None = None, resource: str | None = None) -> str:
     """34465A 电压 DC 积分时间 NPLC（手册 [SENSe:]VOLTage[:DC]:NPLC）。
 
     value=None 查询；给出则设置后回读。取值 0.02/0.2/1/10/100（默认 10）——
@@ -867,13 +922,13 @@ def dmm_nplc(value: float | None = None, resource: str = DMM_RES) -> str:
 # ============ DHO 示波器 ============
 
 @mcp.tool()
-def dho_status(resource: str = DHO_RES) -> str:
+def dho_status(resource: str | None = None) -> str:
     """DHO 示波器只读快照（通道/时基/触发/采集）。"""
     return _call("DHO", lambda: _dho(resource), lambda s: s.snapshot())
 
 
 @mcp.tool()
-def dho_measure_item(item: str, ch: int = 1, resource: str = DHO_RES) -> str:
+def dho_measure_item(item: str, ch: int = 1, resource: str | None = None) -> str:
     """DHO 单次测量查询。item 枚举（RIGOL 表）: VPP/VMAX/VMIN/VAMP/VAVG/VRMS/
     PERiod/FREQuency/PWIDth/NWIDth/PDUTy/RTIMe/FTIMe 等；ch=1-4。
     无有效测量（如通道无信号）报 param_validation 错误，文案含 9.9E37。"""
@@ -883,7 +938,7 @@ def dho_measure_item(item: str, ch: int = 1, resource: str = DHO_RES) -> str:
 # ============ DH1766 电源 ============
 
 @mcp.tool()
-def psu_status(resource: str = PSU_RES) -> str:
+def psu_status(resource: str | None = None) -> str:
     """DH1766 只读状态总览（**操作电源前先调这个**）：三路(CH1-3)电压/电流/功率/
     设定值/OVP/OCP/输出状态/**输出模式**/耦合，并附**安全检查**：
     safe + warnings（TRAC 负压跟随 / OVP·OCP ≤ 设定值 / 已有通道带电 /
@@ -898,7 +953,7 @@ def psu_status(resource: str = PSU_RES) -> str:
 
 
 @mcp.tool()
-def psu_mode(resource: str = PSU_RES) -> str:
+def psu_mode(resource: str | None = None) -> str:
     """DH1766 输出模式查询（只读，轻量）：NORM（正常三路独立）/TRAC（跟踪：
     CH2 跟随 CH1 输出同等值负电压）/SERI（串联）/PARA（并联）。
     操作电源前先查模式——CH2 负压是跟踪模式跟随，不是固定负轨（手册§3.8）。
@@ -910,7 +965,7 @@ def psu_mode(resource: str = PSU_RES) -> str:
 
 @mcp.tool()
 def psu_output(ch: int, on: bool, expect_mode: str, confirm: bool = False,
-               resource: str = PSU_RES) -> str:
+               resource: str | None = None) -> str:
     """DH1766 单通道输出开关。⚠ 开/关都需 confirm=True（关闭可能中断供电，
     影响被测电路/他人实验，同样是状态变更）。
 
@@ -933,7 +988,7 @@ def psu_output(ch: int, on: bool, expect_mode: str, confirm: bool = False,
 
 
 @mcp.tool()
-def psu_set_mode(mode: str, resource: str = PSU_RES) -> str:
+def psu_set_mode(mode: str, resource: str | None = None) -> str:
     """DH1766 设置输出模式：NORM/TRAC/SERI/PARA（写后回读比对）。
     ⚠ 继电器联动拓扑变化：输出必须全关，否则直接拒绝（库内无条件强制）。
     切换范例：跟踪 ±12V 供电用 TRAC；单路独立用 NORM。"""
@@ -947,7 +1002,7 @@ def psu_set_mode(mode: str, resource: str = PSU_RES) -> str:
 @mcp.tool()
 def psu_power_cycle(ch: int, expect_mode: str, cycles: int = 1,
                     off_delay_s: float = 1.0, on_delay_s: float = 1.0,
-                    confirm: bool = False, resource: str = PSU_RES) -> str:
+                    confirm: bool = False, resource: str | None = None) -> str:
     """DH1766 上下电循环：关断→延迟→开启→延迟，重复 cycles 次。
 
     ⚠ **需 confirm=True**——授权同 psu_output：① 用户本轮明确要求做上下电/循环，

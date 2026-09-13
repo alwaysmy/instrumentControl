@@ -1,7 +1,7 @@
 """DH1766 远程锁定（Remote/Lock）只读探测——核实"是否只要远程连接就被锁"。
 
 背景：用户报告"DH1766 好像只要远程连接就会被锁"。手册 4.2 的
-`SYST:COMM:RLST:STAT?` 在本机固件 V0.1.4.3 返回空串（见 docs/EXPERIENCE.md），
+`SYST:COMM:RLST:STAT?`（手册写法）在本机固件 V0.1.4.3 **无响应/超时**（见 docs/EXPERIENCE.md），
 故本脚本用**只读查询**穷举候选状态查询形式，并对比多次独立会话（每次新建连接）
 的响应差异，判断"连接本身"是否改变工作模式。
 
@@ -24,9 +24,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from common.resolver import resolve  # noqa: E402
 from common.visa_client import VisaClient  # noqa: E402
 
-RESOURCE = "TCPIP0::192.168.31.144::5025::SOCKET"
+# 地址由 common.resolver 解析（不写死 IP，换网段/换口自适应）
+RESOURCE = resolve("psu")
 OUT_DIR = ROOT / "TEST_DATA" / "dh1766"
 
 # 已知可用的只读查询（先验证会话本身工作）

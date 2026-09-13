@@ -14,12 +14,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from common.resolver import resolve
 from sds_control import SDS
 from sds_control.sds import drain_errors
 
 OUT = ROOT / "TEST_DATA" / "sds"
 OUT.mkdir(parents=True, exist_ok=True)
-RES = "TCPIP0::192.168.31.220::inst0::INSTR"
+# 地址由 common.resolver 解析（不写死 IP，换网段/换口自适应）
+RES = resolve("sds")
 
 trace: list[dict] = []
 

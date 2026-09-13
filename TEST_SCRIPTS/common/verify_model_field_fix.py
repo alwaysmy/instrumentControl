@@ -10,6 +10,8 @@ sys.path.insert(0, str(ROOT / "mcp_instruments"))
 
 import server  # noqa: E402
 
+from common.resolver import resolve  # noqa: E402
+
 results = []
 
 
@@ -44,7 +46,8 @@ check("instr_write 无confirm", server.instr_write("dummy", "VOLT 1"),
 check("instr_write *RST", server.instr_write("dummy", "*RST", confirm=True),
       expect_model="instruments", expect_resource="dummy", expect_ok=False)
 # 5) 真实资源成功路径（model 应为 instruments，resource 为资源串）
-r = json.loads(server.instr_query("TCPIP0::192.168.31.220::inst0::INSTR", "*IDN?"))
+# 地址由 common.resolver 解析（不写死 IP，换网段/换口自适应）
+r = json.loads(server.instr_query(resolve("sds"), "*IDN?"))
 ok = r.get("ok") and r.get("model") == "instruments" and r.get("resource", "").startswith("TCPIP")
 results.append(ok)
 print(f"[{'PASS' if ok else 'FAIL'}] instr_query 成功路径: {json.dumps(r, ensure_ascii=False)[:150]}", flush=True)

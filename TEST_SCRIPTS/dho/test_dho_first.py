@@ -21,7 +21,8 @@ def rec(name, ok, detail=""):
 
 
 def main() -> int:
-    resource = find_dho(hosts=["192.168.31.146"])
+    # 地址由 common.resolver 解析（不写死 IP，换网段/换口自适应）
+    resource = find_dho()
     print(f"连接: {resource}")
     with DHO(resource) as scope:
         idn = scope.idn()

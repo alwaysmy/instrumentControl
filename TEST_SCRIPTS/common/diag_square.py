@@ -7,13 +7,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from common.resolver import resolve  # noqa: E402
 from sdg_control import SDG  # noqa: E402
 from sds_control import SDS  # noqa: E402
 
 OUT_DIR = ROOT / "TEST_DATA" / "common"
 
-gen = SDG("TCPIP0::192.168.31.206::inst0::INSTR")
-scope = SDS("TCPIP0::192.168.31.220::inst0::INSTR")
+# 地址由 common.resolver 解析（不写死 IP，换网段/换口自适应）
+gen = SDG(resolve("sdg"))
+scope = SDS(resolve("sds"))
 gen.connect()
 scope.connect()
 try:

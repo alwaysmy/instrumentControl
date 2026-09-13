@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "mcp_instruments"))
 import server  # noqa: E402
 
 t0 = time.monotonic()
+# 注意：该 cidr 是当时（2026-08-23）的现场网段，重跑需按当前环境改
 r = json.loads(server.instr_discover(cidr="192.168.31.0/24"))
 print(f"[显式 cidr] {time.monotonic() - t0:.1f}s ok={r['ok']}")
 res = r["result"]

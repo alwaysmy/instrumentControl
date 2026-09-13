@@ -20,7 +20,12 @@ sys.path.insert(0, str(ROOT / "mcp_instruments"))
 
 import server  # noqa: E402
 
-RES = "TCPIP0::192.168.31.220::inst0::INSTR"  # 仅 --with-device 时才会真正连接
+from common.resolver import resolve  # noqa: E402
+
+# 离线拦截在发起连接之前就返回 forbidden（server._is_forbidden 先于 _guarded_call），
+# 故此处的资源串不会被真正连接——用占位符（同 verify_model_field_fix.py 的 "dummy"），
+# 避免写死真实设备地址；真机路径 --with-device 才解析真实地址。
+RES = "dummy"
 fails = []
 
 # 应被拦截（拦截发生在连接之前，故离线即可验证）
@@ -56,6 +61,8 @@ for cmd in ALLOWED:
 
 if "--with-device" in sys.argv:
     print("\n=== 真机查询路径（--with-device）===", flush=True)
+    # 地址由 common.resolver 解析（不写死 IP，换网段/换口自适应）；离线路径不触发解析
+    RES = resolve("sds")
     r = json.loads(server.instr_query(RES, "SYST:COMM:RLST?"))
     ok = bool(r.get("ok")) or r.get("error_type") in ("connection", "timeout")
     print(f"  [{'PASS' if ok else 'FAIL'}] instr_query SYST:COMM:RLST? -> "

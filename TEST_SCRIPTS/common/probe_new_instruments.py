@@ -3,24 +3,32 @@
 用法：
     $env:PYTHONIOENCODING="utf-8"; python TEST_SCRIPTS/common/probe_new_instruments.py
 
-覆盖：Keysight 34465A (.123) / Siglent SDG2122X (.206) / Siglent SDS824X HD (.220)
+覆盖：Keysight 34465A / Siglent SDG2122X / Siglent SDS824X HD
+地址由 common.resolver 解析（不写死 IP；历史标注的当时网段尾号已删除）
 约定：仅查询类命令；不执行 *RST/:SYST:RESet 等复位；不改变任何输出状态。
 输出：控制台 + TEST_DATA/common/new_instr_probe_<时间戳>.json
 """
 from __future__ import annotations
 
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 
 import pyvisa
 
-OUT_DIR = Path(__file__).resolve().parents[2] / "TEST_DATA" / "common"
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
 
+from common.resolver import resolve  # noqa: E402
+
+OUT_DIR = ROOT / "TEST_DATA" / "common"
+
+# 地址由 common.resolver 解析（不写死 IP，换网段/换口自适应）
 DEVICES = {
-    "34465A": "TCPIP0::192.168.31.123::inst0::INSTR",
-    "SDG2122X": "TCPIP0::192.168.31.206::inst0::INSTR",
-    "SDS824X_HD": "TCPIP0::192.168.31.220::inst0::INSTR",
+    "34465A": resolve("dmm"),
+    "SDG2122X": resolve("sdg"),
+    "SDS824X_HD": resolve("sds"),
 }
 
 QUERIES = {

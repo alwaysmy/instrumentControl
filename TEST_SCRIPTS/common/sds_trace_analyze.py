@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from common.resolver import resolve
 from sds_control import SDS
 
 TARGET = Path(sys.argv[1]) if len(sys.argv) > 1 else None
@@ -54,7 +55,8 @@ if __name__ == "__main__":
     if TARGET and TARGET.exists():
         analyze(TARGET)
     else:
-        with SDS("TCPIP0::192.168.31.220::inst0::INSTR") as s:
+        # 地址由 common.resolver 解析（不写死 IP，换网段/换口自适应）
+        with SDS(resolve("sds")) as s:
             from datetime import datetime
 
             OUT_DIR = ROOT / "TEST_DATA" / "common"

@@ -16,6 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from common.resolver import resolve  # noqa: E402
 from keysight_3446x import DMM  # noqa: E402
 from sds_control import SDS  # noqa: E402
 
@@ -29,8 +30,9 @@ def rec(name: str, ok: bool, detail: str = "") -> None:
 
 
 def main() -> int:
+    # 地址由 common.resolver 解析（不写死 IP，换网段/换口自适应）
     print("== SDS824X HD 触发 + 高级测量 ==")
-    with SDS("TCPIP0::192.168.31.220::inst0::INSTR") as s:
+    with SDS(resolve("sds")) as s:
         src = s.edge_source()
         rec("EDGE:SOUR? 查询", bool(src), f"原值={src}")
         lev = s.edge_level()
@@ -61,7 +63,7 @@ def main() -> int:
     print("== Keysight 34465A configure 扩展 ==")
     import time
 
-    with DMM("TCPIP0::192.168.31.123::inst0::INSTR") as d:
+    with DMM(resolve("dmm")) as d:
         # 实测固件特性：:CONF? 返回上一轮锁存配置（滞后一拍），不能作为写后立即判据；
         # 配置是否生效以实际测量结果为准。
         orig_conf = d.configuration()

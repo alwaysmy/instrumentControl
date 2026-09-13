@@ -16,6 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from common.resolver import resolve
 from sds_control import SDS
 from sds_control.sds import _num
 
@@ -47,7 +48,8 @@ def extract_trace(data: bytes, ch: int) -> dict[int, int]:
 
 def main() -> int:
     ch = int(sys.argv[1]) if len(sys.argv) > 1 else 4
-    with SDS("TCPIP0::192.168.31.220::inst0::INSTR") as s:
+    # 地址由 common.resolver 解析（不写死 IP，换网段/换口自适应）
+    with SDS(resolve("sds")) as s:
         vdiv = _num(s.query(f"C{ch}:VDIV?"))
         ofst = _num(s.query(f"C{ch}:OFST?"))
         tdiv = s.timebase_scale()

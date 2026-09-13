@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from common.resolver import resolve  # noqa: E402
 from keysight_3446x import DMM  # noqa: E402
 from sdg_control import SDG  # noqa: E402
 from sds_control import SDS  # noqa: E402
@@ -27,14 +28,15 @@ def check(tag, fn):
 
 
 def main() -> int:
+    # 地址由 common.resolver 解析（不写死 IP，换网段/换口自适应）
     print("== SDS824X HD ==")
-    with SDS("TCPIP0::192.168.31.220::inst0::INSTR") as s:
+    with SDS(resolve("sds")) as s:
         check("ACQ:TYPE?", lambda: s.query("ACQ:TYPE?"))
         s.query(":SYST:ERR?")
         check("C1:TRA? (通道显示)", lambda: s.query("C1:TRA?"))
 
     print("== SDG2122X ==")
-    with SDG("TCPIP0::192.168.31.206::inst0::INSTR") as g:
+    with SDG(resolve("sdg")) as g:
         check("C1:ARWV?", lambda: g.query("C1:ARWV?"))
         g.query(":SYST:ERR?")
 
@@ -49,7 +51,7 @@ def main() -> int:
         check("BSWV PHSE 写+回读", bswv_write_readback)
 
     print("== Keysight 34465A ==")
-    with DMM("TCPIP0::192.168.31.123::inst0::INSTR") as d:
+    with DMM(resolve("dmm")) as d:
         d.configure("volt_dc", range_v=0.1)
         check("NPLC 查询", lambda: d.get_nplc())
         check("NPLC=1 写+回读", lambda: (d.set_nplc(1), time.sleep(0.2), d.get_nplc())[2])

@@ -11,12 +11,18 @@ SDS824X HD 的 `C1:CPLE?` 命令名待核实；本脚本试整体查询与候选
 from __future__ import annotations
 
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 
 import pyvisa
 
-OUT_DIR = Path(__file__).resolve().parents[2] / "TEST_DATA" / "common"
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+from common.resolver import resolve  # noqa: E402
+
+OUT_DIR = ROOT / "TEST_DATA" / "common"
 
 
 def query_many(rm: pyvisa.ResourceManager, res: str, cmds: list[str], tag: str) -> dict:
@@ -46,10 +52,11 @@ def main() -> None:
         "devices": {"SDG2122X": {}, "SDS824X_HD": {}},
     }
 
-    print("== SDG2122X  .206 ==")
+    print("== SDG2122X ==")
+    # 地址由 common.resolver 解析（不写死 IP，换网段/换口自适应）
     report["devices"]["SDG2122X"] = query_many(
         rm,
-        "TCPIP0::192.168.31.206::inst0::INSTR",
+        resolve("sdg"),
         [
             "C1:BSWV?",          # 基础波形参数整体查询
             "C2:BSWV?",
@@ -62,10 +69,10 @@ def main() -> None:
         "SDG",
     )
 
-    print("== SDS824X HD  .220 ==")
+    print("== SDS824X HD ==")
     report["devices"]["SDS824X_HD"] = query_many(
         rm,
-        "TCPIP0::192.168.31.220::inst0::INSTR",
+        resolve("sds"),
         [
             "C1:COUPLING?",      # 耦合候选名 A
             "CPL?",              # 耦合候选名 B

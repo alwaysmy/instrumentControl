@@ -13,9 +13,11 @@ import numpy as np
 ROOT = Path(r"D:\MyProjects\AI\instrumentControl")
 sys.path.insert(0, str(ROOT))
 
+from common.resolver import resolve
 from sds_control import SDS
 
-s = SDS("TCPIP0::192.168.31.220::inst0::INSTR", timeout_ms=20000)
+# 地址由 common.resolver 解析（不写死 IP，换网段/换口自适应）
+s = SDS(resolve("sds"), timeout_ms=20000)
 s.connect()
 try:
     # 当前模式与采样率

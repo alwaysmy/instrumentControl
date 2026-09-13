@@ -13,6 +13,8 @@ sys.path.insert(0, str(ROOT / "mcp_instruments"))
 
 import server  # noqa: E402
 
+from common.resolver import resolve  # noqa: E402
+
 results = []
 
 
@@ -24,11 +26,12 @@ def show(name, raw, want_ok=True):
 
 
 print("=== instr_write 成功路径（*CLS 无副作用）===", flush=True)
+# 地址由 common.resolver 解析（不写死 IP，换网段/换口自适应）
 show("instr_write *CLS @SDS", server.instr_write(
-    "TCPIP0::192.168.31.220::inst0::INSTR", "*CLS", confirm=True))
+    resolve("sds"), "*CLS", confirm=True))
 # 带回读的写（写当前值再回读，幂等）
 show("instr_write + readback @SDG", server.instr_write(
-    "TCPIP0::192.168.31.206::inst0::INSTR", "C2:BSWV PHSE,0",
+    resolve("sdg"), "C2:BSWV PHSE,0",
     readback_cmd="C2:BSWV?", confirm=True))
 
 print("=== dho_measure_item ===", flush=True)

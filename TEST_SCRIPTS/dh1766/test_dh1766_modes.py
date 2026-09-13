@@ -18,10 +18,12 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "dh1766_control" / "src"))
 
+from common.resolver import resolve  # noqa: E402
 from dh1766_control import DH1766, VisaClient  # noqa: E402
 
 OUT_DIR = ROOT / "TEST_DATA" / "dh1766"
-RES = "TCPIP0::192.168.31.144::5025::SOCKET"
+# 地址由 common.resolver 解析（不写死 IP，换网段/换口自适应）
+RES = resolve("psu")
 
 trace: list[dict] = []
 

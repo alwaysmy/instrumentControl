@@ -2,7 +2,7 @@
 
 用法：
     python TEST_SCRIPTS/dh1766/test_dh1766_readonly_lan.py [IP]
-    默认 IP=192.168.31.144（2026-08-23 傅师傅提供，LAN 接入 WLAN 网段）。
+    不传 IP 时走 common.resolver 解析（不写死 IP，换网段/换口自适应）。
 
 连接形态（实测确认）：
     - DH1766A LAN 为 SCPI-over-TCP，端口 5025（手册 §3.10/§9；实测 OPEN）；
@@ -27,13 +27,15 @@ from pathlib import Path
 import pyvisa
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "dh1766_control" / "src"))
 
+from common.resolver import resolve  # noqa: E402
 from dh1766_control import DH1766  # noqa: E402
 from dh1766_control.visa import VisaClient  # noqa: E402
 
 OUT_DIR = ROOT / "TEST_DATA" / "dh1766"
-DEFAULT_IP = "192.168.31.144"
+DEFAULT_IP = None  # 默认走 common.resolver 解析（不写死 IP，换网段/换口自适应）
 PORT = 5025
 
 
@@ -52,7 +54,7 @@ class PyVisaClient(VisaClient):
 
 def main() -> None:
     ip = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_IP
-    resource = f"TCPIP0::{ip}::{PORT}::SOCKET"
+    resource = f"TCPIP0::{ip}::{PORT}::SOCKET" if ip else resolve("psu")
     print(f"\n== 连接 {resource} ==")
 
     with PyVisaClient(resource, timeout_ms=3000) as client:

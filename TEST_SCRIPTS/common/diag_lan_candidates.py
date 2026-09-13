@@ -15,6 +15,8 @@ from pathlib import Path
 import pyvisa
 
 OUT_DIR = Path(__file__).resolve().parents[2] / "TEST_DATA" / "common"
+# 注意：以下 IP/资源串是当时（2026-08-23）的诊断对象，不是设备固定资产；
+# 重跑需按当前环境改（本脚本故意不走 common.resolver：它诊断的就是"候选地址本身"）
 CANDIDATES = ["192.168.31.111", "192.168.31.144"]
 
 

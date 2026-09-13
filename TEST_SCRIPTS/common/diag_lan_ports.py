@@ -59,7 +59,11 @@ def try_idn(rm: pyvisa.ResourceManager, ip: str, port: int) -> list[str]:
 
 
 def main() -> None:
-    ips = sys.argv[1:] or ["192.168.31.146"]
+    # 注意：默认 IP 是当时（2026-08-23）的诊断对象，重跑需按当前环境改（优先用命令行传 IP）
+    ips = sys.argv[1:]
+if not ips:
+    print("用法: python diag_lan_ports.py <ip> [<ip> ...]  （地址按当前环境现查，不设默认值）")
+    raise SystemExit(2)
     out: dict = {"timestamp": datetime.now().isoformat(timespec="seconds"), "hosts": {}}
     rm = pyvisa.ResourceManager()
     for ip in ips:

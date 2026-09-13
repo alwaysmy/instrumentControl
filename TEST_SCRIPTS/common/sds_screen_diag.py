@@ -14,6 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from common.resolver import resolve  # noqa: E402
 from sds_control import SDS  # noqa: E402
 
 OUT_DIR = ROOT / "TEST_DATA" / "common"
@@ -72,7 +73,8 @@ def parse_and_convert(bmp_path: Path) -> None:
 
 
 def main() -> int:
-    with SDS("TCPIP0::192.168.31.220::inst0::INSTR") as s:
+    # 地址由 common.resolver 解析（不写死 IP，换网段/换口自适应）
+    with SDS(resolve("sds")) as s:
         data = s.screenshot_bmp()
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")

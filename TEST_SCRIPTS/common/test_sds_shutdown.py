@@ -12,6 +12,7 @@
 """
 import argparse
 import json
+import re
 import socket
 import sys
 import time
@@ -21,10 +22,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from common.resolver import resolve  # noqa: E402
 from sds_control import SDS  # noqa: E402
 
 OUT_DIR = ROOT / "TEST_DATA" / "common"
-HOST = "192.168.31.220"
 PORT = 4880  # VXI-11 走 inst0，端口探测用 HiSLIP 口 + RPC 口均可，测 111/4880
 
 
@@ -48,7 +49,14 @@ def main() -> int:
 
     out = {"timestamp": datetime.now().isoformat(timespec="seconds"), "steps": []}
 
-    scope = SDS(f"TCPIP0::{HOST}::inst0::INSTR")
+    # 地址由 common.resolver 解析（不写死 IP，换网段/换口自适应）；
+    # 资源串可能是 VISA 别名形式 visa://<gw>/TCPIP0::<ip>::inst0::INSTR，正则仍能取到主机
+    res = resolve("sds")
+    m = re.search(r"TCPIP\d*::([^:]+)::", res)
+    HOST = m.group(1) if m else res
+    print(f"目标资源: {res} (HOST={HOST})")
+
+    scope = SDS(res)
     scope.connect()
     idn = scope.idn()
     print(f"关机前 IDN: {idn}")
@@ -56,7 +64,7 @@ def main() -> int:
     scope.close()
 
     print("发送 :SYSTem:SHUTdown ...")
-    scope2 = SDS(f"TCPIP0::{HOST}::inst0::INSTR")
+    scope2 = SDS(res)
     scope2.connect()
     try:
         scope2.write(":SYSTem:SHUTdown")

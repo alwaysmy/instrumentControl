@@ -39,8 +39,9 @@ CACHE_DIR = Path(
     or os.environ.get("XDG_CACHE_HOME")
     or (Path.home() / ".cache")
 ) / "instrumentControl"
+CONFIG_DIR = CACHE_DIR  # 配置与缓存同目录（本机专用，不入库）
 CACHE_FILE = CACHE_DIR / "last_good_resources.json"
-CONFIG_FILE = CACHE_DIR / "devices.json"
+CONFIG_FILE = CONFIG_DIR / "devices.json"
 
 
 def _load_json(path: Path) -> dict:
@@ -108,10 +109,83 @@ def remember_candidates(pairs: list[tuple[str, str]]) -> dict[str, str]:
 
 
 def known_resources() -> dict[str, str]:
-    """解析层已知地址映射（配置优先于缓存）。"""
-    out = {k: v for k, v in _load_json(CACHE_FILE).items() if isinstance(v, str)}
-    out.update({k: v for k, v in _load_json(CONFIG_FILE).items() if isinstance(v, str)})
+    """解析层已知地址映射（配置优先于缓存；只含 5 类设备的合法条目）。"""
+    out = {k: v for k, v in _load_json(CACHE_FILE).items()
+           if k in DEVICE_KINDS and isinstance(v, str)}
+    out.update({k: v for k, v in _load_json(CONFIG_FILE).items()
+                if k in DEVICE_KINDS and isinstance(v, str)})
     return out
+
+
+def save_config(kind: str, resource: str) -> Path:
+    """把某类设备的地址写进**用户配置文件**（本机专用，不入库）。
+
+    配置文件优先级高于缓存与自动发现，适合"这套仪器在本机的固定/默认地址"；
+    保留文件里已有的其它键与注释字段（只增改目标键）。
+    """
+    if kind not in DEVICE_KINDS:
+        raise ValueError(f"未知设备类 {kind!r}，可选：{', '.join(DEVICE_KINDS)}")
+    if not resource or not resource.strip():
+        raise ValueError("resource 不能为空")
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    data = _load_json(CONFIG_FILE)
+    data[kind] = resource.strip()
+    _write_config(data)
+    return CONFIG_FILE
+
+
+def clear_config(kind: str) -> Path:
+    """删除配置文件里的某类设备条目（删除后回落到缓存/自动发现）。"""
+    data = _load_json(CONFIG_FILE)
+    data.pop(kind, None)
+    _write_config(data)
+    return CONFIG_FILE
+
+
+def _write_config(data: dict) -> None:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = CONFIG_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(CONFIG_FILE)
+
+
+def config_template() -> dict:
+    """配置文件骨架（只放说明与示例，不放真实键——留空即回落到自动发现）。"""
+    return {
+        "_说明": (
+            "仪器地址配置文件（本机专用，不入库、可随时手改）。"
+            "键 = 设备类 sds/sdg/dmm/dho/psu；值 = 完整 VISA 资源串；"
+            "删除某键 = 该项回落到『上次成功缓存 → 自动发现』。"
+            "优先级：显式入参 > 环境变量 INSTRUMENT_<KIND>_RES > 本文件 > 缓存 > 自动发现。"
+            "写入用 `python mcp_instruments/config_cli.py set <kind> <resource>`，"
+            "查看用 `... config_cli.py show`。"
+        ),
+        "_示例（勿照抄，按实际改）": {
+            "sds": "TCPIP0::192.0.2.10::inst0::INSTR",
+            "psu": "TCPIP0::192.0.2.11::5025::SOCKET",
+        },
+    }
+
+
+def explain(kind: str) -> dict:
+    """列出某类设备的解析链现状（**不做设备 I/O**：不触发自动发现）。"""
+    token, label, env_name = DEVICE_KINDS[kind]
+    env = os.environ.get(env_name)
+    cfg = _load_json(CONFIG_FILE).get(kind)
+    cached = _load_json(CACHE_FILE).get(kind)
+    if isinstance(env, str) and env.strip():
+        src, val = "env", env.strip()
+    elif isinstance(cfg, str) and cfg.strip():
+        src, val = "config", cfg.strip()
+    elif isinstance(cached, str) and cached.strip():
+        src, val = "cache", cached.strip()
+    else:
+        src, val = None, None
+    return {"kind": kind, "label": label, "idn_match": token, "env_var": env_name,
+            "env": env if isinstance(env, str) and env.strip() else None,
+            "config": cfg if isinstance(cfg, str) and cfg.strip() else None,
+            "cache": cached if isinstance(cached, str) and cached.strip() else None,
+            "source": src, "resource": val}
 
 
 def resolve(kind: str, resource: Optional[str] = None) -> str:

@@ -85,6 +85,19 @@ DH1766 工具每次调用收尾自动补发 `SYST:LOC` 归还面板控制权—�
   "psu": "TCPIP0::<psu-ip>::5025::SOCKET" }
 ```
 
+维护方式（CLI 只读写本机文件，**不连设备**）：
+
+```bash
+python mcp_instruments/config_cli.py show              # 当前解析链与来源
+python mcp_instruments/config_cli.py init [--force]    # 生成模板
+python mcp_instruments/config_cli.py set sds "TCPIP0::<ip>::inst0::INSTR"
+python mcp_instruments/config_cli.py clear sds         # 删除条目 → 回落自动发现
+```
+
+**连接后核对 `*IDN?`**：若配置/缓存里的地址已被 DHCP 分给别的设备，工具会报
+"地址校验失败…"并拒绝操作（不会把 SCPI 发给未知设备），此时重新 `instr_discover`
+或用 `config_cli.py set` 更正即可。
+
 换网段/换口后：先调一次 `instr_discover`（返回体里 `resolved` 是当前解析表、
 `recognised_now` 是本次识别并写入缓存的设备），之后照常调用各工具。
 工具报"未确定 XX 的资源地址"时，按报错文案给的三条路径处理即可

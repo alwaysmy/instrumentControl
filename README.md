@@ -88,8 +88,23 @@ MCP 注册（示例，路径按需替换）：
 | Emoe 校准器（骨架） | `emoe_control` | `instr_discover`（串口 ASRL 编号漂移最频繁，接入前必先发现） |
 
 MCP 专用工具的 `resource` 参数**默认省略**：server 端按
-`显式入参 > 环境变量 INSTRUMENT_<KIND>_RES > 用户配置 devices.json > 上次成功缓存 > 自动发现`
-解析（实现见 `common/resolver.py`）；换网段/换口后先跑一次 `instr_discover`，发现结果会自动记住。
+`显式入参 > 环境变量 INSTRUMENT_<KIND>_RES > 本机配置 devices.json > 上次成功缓存 > 自动发现`
+解析（实现见 `common/resolver.py`）。
+
+### 配置本机默认地址
+
+这套仪器在你机器上的地址可以写进配置文件（**本机专用，不入库**：
+`%LOCALAPPDATA%\instrumentControl\devices.json`）；不配也能用（自动发现 + 缓存）。
+
+```bash
+python mcp_instruments/config_cli.py show                 # 看当前解析链与来源（不连设备）
+python mcp_instruments/config_cli.py init                 # 生成模板（不含真实地址）
+python mcp_instruments/config_cli.py set sds "TCPIP0::<ip>::inst0::INSTR"
+python mcp_instruments/config_cli.py clear sds            # 删条目 → 回落自动发现
+```
+
+换网段/换 USB 口后：先跑一次 `instr_discover`（发现结果会自动回写缓存）；
+若地址已被 DHCP 分给别的设备，工具会在连接后**核对 `*IDN?` 并拒绝操作**（不会误发 SCPI）。
 
 ## 安全摘要（完整红线见 `AGENTS.md`）
 

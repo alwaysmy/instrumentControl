@@ -124,11 +124,16 @@ AI/Agent 操作仪器必须遵守以下规范。
 | Emoe 校准器（骨架） | emoe_control | `instr_discover`（仅发现 + *IDN?，编程手册未提供）。**ASRL 编号漂移最频繁**：校准器原 ASRL31 现离线、ASRL5 现为 ADS127L11-DAQ-EV——串口设备一律先重发现 |
 
 地址解析链（`common/resolver.py`，MCP 服务器与 `TEST_SCRIPTS/` 共用同一套来源）：
-**显式入参 > 环境变量 `INSTRUMENT_<KIND>_RES` > 用户配置
+**显式入参 > 环境变量 `INSTRUMENT_<KIND>_RES` > 本机配置
 `%LOCALAPPDATA%\instrumentControl\devices.json` > 上次成功缓存
 `last_good_resources.json` > `find_device()` 自动发现**（默认不扫网段，
 需要自动扫描设 `INSTRUMENT_ALLOW_SCAN=1`；LAN 未注册设备先跑 `instr_discover`，
 其发现结果会按 `*IDN?` 自动回写缓存）。
+
+- 本机默认地址用 `python mcp_instruments/config_cli.py show|init|set|clear` 维护
+  （`set <kind> <resource>`；`devices.json` 本机专用、不入库，用户可手改）；
+- **连接后会核对 `*IDN?`**：地址若已被 DHCP 分配给别的设备，工具直接拒绝操作
+  （报"地址校验失败…请先 instr_discover"），绝不把 SCPI 发给未知设备。
 
 DH1766 现场状态备注（2026-09-13 实测留痕 `TEST_DATA/dh1766/psu_lock_probe_*.json`）：
 该机长期挂在 **TRAC 跟踪模式**、CH1/CH2 带电（±12V、CH1 ≈0.39A 带载）——

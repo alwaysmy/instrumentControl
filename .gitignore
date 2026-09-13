@@ -8,6 +8,10 @@ dg832-control/
 # （旧位置在包目录内，仅兼容读一次后删除；此规则保留作兜底）
 .last_good_resource.json
 
+# 本机地址配置属于「每台机器一份」，正式位置在 %LOCALAPPDATA%\instrumentControl\devices.json；
+# 这里兜底防止有人把含真实 IP 的 devices.json 误提交到仓库（模板走 config_cli.py init）
+devices.json
+
 # ---- TEST_DATA 运行期产物（体量大、可由设备重建，不入库）----
 # MCP 通用写审计日志（每次调用追加，运行时数据）
 TEST_DATA/**/mcp_scpi_audit_*.jsonl

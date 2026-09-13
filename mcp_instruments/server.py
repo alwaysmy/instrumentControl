@@ -56,6 +56,15 @@ for _req_type in (
 _DEVICE_LOCK = threading.Lock()
 _PREWARM_DONE = threading.Event()  # VISA/设备库冷启动完成前置位（看门狗放宽依据）
 
+# 设备专用工具返回体里回填"本次实际用的地址"：模型名 → 解析层的 kind
+_MODEL_KIND = {"SDS": "sds", "SDG": "sdg", "DMM": "dmm", "DHO": "dho", "DH1766": "psu"}
+_LAST_RESOLVED: dict[str, str] = {}  # kind -> 本次调用解析出的资源串（_DEVICE_LOCK 内更新）
+
+
+def _out_res(model_name: str, resource: str | None) -> str | None:
+    """输出用资源串：显式传入优先，否则回填本次解析结果（仅设备类工具）。"""
+    return resource or _LAST_RESOLVED.get(_MODEL_KIND.get(model_name, ""))
+
 # ============ 设备地址解析（不写死 IP）============
 #
 # 实现已下沉到 `common/resolver.py`：MCP 服务器与 `TEST_SCRIPTS/` 共用同一套
@@ -100,21 +109,24 @@ def _call(model_name, connect_fn, fn, close_fn=None, resource=None):
     """统一执行：连接→操作→关闭，错误分类，全局锁串行化。
 
     close_fn 缺省时调 dev.close()（DH1766 无该方法，须显式传 _psu_close）。
-    resource 仅通用工具传（用于错误结构区分设备模型与资源串）。
+    resource 由通用工具显式传入；设备专用工具未传时，回填本次**实际解析出的地址**
+    （连接函数写入 _LAST_RESOLVED；都在 _DEVICE_LOCK 内，无并发问题）。
+    返回体带上资源串便于排障与留痕。
     """
     with _DEVICE_LOCK:
         try:
             dev = connect_fn()
         except Exception as e:
-            return _err("connection", f"{type(e).__name__}: {e}", model_name, resource)
+            return _err("connection", f"{type(e).__name__}: {e}", model_name, _out_res(model_name, resource))
+        res = _out_res(model_name, resource)
         try:
-            return _ok(model_name, fn(dev), resource)
+            return _ok(model_name, fn(dev), res)
         except ValueError as e:
-            return _err("param_validation", str(e), model_name, resource)
+            return _err("param_validation", str(e), model_name, res)
         except RuntimeError as e:
-            return _err("device_error", str(e), model_name, resource)
+            return _err("device_error", str(e), model_name, res)
         except Exception as e:
-            return _err("communication", f"{type(e).__name__}: {e}", model_name, resource)
+            return _err("communication", f"{type(e).__name__}: {e}", model_name, res)
         finally:
             try:
                 if close_fn is not None:
@@ -126,12 +138,31 @@ def _call(model_name, connect_fn, fn, close_fn=None, resource=None):
 
 
 
+def _verify_idn(kind: str, resource: str, idn: str | None) -> None:
+    """连接后核对 *IDN? 是否确为目标设备类（地址可能已被 DHCP 回收给别的设备）。
+
+    配置/缓存里的地址迟早会过期——若该 IP 现在属于另一台设备，继续下发 SCPI
+    就是"对未知设备操作"（可能改掉别人的仪器设置）。核对不通过立即断开并报错，
+    提示重新发现；核对通过才允许把地址写回缓存。
+    """
+    token, label, _env = DEVICE_KINDS[kind]
+    if not idn or token.upper() not in idn.upper():
+        raise RuntimeError(
+            f"地址校验失败：{resource} 上的设备 *IDN? = {idn!r}，"
+            f"与目标设备（{label}，期望含 {token!r}）不符——地址可能已被 DHCP "
+            f"分配给其它设备。请先调用 instr_discover 重新发现，"
+            f"或用 config_cli.py 更正本机配置（devices.json）。"
+        )
+
+
 def _sds(resource: str | None = None) -> SDS:
     from sds_control import SDS
 
     res = _resolve("sds", resource)
+    _LAST_RESOLVED["sds"] = res  # 供返回体回填本次实际地址
     s = SDS(res)
     s.connect()
+    _verify_idn("sds", res, s.idn())
     _remember("sds", res)
     return s
 
@@ -140,8 +171,10 @@ def _sdg(resource: str | None = None) -> SDG:
     from sdg_control import SDG
 
     res = _resolve("sdg", resource)
+    _LAST_RESOLVED["sdg"] = res  # 供返回体回填本次实际地址
     g = SDG(res)
     g.connect()
+    _verify_idn("sdg", res, g.idn())
     _remember("sdg", res)
     return g
 
@@ -150,8 +183,10 @@ def _dmm(resource: str | None = None) -> DMM:
     from keysight_3446x import DMM
 
     res = _resolve("dmm", resource)
+    _LAST_RESOLVED["dmm"] = res  # 供返回体回填本次实际地址
     d = DMM(res)
     d.connect()
+    _verify_idn("dmm", res, d.idn())
     _remember("dmm", res)
     return d
 
@@ -160,8 +195,10 @@ def _dho(resource: str | None = None) -> DHO:
     from dho_control import DHO
 
     res = _resolve("dho", resource)
+    _LAST_RESOLVED["dho"] = res  # 供返回体回填本次实际地址
     h = DHO(res)
     h.connect()
+    _verify_idn("dho", res, h.idn())
     _remember("dho", res)
     return h
 
@@ -172,7 +209,9 @@ def _psu_connect(resource: str | None = None) -> DH1766:
     from dh1766_control.visa import VisaClient
 
     res = _resolve("psu", resource)
+    _LAST_RESOLVED["psu"] = res  # 供返回体回填本次实际地址
     p = DH1766(VisaClient(res, timeout_ms=5000))
+    _verify_idn("psu", res, p.idn())
     _remember("psu", res)
     return p
 

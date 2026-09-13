@@ -24,24 +24,33 @@ from .discovery import (
 )
 from .resolver import (
     CACHE_FILE,
+    CONFIG_DIR,
     CONFIG_FILE,
     DEVICE_KINDS,
+    clear_config,
+    config_template,
+    explain,
     idn_kind,
     known_resources,
     remember,
     remember_candidates,
     resolve,
+    save_config,
 )
 from .visa_client import VisaClient
 
 __all__ = [
     "CACHE_FILE",
+    "CONFIG_DIR",
     "CONFIG_FILE",
     "DEVICE_KINDS",
     "LAN_PROTOCOLS",
     "FindResult",
     "VisaClient",
+    "clear_config",
+    "config_template",
     "detect_cidr",
+    "explain",
     "find_device",
     "idn_kind",
     "identify",
@@ -52,6 +61,7 @@ __all__ = [
     "remember",
     "remember_candidates",
     "resolve",
+    "save_config",
     "scan",
     "scan_cidr",
     "tcpip_resource",

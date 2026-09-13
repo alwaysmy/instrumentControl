@@ -49,8 +49,12 @@ DHO 示波器 → dho_status / dho_measure_item
 解析（`common/resolver.py`）。
 
 - 工具报"未确定 XX 的资源地址"→ 先跑一次 **`instr_discover`**（结果按 `*IDN?` 自动记住），
-  再重试原工具即可；也可让用户设 `INSTRUMENT_<KIND>_RES` 或写 `devices.json`。
-- `instr_discover` 的返回体里 `resolved` = 当前解析表、`recognised_now` = 本次识别的设备。
+  再重试原工具即可；也可让用户设 `INSTRUMENT_<KIND>_RES` 或写 `devices.json`
+  （本机默认地址：`python mcp_instruments/config_cli.py set <kind> <resource>`）。
+- 工具报"**地址校验失败**"→ 该地址上的设备 `*IDN?` 与目标不符（DHCP 把旧 IP 分给了
+  别的设备）。**不要重试硬连**，先 `instr_discover` 重新定位，或让用户更正 `devices.json`。
+- `instr_discover` 的返回体里 `resolved` = 当前解析表、`recognised_now` = 本次识别的设备、
+  `psu_local_restored` = 是否已把 DH1766 面板控制权归还现场。
 - 只有通用工具 `instr_query` / `instr_write` 必须显式给 `resource`（面向任意设备，不能猜）。
 
 ## 一.五、通用护栏工具（新设备零代码接入）

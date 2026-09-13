@@ -51,6 +51,10 @@ DHO 示波器 → dho_status / dho_measure_item
 - 工具报"未确定 XX 的资源地址"→ 先跑一次 **`instr_discover`**（结果按 `*IDN?` 自动记住），
   再重试原工具即可；也可让用户设 `INSTRUMENT_<KIND>_RES` 或写 `devices.json`
   （本机默认地址：`python mcp_instruments/config_cli.py set <kind> <resource>`）。
+- **地址一律用完整 VISA 资源串**（`TCPIP0::…::inst0::INSTR` / `USB0::…::INSTR` /
+  `ASRL5::INSTR` 同一形态，不区分传输方式），**不要自己拼 `IP:端口`**——协议/端口/
+  参数因设备而异，拼错就是对未知设备发 SCPI。只有用户明确给出某台设备的 IP/host 时，
+  才用 `config_cli.py set <kind> <host>` 让工具探测协议并核对身份后落库。
 - 工具报"**地址校验失败**"→ 该地址上的设备 `*IDN?` 与目标不符（DHCP 把旧 IP 分给了
   别的设备）。**不要重试硬连**，先 `instr_discover` 重新定位，或让用户更正 `devices.json`。
 - `instr_discover` 的返回体里 `resolved` = 当前解析表、`recognised_now` = 本次识别的设备、

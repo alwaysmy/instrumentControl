@@ -133,8 +133,12 @@ AI/Agent 操作仪器必须遵守以下规范。
 需要自动扫描设 `INSTRUMENT_ALLOW_SCAN=1`；LAN 未注册设备先跑 `instr_discover`，
 其发现结果会按 `*IDN?` 自动回写缓存）。
 
-- 本机默认地址用 `python mcp_instruments/config_cli.py show|init|set|clear` 维护
-  （`set <kind> <resource>`；`devices.json` 本机专用、不入库，用户可手改）；
+- 本机默认地址用 `python mcp_instruments/config_cli.py show|init|set|autofill|clear` 维护
+  （`set <kind> <resource|host>`；`devices.json` 本机专用、不入库，用户可手改）；
+- **地址值一律是完整 VISA 资源串**（TCPIP/USB/ASRL/GPIB 同一形态），**不要自己拼
+  `IP:端口`**——协议/端口/参数因设备而异；需要从裸 IP/host 起时交给
+  `config_cli.py set <kind> <host>` 或 `resolve`/`canonicalize()`：先探测协议
+  （inst0→hislip0→raw5025→raw5555）再核对 `*IDN?`，只把规范串落库；
 - **连接后会核对 `*IDN?`**：地址若已被 DHCP 分配给别的设备，工具直接拒绝操作
   （报"地址校验失败…请先 instr_discover"），绝不把 SCPI 发给未知设备。
 

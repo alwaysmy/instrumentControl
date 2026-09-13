@@ -1,0 +1,180 @@
+{
+  "timestamp": "2026-09-14T00:04:58",
+  "mode": "离线（find_device / identify_lan 已打桩，无设备 I/O）",
+  "results": [
+    {
+      "item": "idn_kind(sds)",
+      "ok": true,
+      "got": "sds",
+      "want": "sds"
+    },
+    {
+      "item": "idn_kind(sdg)",
+      "ok": true,
+      "got": "sdg",
+      "want": "sdg"
+    },
+    {
+      "item": "idn_kind(dmm)",
+      "ok": true,
+      "got": "dmm",
+      "want": "dmm"
+    },
+    {
+      "item": "idn_kind(dho)",
+      "ok": true,
+      "got": "dho",
+      "want": "dho"
+    },
+    {
+      "item": "idn_kind(psu)",
+      "ok": true,
+      "got": "psu",
+      "want": "psu"
+    },
+    {
+      "item": "idn_kind(未知设备)",
+      "ok": true,
+      "got": "None",
+      "want": "None"
+    },
+    {
+      "item": "inst0 最优",
+      "ok": true,
+      "got": "0",
+      "want": "0"
+    },
+    {
+      "item": "hislip 次之",
+      "ok": true,
+      "got": "1",
+      "want": "1"
+    },
+    {
+      "item": "其它 INSTR",
+      "ok": true,
+      "got": "2",
+      "want": "2"
+    },
+    {
+      "item": "SOCKET 末位",
+      "ok": true,
+      "got": "3",
+      "want": "3"
+    },
+    {
+      "item": "无信息时报错含四类指引",
+      "ok": true,
+      "got": "RuntimeError: 未确定 Siglent SDS800X HD 示波器 的资源地址（自动发现失败：RuntimeError）。仪器地址会随 DHCP/换网段/换口变化，请先调用 instr_discover 重新发现（发现结果会自动记住）；也可设环境变量 INSTRUMENT_SDS_RES，或把地址写进配置文件 C:\\Users\\AlwaysTS\\AppData\\Local\\Temp\\",
+      "want": "含 ('instr_discover', 'INSTRUMENT_SDS_RES', 'devices.json', 'INSTRUMENT_ALLOW_SCAN')"
+    },
+    {
+      "item": "识别并按优选写缓存",
+      "ok": true,
+      "got": "TCPIP0::192.0.2.9::inst0::INSTR",
+      "want": "TCPIP0::192.0.2.9::inst0::INSTR"
+    },
+    {
+      "item": "未知设备不入库",
+      "ok": true,
+      "got": "False",
+      "want": "False"
+    },
+    {
+      "item": "走缓存解析",
+      "ok": true,
+      "got": "TCPIP0::192.0.2.9::inst0::INSTR",
+      "want": "TCPIP0::192.0.2.9::inst0::INSTR"
+    },
+    {
+      "item": "配置优先于缓存",
+      "ok": true,
+      "got": "TCPIP0::192.0.2.100::inst0::INSTR",
+      "want": "TCPIP0::192.0.2.100::inst0::INSTR"
+    },
+    {
+      "item": "env 优先于配置",
+      "ok": true,
+      "got": "TCPIP0::192.0.2.200::inst0::INSTR",
+      "want": "TCPIP0::192.0.2.200::inst0::INSTR"
+    },
+    {
+      "item": "显式入参最高优先",
+      "ok": true,
+      "got": "TCPIP0::192.0.2.250::inst0::INSTR",
+      "want": "TCPIP0::192.0.2.250::inst0::INSTR"
+    },
+    {
+      "item": "is_visa_resource：TCPIP",
+      "ok": true,
+      "got": "True",
+      "want": "True"
+    },
+    {
+      "item": "is_visa_resource：USB",
+      "ok": true,
+      "got": "True",
+      "want": "True"
+    },
+    {
+      "item": "is_visa_resource：ASRL",
+      "ok": true,
+      "got": "True",
+      "want": "True"
+    },
+    {
+      "item": "is_visa_resource：裸 host",
+      "ok": true,
+      "got": "False",
+      "want": "False"
+    },
+    {
+      "item": "完整串原样返回（不联网）",
+      "ok": true,
+      "got": "TCPIP0::192.0.2.50::inst0::INSTR",
+      "want": "TCPIP0::192.0.2.50::inst0::INSTR"
+    },
+    {
+      "item": "裸 host 但探测失败 → 指引式报错",
+      "ok": true,
+      "got": "RuntimeError: 地址 '192.0.2.77' 上未探测到可识别的仪器（VXI-11 inst0 / HiSLIP / raw5025 / raw5555 全失败）。请确认设备在线、该地址正确，或改用 instr_discover 重新发现。（探测层异常：RuntimeError: offline-stub）",
+      "want": "含 ('未探测到可识别的仪器',)"
+    },
+    {
+      "item": "裸 host 身份不符 → 拒绝",
+      "ok": true,
+      "got": "RuntimeError: 地址 '192.0.2.77' 上的设备 *IDN? = 'Siglent Technologies,SDG2122X,SDG2XFBX800780,2.01.01.38R4'，不是目标设备（Siglent SDS800X HD 示波器，期望含 'SDS'）——拒绝写入，以免误操作别的仪器。",
+      "want": "含 ('不是目标设备',)"
+    },
+    {
+      "item": "裸 host 身份相符 → 规范化",
+      "ok": true,
+      "got": "TCPIP0::192.0.2.77::inst0::INSTR",
+      "want": "TCPIP0::192.0.2.77::inst0::INSTR"
+    },
+    {
+      "item": "save_config 写入",
+      "ok": true,
+      "got": "TCPIP0::192.0.2.77::inst0::INSTR",
+      "want": "TCPIP0::192.0.2.77::inst0::INSTR"
+    },
+    {
+      "item": "known_resources 只含设备类",
+      "ok": true,
+      "got": "True",
+      "want": "True"
+    },
+    {
+      "item": "clear_config 删除",
+      "ok": true,
+      "got": "False",
+      "want": "False"
+    },
+    {
+      "item": "非法 kind 拒绝",
+      "ok": true,
+      "got": "ValueError: 未知设备类 'nope'，可选：sds, sdg, dmm, dho, psu",
+      "want": "含 ('未知设备类',)"
+    }
+  ]
+}

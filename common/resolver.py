@@ -117,21 +117,98 @@ def known_resources() -> dict[str, str]:
     return out
 
 
+def is_visa_resource(value: str) -> bool:
+    """粗略判断是否是完整 VISA 资源串（含 `::`）。
+
+    覆盖 TCPIP/USB/ASRL/GPIB 以及 `visa://<gw>/TCPIP0::…` 别名形式——
+    这些形态只有 VISA 解析器才认得全，**不要自己拼**：协议/端口/参数因设备而异
+    （例如 DH1766 只认 raw 5025、DHO 只认 5555、SDS/SDG/DMM 走 VXI-11 inst0、
+    USB 还要 vid/pid/serial），拼错一个字段就是"对未知设备发 SCPI"。
+    """
+    return "::" in (value or "")
+
+
+def canonicalize(kind: str, value: str) -> str:
+    """把用户写的地址规范化为完整 VISA 资源串（**唯一允许"拼接"的入口**）。
+
+    - 已是 VISA 资源串（含 `::`）→ 原样返回，不联网、不改写；
+    - 裸主机名 / IP（如 `192.168.31.220`、`A-34461A-00000.local`）→
+      ① 先看上次成功缓存里是否已有指向该 host 的资源（命中即用，不联网）；
+      ② 否则按 LAN 多协议逐个探测（VXI-11 inst0 → HiSLIP → raw5025 → raw5555），
+         命中后再用 `*IDN?` 核对设备类；
+      全失败抛 RuntimeError（附可执行指引）。
+
+    探测/校验都通过才返回——即"拼接"结果必须经仪器自证身份。
+    """
+    value = (value or "").strip()
+    if not value:
+        raise ValueError("地址不能为空")
+    if kind not in DEVICE_KINDS:
+        raise ValueError(f"未知设备类 {kind!r}，可选：{', '.join(DEVICE_KINDS)}")
+    if is_visa_resource(value):
+        return value
+    token, label, _env = DEVICE_KINDS[kind]
+    host = value
+
+    # ① 缓存快路径：已知资源串里含该 host（不联网）
+    cached = _load_json(CACHE_FILE).get(kind)
+    if isinstance(cached, str) and host in cached:
+        return cached
+
+    # ② 联网探测（只读 *IDN?）
+    from .discovery import identify_lan
+
+    probe_err = None
+    try:
+        hit = identify_lan(host)
+    except Exception as e:  # 探测层异常不直接透出，转成可执行指引
+        hit, probe_err = None, f"{type(e).__name__}: {e}"
+    if not hit:
+        raise RuntimeError(
+            f"地址 {host!r} 上未探测到可识别的仪器（VXI-11 inst0 / HiSLIP / "
+            f"raw5025 / raw5555 全失败）。请确认设备在线、该地址正确，"
+            f"或改用 instr_discover 重新发现。"
+            + (f"（探测层异常：{probe_err}）" if probe_err else "")
+        )
+    res, idn = hit
+    if token.upper() not in (idn or "").upper():
+        raise RuntimeError(
+            f"地址 {host!r} 上的设备 *IDN? = {idn!r}，不是目标设备"
+            f"（{label}，期望含 {token!r}）——拒绝写入，以免误操作别的仪器。"
+        )
+    return res
+
+
 def save_config(kind: str, resource: str) -> Path:
     """把某类设备的地址写进**用户配置文件**（本机专用，不入库）。
 
-    配置文件优先级高于缓存与自动发现，适合"这套仪器在本机的固定/默认地址"；
-    保留文件里已有的其它键与注释字段（只增改目标键）。
+    值可以是完整 VISA 资源串，也可以是裸 host/IP——后者会先经 `canonicalize()`
+    探测协议并核对 `*IDN?`，**只把规范化后的串落盘**（避免以后每次调用都重新探测，
+    也避免把"半截地址"留在配置里）。保留文件里已有的其它键与说明字段。
     """
     if kind not in DEVICE_KINDS:
         raise ValueError(f"未知设备类 {kind!r}，可选：{', '.join(DEVICE_KINDS)}")
     if not resource or not resource.strip():
         raise ValueError("resource 不能为空")
+    res = canonicalize(kind, resource)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     data = _load_json(CONFIG_FILE)
-    data[kind] = resource.strip()
+    data[kind] = res
     _write_config(data)
     return CONFIG_FILE
+
+
+def autofill_config(kinds: list[str] | None = None) -> dict[str, str]:
+    """把解析层**已知**地址（缓存里 instr_discover 发现的结果）固化进配置文件。
+
+    用于"设备都开着，把当前这套地址固定下来"：不联网，只搬运缓存里已有的条目。
+    """
+    cache = {k: v for k, v in _load_json(CACHE_FILE).items()
+             if k in DEVICE_KINDS and isinstance(v, str)}
+    picked = {k: v for k, v in cache.items() if not kinds or k in kinds}
+    for kind, res in picked.items():
+        save_config(kind, res)
+    return picked
 
 
 def clear_config(kind: str) -> Path:
@@ -201,13 +278,21 @@ def resolve(kind: str, resource: Optional[str] = None) -> str:
 
     env = os.environ.get(env_name)
     if env and env.strip():
-        return env.strip()
+        return canonicalize(kind, env.strip())
     cfg = _load_json(CONFIG_FILE).get(kind)
     if isinstance(cfg, str) and cfg.strip():
-        return cfg.strip()
+        res = canonicalize(kind, cfg.strip())
+        if res != cfg.strip():
+            # 自愈：配置里写的是裸 host/IP，探测出协议后把完整 VISA 串写回去，
+            # 免得每次调用都重新探测（探测本身要连设备，只读 *IDN?）。
+            try:
+                save_config(kind, res)
+            except Exception:
+                pass
+        return res
     cached = _load_json(CACHE_FILE).get(kind)
     if isinstance(cached, str) and cached.strip():
-        return cached.strip()
+        return canonicalize(kind, cached.strip())
 
     try:
         from .discovery import find_device

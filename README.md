@@ -96,10 +96,27 @@ MCP 专用工具的 `resource` 参数**默认省略**：server 端按
 这套仪器在你机器上的地址可以写进配置文件（**本机专用，不入库**：
 `%LOCALAPPDATA%\instrumentControl\devices.json`）；不配也能用（自动发现 + 缓存）。
 
+**值的形态：一律是「完整 VISA 资源串」**——TCPIP / USB / 串口 / GPIB 都一样，
+不用区分传输方式，也不要自己拼 `IP:端口`：
+
+```
+TCPIP0::<host>::inst0::INSTR        # VXI-11（SDS/SDG/34465A）
+TCPIP0::<host>::5555::SOCKET        # RIGOL raw（DHO）
+TCPIP0::<host>::5025::SOCKET        # 大华 raw（DH1766）
+USB0::0x0957::0xA007::<serial>::INSTR   # USB TMC（DH1766 也可走这条）
+ASRL5::INSTR                        # 串口（编号会漂移）
+```
+
+> 为什么不允许手拼：协议/端口/参数因设备而异（DH1766 只认 raw 5025、DHO 只认 5555、
+> SDS/SDG/DMM 走 inst0、USB 还需 vid/pid/serial，另有 `visa://<gw>/…` 别名与 mDNS 名），
+> 拼错一个字段就是"对未知设备发 SCPI"。**拼接只发生在两处**：发现时的候选生成、
+> 以及下面这个"裸 host 规范化"入口——两处都必须经 `*IDN?` 校验才落库。
+
 ```bash
 python mcp_instruments/config_cli.py show                 # 看当前解析链与来源（不连设备）
-python mcp_instruments/config_cli.py init                 # 生成模板（不含真实地址）
-python mcp_instruments/config_cli.py set sds "TCPIP0::<ip>::inst0::INSTR"
+python mcp_instruments/config_cli.py set sds "TCPIP0::<host>::inst0::INSTR"   # 完整串：直接写
+python mcp_instruments/config_cli.py set sds 192.168.31.220                   # 裸 host：自动探测协议+校验身份后写入规范串
+python mcp_instruments/config_cli.py autofill             # 把 instr_discover 的发现结果固化成配置
 python mcp_instruments/config_cli.py clear sds            # 删条目 → 回落自动发现
 ```
 

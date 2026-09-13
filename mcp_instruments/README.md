@@ -78,19 +78,26 @@ DH1766 工具每次调用收尾自动补发 `SYST:LOC` 归还面板控制权—�
 | `psu` | DH1766 三路电源 | `INSTRUMENT_PSU_RES` | `DH1766` |
 
 配置/缓存目录：`%LOCALAPPDATA%\instrumentControl\`（非 Windows 退 `XDG_CACHE_HOME` / `~/.cache`）。
-`devices.json` 示例：
+配置值**一律是完整 VISA 资源串**（TCPIP / USB / ASRL / GPIB 同一形态，不区分传输方式）：
 
 ```json
-{ "sds": "TCPIP0::<sds-ip>::inst0::INSTR",
-  "psu": "TCPIP0::<psu-ip>::5025::SOCKET" }
+{ "sds": "TCPIP0::<host>::inst0::INSTR",
+  "dho": "TCPIP0::<host>::5555::SOCKET",
+  "psu": "USB0::0x0957::0xA007::<serial>::INSTR" }
 ```
 
-维护方式（CLI 只读写本机文件，**不连设备**）：
+> **不要自己拼 `IP:端口`**：协议/端口/参数因设备而异（DH1766 只认 raw 5025、
+> DHO 只认 5555、SDS/SDG/DMM 走 inst0、USB 还需 vid/pid/serial）。需要从裸 host 起时，
+> 用下面的 `set <kind> <host>`——它先探测协议再核对 `*IDN?`，只把规范串落盘。
+
+维护方式（CLI 只读写本机文件；`set <host>` 形式会做一次只读探测，其余命令不连设备）：
 
 ```bash
 python mcp_instruments/config_cli.py show              # 当前解析链与来源
 python mcp_instruments/config_cli.py init [--force]    # 生成模板
-python mcp_instruments/config_cli.py set sds "TCPIP0::<ip>::inst0::INSTR"
+python mcp_instruments/config_cli.py set sds "TCPIP0::<host>::inst0::INSTR"   # 完整串：直接写
+python mcp_instruments/config_cli.py set sds 192.168.31.220                   # 裸 host：探测+校验后写规范串
+python mcp_instruments/config_cli.py autofill [kind…]  # 把发现结果固化成配置（不联网）
 python mcp_instruments/config_cli.py clear sds         # 删除条目 → 回落自动发现
 ```
 

@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -24,6 +25,7 @@ sys.path.insert(0, str(ROOT))
 
 from common.resolver import (  # noqa: E402
     CACHE_FILE,
+    autofill_config,
     CONFIG_DIR,
     CONFIG_FILE,
     DEVICE_KINDS,
@@ -43,8 +45,6 @@ def _write_template(force: bool) -> int:
         return 1
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     tmp = CONFIG_FILE.with_suffix(".json.tmp")
-    import json
-
     tmp.write_text(json.dumps(config_template(), ensure_ascii=False, indent=2),
                    encoding="utf-8")
     tmp.replace(CONFIG_FILE)
@@ -75,8 +75,31 @@ def main(argv: list[str]) -> int:
         if len(argv) < 3:
             print(USAGE)
             return 2
-        p = save_config(argv[1], argv[2])
-        print(f"已写入 {argv[1]} = {argv[2]}\n  -> {p}")
+        kind, value = argv[1], argv[2]
+        # 裸 host/IP 会先探测协议并核对 *IDN?，只把完整 VISA 串落盘
+        try:
+            p = save_config(kind, value)
+        except Exception as e:
+            print(f"写入失败：{type(e).__name__}: {e}")
+            return 1
+        saved = json.loads(p.read_text(encoding="utf-8")).get(kind)
+        if saved != value:
+            print(f"已写入 {kind}：{value}  →  规范化后 {saved}")
+        else:
+            print(f"已写入 {kind} = {saved}")
+        print(f"  -> {p}")
+        return 0
+
+    if cmd == "autofill":
+        # 把解析层已发现/已知的地址固化进配置文件（不联网，只搬缓存）
+        kinds = [a for a in argv[1:] if a in DEVICE_KINDS] or None
+        picked = autofill_config(kinds)
+        if not picked:
+            print("缓存里没有可固化的地址——先跑 instr_discover 发现设备，再执行本命令。")
+            return 1
+        for k, v in picked.items():
+            print(f"已固化 {k} = {v}")
+        print(f"  -> {CONFIG_FILE}")
         return 0
 
     if cmd == "clear":

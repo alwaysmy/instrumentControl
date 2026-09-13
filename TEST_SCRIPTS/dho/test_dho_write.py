@@ -1,4 +1,12 @@
-"""DHO 写操作闭环验证：通道/时基/触发 备份→改→回读→恢复（不碰复位/输出）。"""
+"""DHO 写操作闭环验证：通道/时基/触发 备份→改→回读→恢复（不碰复位/输出）。
+
+安全约定：
+    - 写前备份、写后回读比对、结束恢复（AGENTS.md 铁律）；
+    - **try/finally 兜底**：任何异常/中断路径都会执行恢复动作，
+      避免把设备留在改后状态（此前恢复只在正常路径执行，中途报错即残留）；
+    - 不碰复位类命令与输出开关。
+输出：TEST_DATA/dho/dho_write_verify_<stamp>.json
+"""
 import json
 import sys
 import time
@@ -34,45 +42,57 @@ def main() -> int:
         }
         rec("备份", True, json.dumps(bk, default=str))
 
-        # ---- 通道垂直 ----
-        s.channel_scale(2, 0.1)
-        time.sleep(0.3)
-        got = s.channel_scale(2)
-        rec("CH2 SCALe 写 0.1", abs((got or 0) - 0.1) < 1e-9, f"回读 {got}")
+        try:
+            # ---- 通道垂直 ----
+            s.channel_scale(2, 0.1)
+            time.sleep(0.3)
+            got = s.channel_scale(2)
+            rec("CH2 SCALe 写 0.1", abs((got or 0) - 0.1) < 1e-9, f"回读 {got}")
 
-        s.channel_coupling(2, "AC")
-        time.sleep(0.3)
-        rec("CH2 COUPling AC", s.channel_coupling(2) == "AC", s.channel_coupling(2))
+            s.channel_coupling(2, "AC")
+            time.sleep(0.3)
+            rec("CH2 COUPling AC", s.channel_coupling(2) == "AC", s.channel_coupling(2))
 
-        # ---- 时基 ----
-        s.timebase_scale(1e-4)
-        time.sleep(0.3)
-        got_tb = s.timebase_scale()
-        rec("TIMebase SCALe 写 100us", abs((got_tb or 0) - 1e-4) < 1e-12, f"回读 {got_tb}")
+            # ---- 时基 ----
+            s.timebase_scale(1e-4)
+            time.sleep(0.3)
+            got_tb = s.timebase_scale()
+            rec("TIMebase SCALe 写 100us", abs((got_tb or 0) - 1e-4) < 1e-12, f"回读 {got_tb}")
 
-        # ---- 触发电平 ----
-        s.edge_level(0.5)
-        time.sleep(0.3)
-        got_lv = s.edge_level()
-        rec("EDGE LEVel 写 0.5", abs((got_lv or 0) - 0.5) < 1e-6, f"回读 {got_lv}")
+            # ---- 触发电平 ----
+            s.edge_level(0.5)
+            time.sleep(0.3)
+            got_lv = s.edge_level()
+            rec("EDGE LEVel 写 0.5", abs((got_lv or 0) - 0.5) < 1e-6, f"回读 {got_lv}")
 
-        # ---- 采集类型 ----
-        s.acquire_type("HRESolution")
-        time.sleep(0.3)
-        rec("ACQuire TYPE HRES", (s.acquire_type() or "").startswith("HRES"), s.acquire_type())
+            # ---- 采集类型 ----
+            s.acquire_type("HRESolution")
+            time.sleep(0.3)
+            rec("ACQuire TYPE HRES", (s.acquire_type() or "").startswith("HRES"), s.acquire_type())
+        finally:
+            # ---- 恢复（异常/中断路径也必须执行） ----
+            restore = [
+                ("CH2 SCALe", lambda: s.channel_scale(2, bk["ch2_scale"])),
+                ("CH2 OFST", lambda: s.channel_offset(2, bk["ch2_offset"])),
+                ("CH2 COUP", lambda: s.channel_coupling(2, bk["ch2_coup"])),
+                ("TDIV", lambda: s.timebase_scale(bk["tb"])),
+                ("EDGE LEV", lambda: s.edge_level(bk["edge_lev"])),
+            ]
+            if bk["ch2_disp"] is False:
+                restore.append(("CH2 DISP", lambda: s.channel_display(2, False)))
+            if bk["acq_type"]:
+                restore.append(("ACQ TYPE", lambda: s.acquire_type(bk["acq_type"])))
 
-        # ---- 恢复 ----
-        s.channel_scale(2, bk["ch2_scale"])
-        s.channel_offset(2, bk["ch2_offset"])
-        s.channel_coupling(2, bk["ch2_coup"])
-        if bk["ch2_disp"] is False:
-            s.channel_display(2, False)
-        s.timebase_scale(bk["tb"])
-        s.edge_level(bk["edge_lev"])
-        if bk["acq_type"]:
-            s.acquire_type(bk["acq_type"])
-        time.sleep(0.5)
+            errs = []
+            for name, do in restore:
+                try:
+                    do()
+                except Exception as e:  # 单项失败不阻断其余恢复，但必须留痕
+                    errs.append(f"{name}: {type(e).__name__}: {e}")
+            time.sleep(0.5)
+            rec("恢复动作", not errs, "; ".join(errs) if errs else "全部成功")
 
+        # ---- 恢复比对 ----
         ok = (
             abs((s.channel_scale(2) or 0) - (bk["ch2_scale"] or 0)) < 1e-9
             and s.channel_coupling(2) == bk["ch2_coup"]

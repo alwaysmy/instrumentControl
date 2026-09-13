@@ -2,7 +2,15 @@
 
 流程：关机前留痕 -> 发送关机命令 -> 轮询端口验证离线 -> 留痕。
 注意：关机后需手动开机（设备无网络唤醒验证）。
+
+⚠ 破坏性：设备将离线且必须**人工到现场开机**。故本脚本必须显式传 `--yes`
+才执行（与 MCP 工具 `sds_shutdown(confirm=True)` 的门槛对齐）；
+不带 `--yes` 只打印提示并退出，不会发出任何命令。
+
+用法：
+    python TEST_SCRIPTS/common/test_sds_shutdown.py --yes
 """
+import argparse
 import json
 import socket
 import sys
@@ -29,6 +37,15 @@ def port_open(ip: str, port: int, timeout: float = 1.0) -> bool:
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser(description="SDS 远程关机测试（破坏性）")
+    ap.add_argument("--yes", action="store_true",
+                    help="确认执行关机：设备将离线，需人工现场开机")
+    args = ap.parse_args()
+    if not args.yes:
+        print("拒绝执行：这是关机测试（设备离线后必须人工现场开机）。"
+              "确认无误请显式加 --yes。")
+        return 2
+
     out = {"timestamp": datetime.now().isoformat(timespec="seconds"), "steps": []}
 
     scope = SDS(f"TCPIP0::{HOST}::inst0::INSTR")

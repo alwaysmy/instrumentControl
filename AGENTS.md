@@ -97,6 +97,9 @@ AI/Agent 操作仪器必须遵守以下规范。
   （实现在 `common/resolver.py`）
 - 冒烟脚本：`TEST_SCRIPTS/common/test_discovery.py`(T1~T5)、
   `three_libs_smoke.py`、`libs_full_verify.py`、`waveform_matrix.py`(SDG→SDS 闭环)
+- **五台设备全链路只读验收**：`TEST_SCRIPTS/common/verify_all_devices.py`
+  （发现→解析→身份校验→快照/测量，全程零状态变更；真机跑一遍约 1 分钟，留痕到
+  `TEST_DATA/common/verify_all_devices_*.json`）
 - 命令审计器：`TEST_SCRIPTS/common/audit_all_commands.py`（新增命令后必跑，
   防猜测命令回归）
 - 审计报告：`docs/command_audit_20260823.md`（零猜测命令结论）

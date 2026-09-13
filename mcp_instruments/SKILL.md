@@ -112,15 +112,29 @@ DHO 示波器 → dho_status / dho_measure_item
 ### 禁止远程锁定命令（面板保护）
 
 **不要发送远程锁定类命令**：`:SYSTem:REMote ON`（SDS 实测：禁用触摸屏、前面板
-按键和其他外设，界面显示 "Remote"）以及任何 `SYST:REM` / `SYST:LOCK` 形式。
+按键和其他外设，界面显示 "Remote"）、串口/GPIB 通用的 `SYST:REM` / `SYST:LOCK`、
+以及 **DH1766 的 `SYST:RWL`**（面板 Lock 键不可切回本地，需 `SYST:LOC` 恢复）
+和标准形式 `:SYST:COMM:RLST <state>`（RWL 值同样锁面板）。
 
 理由：实验台是共享的，锁定面板会妨碍人工操作（现场调试/检查往往需要直接按面板）。
 SDS 的远程锁定**不是连接自动触发的**，是显式命令——所以只要不发就永远不锁
 （2026-09-09 实测：连接+查询不改变 REM 状态；残留 ON 多来自 Web/noVNC 控制界面）。
 
 - MCP `instr_write` 已黑名单拦截（`error_type=forbidden`，confirm=True 也不放行）；
-- 查询 `SYST:REM?` 仍可用——用于诊断面板是否被其他工具锁定；
+  2026-09-13 补齐 `SYST:RWL` / `:SYST:COMM:RLST` 缺口；
+- **纯查询放行**（`SYST:REM?`/`SYST:COMM:RLST?`）——纯查询不改变锁定状态，用于诊断；
 - 若发现面板已被锁（`SYST:REM?` 返回 ON），提示用户用面板或 Web 界面退出远程模式。
+
+### DH1766 特例："一连就进远程模式"（2026-09-13 实测）
+
+DH1766 与 SDS 不同：**任何远程会话都会把电源置为 `REM`**——新建会话第一条命令查
+`SYST:COMM:RLST?` 即返回 `REM`（手册写的 `SYST:COMM:RLST:STAT?` 在本机 V0.1.4.3
+**无响应**，不是"返回空串"）。这是设备行为，不是锁定命令被误发。
+
+- 发 `SYST:LOC` 立即回到 `LOC`（只交还面板控制权，**不影响输出/电压/模式**）；
+- MCP 电源工具已内置：每次调用收尾自动补发 `SYST:LOC`（`server.py::_psu_close`），
+  所以 AI 用过之后现场面板仍可用；
+- 用 `psu_status` 前不必纠结 REM，它会如实回报当前模式（TRAC/SERI/PARA/NORM）。
 
 ## 四、典型工作流
 

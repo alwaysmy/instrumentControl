@@ -1,6 +1,7 @@
 # AI 仪器控制工具 — 使用与安全手册
 
 日期：2026-08-23
+最近更新：2026-09-13（文档漂移审计修正，见 `docs/doc_drift_audit_20260913.md`）
 适用：instrumentControl 全部设备库（AI/Agent 操作场景）
 
 ## 一、设备清单与连接
@@ -9,9 +10,12 @@
 |---|---|---|---|
 | DH1766A-1 电源 | dh1766_control | find_dh1766() | USB 或 TCPIP0::192.168.31.144::5025::SOCKET |
 | RIGOL DHO924S | dho_control | find_dho() | TCPIP0::192.168.31.146::5555::SOCKET |
-| Siglent SDS824X HD | sds_control | find_sds() | VXI-11 inst0 |
-| Siglent SDG2122X | sdg_control | find_sdg() | VXI-11 inst0 |
-| Keysight 34465A | keysight_3446x | find_dmm() | VXI-11 inst0 |
+| Siglent SDS824X HD | sds_control | find_sds() | TCPIP0::192.168.31.220::inst0::INSTR |
+| Siglent SDG2122X | sdg_control | find_sdg() | TCPIP0::192.168.31.206::inst0::INSTR |
+| Keysight 34465A | keysight_3446x | find_dmm() | TCPIP0::192.168.31.123::inst0::INSTR |
+
+> IP 为 MCP `server.py` 内置默认资源（`SDS_RES`/`SDG_RES`/`DMM_RES`/`DHO_RES`/`PSU_RES`）；
+> 地址变动后以 `instr_discover` 实测结果为准。
 
 统一发现入口 `common.find_device(idn_contains, resource, hosts, allow_scan, cidr)`：
 显式 resource → hosts 自动选协议 → VISA 列表 → CIDR 网段扫描（默认关）。
@@ -24,7 +28,13 @@
 3. **写序列前 drain 错误队列**（`sds_control.sds.drain_errors`），滞后报错会污染判定；
 4. **输出/信号类操作需显式授权场景**：SDG 输出开关、电源输出开关；
 5. **结束恢复**：测试脚本必须 try/finally 恢复被改设定并关闭输出；
-6. **留痕**：所有实测输出 JSON 到 TEST_DATA/<device>/，时间戳命名。
+6. **留痕**：所有实测输出 JSON 到 TEST_DATA/<device>/，时间戳命名；
+7. **输出开关必须声明当前状态**（仅校验不设置，不符立即拒绝并回传实际值）：
+   SDG `set_output(ch, on, expect_load)`（expect_load 必填：HZ/50）、
+   电源 `set_output(ch, state, expect_mode)`（expect_mode 必填：NORM/TRAC/SERI/PARA）；
+8. **禁止远程锁定类命令**：`SYSTem:REMote ON`（SDS 会禁用触摸屏/面板按键）及
+   `SYST:REM`/`SYST:LOCK` 类——妨碍现场人工操作；MCP `instr_write` 已黑名单拦截，
+   查询 `SYST:REM?` 保留（诊断用）。DH1766 的远程模式语义不同，见下文 dh1766 节。
 
 ## 三、各库核心 API
 
@@ -34,7 +44,7 @@ with SDS(resource) as scope:
     scope.auto_scale(4)                    # 修触发+自动定标（推荐第一步）
     vpp = scope.measure_simple("PKPK", "C4")   # SIMPLE 模式单通道测量
     ph = scope.measure_phase("C2", "C1")       # ADVanced 双通道相位（度）
-    wf = ...                               # 波形读取（DESC 布局待专研）
+    wf = scope.get_waveform(4, points=50000)   # 波形：电压 + 时间轴（DESC 解析正确）
     png = scope.screenshot_png(path)       # 截图供视觉判断
 ```
 测量项枚举 MEAS_TYPES：PKPK/MAX/MIN/RMS/FREQ/PER/PWID/DUTY...（SDS 缩写表）；
@@ -50,6 +60,10 @@ with SDS(resource) as scope:
 - 双通道相位 `measure_phase(src_a, src_b)`：PHA = B 相对 A 的相位（度，
   实测交换 A/B 得互补角）；未知命令查询无响应会超时（如 PAVA?/MEAS:FREQ?），
   未知写入可能被静默吞掉（MEAD），一律先 drain 再逐条查错
+- 波形读取 `get_waveform(ch, points)`：DESC 解析**正确**（2026-09-09 澄清）——
+  interval 与 `ACQ:SRAT?` 一致、FFT 主频与设备硬件测量吻合；此前"DESC 布局不符/读出全零"
+  是误判（无信号时读取 + 用朴素过零计数验证调幅信号，详见 AGENTS.md §五）。
+  `sds_get_waveform` 已暴露为 MCP 工具；分析频率用 FFT/自相关
 - 触发源挂空/电平过高 = 屏幕无波形的头号根因
 
 ### 示波器调试标准流程（先读后写，截图辅助）
@@ -93,7 +107,7 @@ scope.auto_scale(4, use_autoset=True)   # 显式：:AUToset 一步定标
 ### sdg_control（信号源）
 ```python
 gen.set_basic_wave(2, WVTP="SINE", FRQ="1000HZ", AMP="2V", OFST="0V")
-gen.set_output(2, True)   # ⚠ 真实信号输出
+gen.set_output(2, True, "HZ")   # ⚠ 真实信号输出；expect_load 必填（HZ/50，仅校验）
 cfg = gen.basic_wave(2)   # 整体查询
 ```
 
@@ -107,7 +121,22 @@ nplc = dmm.get_nplc()
 语法为冒号嵌套 `:CONF:VOLT:DC`（空格分隔会 -102）。
 
 ### dho_control / dh1766_control
-见各自 docstring 与 EXPERIENCE.md。DHO 全功能验证待设备空闲。
+见各自 docstring 与 EXPERIENCE.md。
+DHO 读/写/波形读取已实测留痕（2026-08-24）：`TEST_DATA/dho/dho_first_verify_*.json`
+（*IDN? / snapshot / get_waveform CH1）、`dho_write_verify_*.json`（通道/时基/触发写入+恢复比对，
+其中 CH2 SCALe 被拒属预期——RIGOL 未开启通道写 SCALe 报 -200，先 `DISPlay ON`）。
+原"DHO924S 全功能验证待设备空闲"——**已过时**（2026-09-13 更新）。
+
+DH1766 远程模式（2026-09-13 实测，固件 V0.1.4.3）：
+- **任何远程会话都会把电源置为 REM（远程模式）**：新建会话的第一条命令查询
+  `SYST:COMM:RLST?` 即返回 `REM`（即用户观察到的"一连就进远程模式/疑似被锁"）；
+- 手册写法 `SYST:COMM:RLST:STAT?` 在本机**无响应（超时）**——此前文档记的"返回空串"不准确；
+- 发 `SYST:LOC` 后立即回到 `LOC`，把面板控制权交还现场（**不影响输出/设定**）；
+  MCP 的 DH1766 工具每次调用收尾自动补发一次（`server.py::_psu_close`）；
+- **REM（远程模式）与手册的"锁定 RWL"是两个概念**：RWL 才是面板 Lock 键不可切回、
+  需 `SYST:LOC` 恢复的远程锁定；REM 只是外控会话状态。
+- 留痕：`TEST_SCRIPTS/dh1766/psu_remote_lock_probe.py` +
+  `TEST_DATA/dh1766/psu_lock_probe_20260913_*.json`。
 
 ## 四、跨设备闭环范例
 
@@ -118,8 +147,14 @@ TEST_SCRIPTS/common/waveform_matrix.py：SDG CH2→SDS C4，
 ## 五、已知问题/待办
 
 1. SDS800X HD 波形读取 DESC 结构布局与手册示例不符（读出全零），待专研该型号布局；
+   ——（2026-09-13 已更新：**此判断已推翻**。DESC 解析正确，原"读出全零"源于①无信号时读取、
+   ②用朴素过零计数验证调幅信号；FFT 交叉验证通过，`get_waveform` 已暴露为 MCP 工具
+   `sds_get_waveform`，详见 AGENTS.md §五）
 2. NOISE 波形无稳定 Vpp/Freq，属物理特性；
 3. DHO924S 全功能验证待空闲；
+   ——（2026-09-13 已更新：**已完成**。2026-08-24 留痕 `TEST_DATA/dho/dho_first_verify_*.json`、
+   `dho_write_verify_*.json`、`dho_ch1_wave_*.csv`，覆盖 *IDN?/snapshot/波形读取与通道·时基·
+   触发写入+恢复比对）
 4. dg832 skill/scripts 双副本同步问题。
 
 ## 六、审计与防回归

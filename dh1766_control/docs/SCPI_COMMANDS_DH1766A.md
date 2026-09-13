@@ -7,7 +7,8 @@
 > - USB 连接成功后可收发 SCPI；LAN 需配 IP、端口 5025（UDP/TCP Server）
 > - 上位机下发指令间隔 **≥100ms**；涉及通道切换 **≥300ms**；串并联（继电器机械动作）**≥500ms**
 > - 实测（固件 V0.1.4.3，2026-08-17，40/40 项验证通过）固件差异：
->   - `VOLT:MODE?` / `CURR:MODE?` / `INIT:DEL?` / `INIT:SOUR?` / `SYST:COMM:RLST:STAT?` 返回**空串**（手册按 V0.1.2.8 编写）；写命令正常
+>   - `VOLT:MODE?` / `CURR:MODE?` / `INIT:DEL?` / `INIT:SOUR?` 返回**空串**（手册按 V0.1.2.8 编写）；写命令正常
+>   - ~~`SYST:COMM:RLST:STAT?` 返回**空串**~~ →（2026-09-13 更正：该写法**无响应（超时）**，应改用 `SYST:COMM:RLST?`；且任何远程会话都会把电源置为 REM，发 `SYST:LOC` 交还面板控制权。详见 EXPERIENCE.md §3.1）
 >   - `*PSC 1` 写入后查询仍返回 0（上电清零策略不反映），写不报错
 >   - `*RST` 为设备软复位：约 3s 就绪，期间查询会收到开机横幅（如 `V0.1.4.3`）；复位后设定恢复出厂值（32V/32V/6V、3A/3A/3A、TIM=1s），使用前必须完整备份
 >   - 连续裸命令无间隔会导致响应错位，务必遵守上述最小间隔（驱动已内置）
@@ -19,8 +20,8 @@
 | `SYST:ERR?` | 读取错误信息（错误码表见手册页 21-22） |
 | `SYST:VERS?` | 查询软件版本号 |
 | `SYST:BEEP` | 蜂鸣器测试 |
-| `SYST:LOC` / `SYST:REM` / `SYST:RWL` | 本地 / 远程 / 远程锁定（Lock 键不可切回） |
-| `SYST:COMM:RLST:STAT?` | 查询工作模式：LOC/REM/RWL |
+| `SYST:LOC` / `SYST:REM` / `SYST:RWL` | 本地 / 远程 / 远程锁定（Lock 键不可切回）。⚠ `SYST:REM` 属远程锁定类，MCP `instr_write` 黑名单拦截；`SYST:LOC` 用于交还面板控制权 |
+| `SYST:COMM:RLST:STAT?` | 查询工作模式：LOC/REM/RWL —— ⚠ **本机 V0.1.4.3 实测无响应（超时）**，实际可用写法为 **`SYST:COMM:RLST?`**（2026-09-13 实测；任何远程会话均返回 `REM`，发 `SYST:LOC` 后返回 `LOC`） |
 
 ## 输出通道设定（4.2.3）
 

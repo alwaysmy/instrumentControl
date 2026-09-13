@@ -15,7 +15,7 @@
 | TRIGger | MODE / STATus / EDGE:SOUR/LEV/SLOP | ✓ |
 | MEASure:SIMPle | ITEM（51 项）/ SOURce / VALue / CLEar / MODE | ✓ |
 | MEASure:ADVanced | P<n> 开关 / SOURce1 / SOURce2 / TYPE / VALue / CLEar | ✓（PHA 实测） |
-| WAVeform | SOUR / PREamble / MAXPoint / STARt / POINt / WIDTh / DATA | ⚠ DESC 布局待专研 |
+| WAVeform | SOUR / PREamble / MAXPoint / STARt / POINt / WIDTh / DATA | ✓（2026-09-09 澄清：DESC 解析正确，interval 与 SRAT 一致、FFT 交叉验证） |
 | 截屏 | PRIN? BMP | ✓ |
 | SYSTem | ERR? / SHUTdown / REBoot | ✓ |
 
@@ -69,7 +69,7 @@
 
 | # | 问题 | 状态 |
 |---|---|---|
-| 20 | WAVeform PREamble DESC 布局与手册示例不符（读出全零） | 待专研该型号结构体 |
+| 20 | WAVeform PREamble DESC 布局与手册示例不符（读出全零） | 待专研该型号结构体 →（2026-09-13 已更新：**已澄清关闭**。DESC 解析正确；原"读出全零"源于①无信号时读取②用朴素过零计数验证调幅信号。FFT 交叉验证通过，`get_waveform` 已暴露为 MCP 工具 `sds_get_waveform`） |
 | 21 | 数字通道 D0-D15 波形读取 | 未实现 |
 
 ## 三、建议

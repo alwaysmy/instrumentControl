@@ -3,6 +3,7 @@
 实测环境：Windows 10 Pro + Python 3.11 + pyvisa 1.13（厂商 VISA `C:\Windows\system32\visa32.dll`）
 设备：北京大华 DH1766A-1，固件 V0.1.4.3，USB TMC：`USB0::0x0957::0xA007::100260004670::INSTR`
 实测日期：2026-08-17（全功能验证 40/40 PASS，留痕见 `TEST_DATA/dh1766/dh1766_full_*.json`）
+补充实测：2026-09-08（输出模式四态互斥）、2026-09-13（远程模式 REM / RLST 查询，见 §3.1）
 
 ## 1. Windows 平台访问约束（重要）
 
@@ -27,12 +28,36 @@
 |---|---|---|---|
 | `VOLT:MODE?` / `CURR:MODE?` | 返回 FIX\|LIST | 返回**空串** | 驱动返回 None，写正常 |
 | `INIT:DEL?` / `INIT:SOUR?` | 返回数值/枚举 | 返回**空串** | 驱动返回 None，写正常 |
-| `SYST:COMM:RLST:STAT?` | 返回 LOC/REM/RWL | 返回**空串** | 驱动返回 None |
+| `SYST:COMM:RLST:STAT?` | 返回 LOC/REM/RWL | 该形式**无响应（超时，非空串）**；正确查询为 `SYST:COMM:RLST?`（2026-09-13 更正，此前记"返回空串"不准确） | 库常量 `SYST_RLST` 已改为 `SYST:COMM:RLST?`，详见 §3.1 |
 | `*PSC 1` | 设置上电清零策略 | 写后查询仍 0 | 固件行为，写不报错即可 |
 | `OUTP:TIM:DATA 0` | 0 秒为关闭定时器（手册 4.2.8 第 9 条） | **写 0 被静默忽略**（保持原值、错误队列无报错）；写 1~999999 正常生效 | 固件 V0.1.4.3 无法用 SCPI 关闭定时器；定时功能开关（Off Timer On/Off）仅面板 3.11/3.9 节可操作 |
 | `APPL:OUT s1,s2,s3`（三路联动开关） | 速查表曾按对称性列出 | `APPL:OUT ...` 报 -113（命令头不存在）；`APPL:OUTP ...` 报 -200（查询专用不可写）——V0.1.4.3 无此命令 | 库内 `set_output_all` 改按单通道 `set_output` 循环 + 回读比对实现 |
 | `*RST` | 复位参数 | **设备软复位**：约 3s 就绪，期间查询返回开机横幅 `V0.1.4.3`；复位后设定回出厂值（32V/32V/6V、3A/3A/3A、TIM=1s） | 驱动内置 3s 等待；使用前必须完整备份 |
 | `*TST?` / `*WAI` | IEEE 488.2 必需 | 手册 4.2.10 未列出 | 未封装 |
+
+### 3.1 远程模式（REM）与 RLST 查询（2026-09-13 实测）
+
+**背景**：用户报告"远程一连上电源就疑似被锁"。只读探测（零写入）结论：
+
+| 项 | 实测结果 |
+|---|---|
+| `SYST:COMM:RLST:STAT?`（手册 4.2.1 写法） | **无响应 → 超时**（`VisaIOError`），并非"返回空串" |
+| `SYST:COMM:RLST?`（去掉 `:STAT`） | 正常返回 `LOC` / `REM` / `RWL` |
+| 新建远程会话后的首条查询 | 返回 **`REM`** —— **任何远程会话都会把电源置为远程模式** |
+| 写 `SYST:LOC` 后立即查询 | 返回 **`LOC`**；输出电压/电流设定与输出开关状态**均不变** |
+
+**处置**：
+- 库常量改为 `commands.py::SYST_RLST = "SYST:COMM:RLST?"`，`dh1766.py::rlstate()` docstring 同步；
+- MCP 每次 DH1766 工具调用收尾由 `_psu_close()`（`mcp_instruments/server.py`）补发一次
+  `SYST:LOC`，把面板控制权交还现场；
+- **概念区分**：REM 是"外控会话状态"（面板可能暂时不可操作，但并未锁定）；
+  RWL 才是手册所称的**远程锁定**（面板 Lock 键不可切回，需 `SYST:LOC` 恢复）。
+  不要把 REM 与"锁定"混为一谈。
+
+留痕：`TEST_SCRIPTS/dh1766/psu_remote_lock_probe.py` +
+`TEST_DATA/dh1766/psu_lock_probe_20260913_223848.json` / `_223927.json`。
+（同批快照 `TEST_DATA/dh1766/dh1766_20260913_224113.json` 显示该机当时处于 **TRAC** 模式，
+CH1 +11.99V / CH2 −11.99V —— 跟踪模式负压跟随，非故障。）
 
 ## 4. 时序规范（手册 4.1，实测必需）
 
@@ -83,6 +108,10 @@
 
 - **safe_mode**（`DH1766(client, safe_mode=True)`）：目标通道输出 ON 时拒绝改设定（电压/电流/OVP/OCP/模式），
   防带载误操作。输出开关本身不拦截。接入负载后必须启用。
+- **输出开关必须声明当前模式**（`set_output(ch, state, expect_mode)` /
+  `set_output_all(states, expect_mode)`）：expect_mode 取 NORM/TRAC/SERI/PARA，
+  **仅校验不设置**，与实际不符立即拒绝并回传当前模式（防拓扑误判：TRAC 下 CH2 跟随
+  CH1 输出负压、SERI/PARA 通道合并）。正确用法是先 `output_mode()` 查询再填。
 - **写操作备份-恢复模式**：备份→写→读确认→恢复→读确认，全过程留痕。
 - **`*RST` 必须经用户明确允许**（2026-08-17 约定）：
   - 复位恢复出厂设定（32V/32V/6V、3A/3A/3A、TIM=1s），恢复范围含**蜂鸣器状态**（手册 3.8/3.9 Default Setting 列表⑥）；

@@ -1,94 +1,112 @@
 # instrumentControl
 
-集合仪表设备控制项目：统一封装 VISA/SCPI 控制层，按设备分目录管理专用驱动与实测脚本。
+**给 AI/Agent 用的仪器控制 MCP**：把实验室仪器（示波器 ×2 / 信号源 / 万用表 / 电源 / 校准器）
+统一封装为 VISA-SCPI 驱动库，再由 `mcp_instruments/` 暴露成 MCP 工具，
+让 AI 能安全地发现设备、查询状态、自动定标、测量、截屏、上下电。
+
+设计前提：**AI 会看手册、会截图，也会犯错**。所以本项目把"命令不许猜、状态要回读、
+危险动作要装门"做成**代码里的硬约束**，而不是文档里的建议。
+
+```
+AI 客户端（DSH / Codex / Claude / opencode …，经 MCP stdio）
+        │
+        ▼
+mcp_instruments/server.py ─── 31 工具（28 专用 + 3 通用护栏），无状态连接+全局锁串行化
+        │
+        ├─▶ sds_control       Siglent SDS800X HD 示波器（波形/截图/测量/触发诊断/auto_scale）
+        ├─▶ sdg_control       Siglent SDG2000X 信号源（BSWV 键值对）
+        ├─▶ keysight_3446x    Keysight 34465A 万用表（CONF/MEAS/NPLC）
+        ├─▶ dho_control       RIGOL DHO800/900 示波器
+        ├─▶ dh1766_control    DH1766 三路可编程电源（唯一 pip 可安装，自带手册/经验文档）
+        └─▶ emoe_control      Emoe 校准器（骨架：仅发现 + `*IDN?`）
+                 ▲
+        common/ ─┴─ 统一发现 find_device（resource → hosts → VISA 列表 → CIDR 扫描）+ VisaClient
+```
+
+## 三条设计主线
+
+1. **命令零猜测**：每条 SCPI 都对照手册提取版落码；新增命令必过
+   `TEST_SCRIPTS/common/audit_all_commands.py` 审计。写操作固定三步
+   ——写入 → 查 `SYST:ERR?` → 回读比对（含容差比较与短格式/单位后缀兼容）。
+2. **安全门写进代码**（不只是文档约定）：
+   - 复位/存储覆写类命令零暴露（MCP 通用写黑名单拦截 `*RST/*SAV/*RCL/:SYST:RES|FACT|PRES`）；
+   - 远程锁定类命令禁止（`SYST:REM/SYST:RWL/SYST:LOCK`）——面板要留给现场操作；
+   - 输出类操作必须声明当前拓扑/负载并通过校验：
+     `sdg_output(..., expect_load)`、`psu_output(..., expect_mode)`、`psu_power_cycle(..., confirm)`；
+   - 电源切换输出模式前强制"输出全关"（继电器联动，库内无条件拦截）；
+   - 新设备**零代码接入**：`instr_query` / `instr_write` 通用护栏（写前 drain、写后查错、
+     自动回读、审计落盘、离线资源硬超时看门狗）。
+3. **实测留痕与可回溯**：所有实测输出落 `TEST_DATA/<device>/`（时间戳命名），
+   测试脚本放 `TEST_SCRIPTS/<device>/`，注入/回归/审计均有留痕文件。
+
+## 快速开始
+
+```bash
+pip install -r requirements.txt          # pyvisa（+ 运行 MCP 服务器需 mcp 包）
+pip install -e ./dh1766_control          # 电源库走 src 布局，可独立安装
+python mcp_instruments/server.py         # 启动 MCP 服务器（stdio）
+```
+
+MCP 注册（示例，路径按需替换）：
+
+```jsonc
+// DSH: ~/.dsh/cordis.patch.yml 的 insert 列表；zcode: ~/.zcode/cli/config.json
+{ "serverName": "instruments", "transport": "stdio",
+  "command": "C:/Users/<you>/AppData/Local/Programs/Python/Python311/python.exe",
+  "args": ["D:/MyProjects/AI/instrumentControl/mcp_instruments/server.py"] }
+```
+
+> Windows 下必须用 python **全路径**（WindowsApps 别名的 python 在部分客户端 spawn 时失败）。
+> AI 侧的使用指引见 skill `instrument-mcp`（工具选择决策树/参数语义/安全门/工作流）。
 
 ## 目录结构
 
-```
-instrumentControl/
-├── common/                 # 通用层：VISA 客户端 VisaClient + 统一发现 find_device
-├── mcp_instruments/        # MCP 服务器：19 工具（17 专用 + 2 通用护栏）统一暴露（server.py + SKILL.md）
-├── dh1766_control/         # DH1766 电源库（独立可安装：pip install -e ./dh1766_control）
-│   ├── src/dh1766_control/ # 驱动 + SCPI 命令常量 + VISA 客户端（自包含）
-│   └── docs/               # 手册提取 / 命令速查 / 经验总结
-├── dho_control/            # RIGOL DHO800/900 示波器库
-├── sds_control/            # Siglent SDS800X HD 示波器库
-├── sdg_control/            # Siglent SDG2000X 信号源库
-├── keysight_3446x/         # Keysight Truevolt 34465A 万用表库
-├── emoe_control/           # Emoe 校准器库（骨架版：仅发现 + *IDN?，编程手册未提供）
-├── dg832-control/          # DG832 独立嵌套 git 仓库（历史库，结构不同，勿混入主仓提交）
-├── devices/                # 设备专用文档（驱动已迁入 dh1766_control）
-├── archive/                # 历史版本归档（旧版驱动等，可回溯）
-├── TEST_SCRIPTS/           # 实测脚本（按设备分目录，输出带时间戳留痕）
-├── TEST_DATA/              # 实测留痕数据（JSON，时间戳命名）
-└── requirements.txt
-```
+| 目录 | 说明 |
+|---|---|
+| `common/` | VISA 客户端 `VisaClient` + 统一发现 `find_device`（多设备共用） |
+| `mcp_instruments/` | MCP 服务器（`server.py`）+ 工具清单（`README.md`）+ AI 使用指引（`SKILL.md`） |
+| `dh1766_control/` | 电源库（可 pip 安装；手册提取/命令速查/经验总结在 `docs/`） |
+| `dho_control/`、`sds_control/`、`sdg_control/`、`keysight_3446x/`、`emoe_control/` | 各设备库 + 手册提取 |
+| `TEST_SCRIPTS/` | 实测/验证脚本，按设备分目录 |
+| `TEST_DATA/` | 实测留痕（JSON/CSV/PNG，时间戳命名） |
+| `docs/` | 使用手册、命令审计报告、实测记录、设计文档 |
+| `dg832-control/` | DG832 信号源独立嵌套 git 仓库（历史库，勿混入主仓提交） |
+| `archive/` | 历史版本归档（旧版驱动，可回溯） |
 
-## 使用
+## 设备与资源
 
-```bash
-pip install -r requirements.txt
-pip install -e ./dh1766_control
+| 设备 | 库 | 资源 |
+|---|---|---|
+| DH1766A-1 三路电源 | `dh1766_control` | USB 或 `TCPIP0::192.168.31.144::5025::SOCKET` |
+| RIGOL DHO924S | `dho_control` | `TCPIP0::192.168.31.146::5555::SOCKET` |
+| Siglent SDS824X HD | `sds_control` | VXI-11 `192.168.31.220::inst0` |
+| Siglent SDG2122X | `sdg_control` | VXI-11 `192.168.31.206::inst0` |
+| Keysight 34465A | `keysight_3446x` | VXI-11 `192.168.31.123::inst0` |
+| Emoe 校准器 | `emoe_control` | 串口（ASRL 端口号会漂移，接入前先 `instr_discover`） |
 
-# DH1766 实测：识别 + 读电压电流 + 开关通道演示
-python TEST_SCRIPTS/dh1766/test_dh1766_read.py
+## 安全摘要（完整红线见 `AGENTS.md`）
 
-# DH1766 全功能验证：手册 4.2 全部指令读写（备份-恢复式）
-python TEST_SCRIPTS/dh1766/test_dh1766_full.py            # 空载时
-python TEST_SCRIPTS/dh1766/test_dh1766_full.py --safe     # 接入负载时（输出ON通道拒绝改设定）
-```
+- **输出/信号类操作**（`sdg_output`/`psu_output`/`psu_power_cycle`）开与关都需 `confirm=True`：
+  它代表"**已获得关断授权**"（用户本轮明确要求，或明确声明独占使用），不是"我知道要关"。
+- **操作电源前先查模式**（`psu_status`/`psu_mode`）：TRAC 下 CH2 跟随 CH1 输出**负压**是正常现象。
+- **禁止远程锁定与复位**：`SYST:REM/SYST:RWL/SYST:LOCK`、`*RST/:SYST:RES/:SYST:FACT` 一律不可用。
+- **测试脚本必须 `try/finally` 恢复**被改设定并关闭输出。
+- 示波器读数超屏会被钳制 → "有无波形/是否削顶"用**截图**判断，不要迷信设备测量值。
 
-## 实测记录
+## 扩展新设备
 
-- 2026-08-17：DH1766A-1 识别为 `USB0::0x0957::0xA007::100260004670::INSTR`，
-  `*IDN?` = `BJDH,DH1766A-1,0,V0.1.4.3`；三路读回电压/电流正常，输出开关命令验证通过。
-  注：该设备 VID=0x0957（Keysight ID），为国产仪器兼容 VISA 驱动常见做法，以 `*IDN?` 为准。
-- 2026-08-17：手册 4.2 全部指令集 40/40 读写验证通过（`test_dh1766_full.py`，留痕见
-  `TEST_DATA/dh1766/dh1766_full_*.json`）。全部写操作备份-恢复，设备设定与测试前一致。
-  实测发现的固件差异（V0.1.4.3 vs 手册基于的 V0.1.2.8）见 `dh1766_control/docs/EXPERIENCE.md`。
-- 2026-08-17：`dh1766_control` 库建立（src 布局，pip 可安装），DH1766 系列完整手册
-  （43 页）经 read-pdf 提取归档至 `dh1766_control/docs/`，供后续查阅核对。
-- 2026-08-23：`common/` 统一发现层上线（`find_device`：显式 resource → hosts 自动选协议 →
-  已有资源列表 → CIDR 网段扫描，`--allow-scan` 默认关）。实测要点：纯 VISA 扫 /24 需 510s，
-  加 TCP 端口预筛(111/4880/5025/5555) 后 ~8s；DH1766A-1 经网线可达
-  `TCPIP0::192.168.31.144::5025::SOCKET`（raw socket 会话必须配 `\n` 终止符）；
-  RIGOL DHO924S 示波器可达 `TCPIP0::192.168.31.146::5555::SOCKET`（Rigol SCPI raw 口）。
-  带载(CH1 ON 12V/0.31A)下显式 LAN 直连读取正常，CH1 保持 ON 未做开关动作。留痕见
-  `TEST_DATA/common/discovery_smoke_*.json` 与 `TEST_SCRIPTS/common/test_discovery.py`
-  （T1~T5 全 PASS，扫描同时识别电源+示波器且 IDN 过滤不误配）。
-- 2026-08-23：全网段探测（`TEST_SCRIPTS/common/probe_all.py`）新发现三台在线仪器：
-  Keysight 34465A 万用表(`.123`，VXI-11)、Siglent SDG2122X 信号源(`.206`，VXI-11)、
-  Siglent SDS824X HD 示波器(`.220`，VXI-11)。`dho_control` 库建立（DHO800/DHO900 系列
-  通用，波形 BYTE/WORD TMC 解析 + 电压换算 `(raw-YORigin-YREFerence)*YINCrement`），
-  手册提取至 `dho_control/docs/DHO800编程手册_output/`（418 页），hosts 直连验证通过。
-- 2026-08-23：三台新设备库完成（均含手册提取 + 只读冒烟实测）：
-  `sds_control`（SDS800X HD 系列，495 页手册，波形 PREamble 二进制协议+分片读取+电压换算
-  raw/code*vdiv-offset）、`sdg_control`（SDG2000X 系列，175 页 PG，BSWV 整查/键值写）、
-  `keysight_3446x`（Truevolt 583 页手册已下载提取，CONF/MEAS/NPLC/DATA:LAST）。
-  实测要点：SDS 全拼命令 ":ACQuire:MDEPth?" 不响应必须短形式 "ACQ:MDEP?"；SDS 响应带单位
-  后缀需剥离；SDS 查询回显头按前缀智能剥离；34465A DATA:LAST? 带 "VDC" 后缀。
-  留痕：TEST_DATA/common/three_libs_smoke_*.json。DHO924S 待设备空闲后做全功能验证。
-- 2026-08-25：`mcp_instruments/` MCP 服务器上线：五台仪器 17 工具统一暴露（无状态
-  连接→操作→关闭 + 全局锁串行化；复位类零暴露，关机/开输出 confirm=True 安全门；
-  错误统一 `{ok, error_type, error}` 四分类）。已注册 zcode 用户级 config
-  （`~/.zcode/cli/config.json` 的 `instruments`，新会话生效；使用指引 skill：instrument-mcp）。
-- 2026-08-26：`instr_discover` v3（串口探测：占用提示/空闲 IDN 后断开/驱动挂起 6s 硬超时；
-  VISA 先于 LAN 隔离代理干扰；fake-IP 网段污染降级 warning），实测发现串口新设备
-  EmoeCalibrator（ASRL31），建 `emoe_control` 骨架库（仅发现 + `*IDN?`，编程手册未提供）。
-- 2026-08-26/09-01：三轮审查修复（整体代码审查 17 项、MCP 专项、DH1766 远控文档建议：
-  `find_dh1766` 上次成功地址缓存 `.last_good_resource.json`、`power_cycle` 高层 API——
-  后者未暴露 MCP）。
-- 2026-09-03：MCP 增至 19 工具：新增 `instr_query`/`instr_write` 通用护栏（新设备零代码
-  接入——复位类黑名单 forbidden、通用写 confirm=True、写前 drain/写后 SYST:ERR?/自动
-  回读、审计落盘 `TEST_DATA/common/mcp_scpi_audit_*.jsonl`、离线资源硬超时看门狗）。
-  实测修复三缺陷：(a) `mcp.run()` 事件循环与后台线程 import pyvisa 死锁（冷进程首个
-  设备调用永久冻结）→ 重依赖 import 移主线程（<1s）；(b) `instr_discover` LAN 分支
-  `probe_alive`/`identify_lan` 未导入 NameError（存量 bug）→ 补导入+LAN 异常降级；
-  (c) 串口探测每线程各建 RM 原生崩溃（8 串口实测）→ 共享单例 RM。真机验证：SDG 整查/
-  等值写三步闭环（状态零变更）、串口新设备发现并零接入识别 EmoeR&D ADS127L11-DAQ-EV
-  （ASRL5；校准器 ASRL31 已离线/换号，串口号会漂移，接入先 `instr_discover` 重定位）。
+1. `instr_discover` 定位资源 → 2. `instr_query`（只读）跑通手册里的查询
+→ 3. `instr_write(confirm=True, readback_cmd=...)` 验证写命令 → 4. 命令有了出处后
+再落库（`commands.py` 常量 + 库方法 + 可选 MCP 工具），最后跑命令审计器防回归。
 
-## 安全模式（接入负载后使用）
+## 文档导航
 
-`DH1766(client, safe_mode=True)`：目标通道输出 ON 时拒绝修改电压/电流/OVP/OCP 及
-输出模式（TRAC/SERI/PARA，继电器联动）；输出开关本身不拦截。
+| 文档 | 内容 |
+|---|---|
+| `AGENTS.md` | **Agent 工作规范（铁律/安全红线/排查流程）——操作仪器前必读** |
+| `mcp_instruments/SKILL.md` | MCP 使用指引：工具选择决策树、参数语义、安全门、典型工作流 |
+| `mcp_instruments/README.md` | MCP 工具清单与安全约定 |
+| `docs/AI_OPERATION_GUIDE.md` | AI 操作手册：各库 API、固件特性、闭环范例 |
+| `docs/TEST_RECORDS.md` | **历轮实测记录（时间线）** |
+| `docs/command_audit_20260823.md` | SCPI 命令审计报告（零猜测命令结论） |
+| `dh1766_control/docs/EXPERIENCE.md` | DH1766 时序/固件差异/上电过渡态等实测经验 |

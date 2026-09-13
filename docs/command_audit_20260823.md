@@ -34,8 +34,13 @@
 
 - dho_control：RUN/STOP/SINGLE/TFORCE/AUTOSET、通道/时基/触发/采集/波形组
   （DHO924S 占用中；语法均有手册原文，风险仅为固件差异，参照 dh1766 经验）
+  ——（2026-09-13 已更新：已实测。2026-08-24 留痕 `TEST_DATA/dho/dho_first_verify_*.json`
+  与 `dho_write_verify_*.json`：*IDN?/snapshot/波形读取 + 通道·时基·触发写入+恢复比对）
 - sds_control WAV 组：PREamble DESC 结构体偏移与该机型不符（已知问题，
   待专研 SDS800X HD 专属布局）；DATA 返回空与采集状态关联
+  ——（2026-09-13 已更新：**该判断已推翻，问题关闭**。DESC 解析正确；
+  原"读出全零"源于无信号时读取 + 用朴素过零计数验证调幅信号，FFT 交叉验证通过，
+  详见 AGENTS.md §五）
 - keysight_3446x：SENS_VOLT_APER / SENS_COUNT / TRIG_SOURCE / STAT_PRES
   （标准 Keysight SCPI，同族 NPLC 已实测通）
 

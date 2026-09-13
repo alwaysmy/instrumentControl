@@ -64,8 +64,18 @@ AI/Agent 操作仪器必须遵守以下规范。
 - **信号源输出开关必须声明负载**（`set_output(ch, on, expect_load)` /
   MCP `sdg_output(..., expect_load)`）：HZ=高阻（AMP 即 Vpp）/ 50=50Ω
   （实际幅度减半），仅校验不设置，不符立即拒绝并回传实际值。
-- **禁止远程锁定命令**：`SYSTem:REMote ON`（SDS：禁用触摸屏/面板按键，界面显示 Remote）及 `SYST:REM`/`SYST:LOCK` 类——妨碍现场人工操作。
-  MCP `instr_write` 已黑名单拦截；查询 `SYST:REM?` 保留（诊断用）。
+- **禁止远程锁定命令**：`SYSTem:REMote ON`（SDS：禁用触摸屏/面板按键，界面显示 Remote）、
+  DH1766 的 `SYST:RWL`（面板 Lock 键不可切回本地，需 `SYST:LOC` 恢复）及
+  `SYST:REM`/`SYST:LOCK`/`:SYST:COMM:RLST <state>` 类——妨碍现场人工操作。
+  MCP `instr_write` 黑名单已全拦（2026-09-13 补 `SYST:RWL` / `:SYST:COMM:RLST` 缺口）；
+  **纯查询形式放行**（`SYST:REM?`/`SYST:COMM:RLST?`）——用于诊断面板是否被锁，
+  且纯查询不改变锁定状态。
+- **DH1766"一连就进远程模式"是设备行为**（2026-09-13 实测，V0.1.4.3）：
+  任何远程会话都会把电源置为 `REM`——新建会话第一条命令查 `SYST:COMM:RLST?`
+  即返回 `REM`；发 `SYST:LOC` 立即回到 `LOC`（只交还面板控制权，
+  **不影响输出/电压/模式**）。注意手册写的 `SYST:COMM:RLST:STAT?` 在本机
+  **无响应**（不是此前记的"返回空串"）。MCP 电源工具已在会话收尾自动补发
+  `SYST:LOC`（`server.py::_psu_close`），使现场面板随时可用。
 - **禁止复位类命令**：`*RST`、`:SYST:RESet`、`:SYST:FACT`、DMM `*RCL/*SAV` 覆写。
   `*RST` 需用户显式授权（dh1766 用 `--allow-rst` 模式）。
 - **输出/信号类操作**（SDG 输出开关、电源输出开关）需明确场景授权：
@@ -88,9 +98,10 @@ AI/Agent 操作仪器必须遵守以下规范。
   防猜测命令回归）
 - 审计报告：`docs/command_audit_20260823.md`（零猜测命令结论）
 - 操作手册：`docs/AI_OPERATION_GUIDE.md`（API/固件特性/闭环范例）
+- **实测记录**：`docs/TEST_RECORDS.md`（历轮实测时间线；README 只放项目定位与用法）
 - 设备经验：`dh1766_control/docs/EXPERIENCE.md`（时序/固件差异/上电过渡态）
 - MCP 服务器：`mcp_instruments/server.py`（31 工具 = 28 专用 + 3 通用护栏
-  instr_query/instr_write——新设备零代码接入；zcode 用户级 config 已注册
+  instr_discover/instr_query/instr_write——新设备零代码接入；zcode 用户级 config 已注册
   `instruments`；工具选择/参数语义/安全门见 skill `instrument-mcp`）
 
 ## 四、当前设备与资源
@@ -103,6 +114,11 @@ AI/Agent 操作仪器必须遵守以下规范。
 | Siglent SDG2122X 信号源 | sdg_control | VXI-11（.206）|
 | Keysight 34465A 万用表 | keysight_3446x | VXI-11（.123）|
 | Emoe 校准器（骨架） | emoe_control | 串口，仅发现+*IDN?（编程手册未提供）。**ASRL 端口号会漂移**：校准器原 ASRL31 现离线；ASRL5 现为另一台新设备 ADS127L11-DAQ-EV——接入新串口设备一律先 `instr_discover` 重新定位 |
+
+DH1766 现场状态备注（2026-09-13 实测留痕 `TEST_DATA/dh1766/psu_lock_probe_*.json`）：
+该机长期挂在 **TRAC 跟踪模式**、CH1/CH2 带电（±12V、CH1 ≈0.39A 带载）——
+CH2 的 −11.99V 是跟踪跟随，不是故障；同时任何远程会话都把它置为 `REM`
+（面板可能不可操作），收尾统一 `SYST:LOC` 交还。**动它之前先 `psu_status` 查模式与带电状态。**
 
 ## 五、分析方法选择（2026-09-09 教训）
 

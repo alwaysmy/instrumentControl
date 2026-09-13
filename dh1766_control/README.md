@@ -26,9 +26,17 @@ with VisaClient(find_dh1766()) as client:
     print(ps.measure_voltage_all())        # 回读三路电压
     print(ps.measure_current_all())        # 回读三路电流
     print(ps.apply_voltage())              # 三路电压设定值
-    ps.set_output(1, True)                 # 打开 CH1
-    ps.set_output_all([True, False, False])
+    ps.set_output(1, True, "NORM")         # 打开 CH1（expect_mode 必填，仅校验不设置）
+    ps.set_output_all([True, False, False], "NORM")
 ```
+
+> **远程模式说明（2026-09-13 实测，固件 V0.1.4.3）**：任何远程会话（USB/LAN）都会把电源
+> 置为 **REM**（远程模式）——新建会话第一条 `SYST:COMM:RLST?` 即返回 `REM`，这也是
+> "一连接就进远程模式"的原因。需要把面板控制权交还现场时发 `ps.local()`（`SYST:LOC`），
+> **不影响输出/电压/模式设定**；MCP 的 DH1766 工具每次调用收尾会自动补发一次。
+> 注意：手册写法 `SYST:COMM:RLST:STAT?` 在本机**无响应（超时）**，应使用 `SYST:COMM:RLST?`；
+> REM（远程模式）与手册的"远程锁定 RWL"（面板 Lock 键不可切回）是两个概念。
+> 详见 docs/EXPERIENCE.md §3.1。
 
 ## 包结构
 

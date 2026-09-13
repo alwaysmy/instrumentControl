@@ -4,6 +4,11 @@
 > 环境：Codex v0.151.0 + DeepSeek（custom provider，`wire_api=responses`）
 > 涉及文件：`mcp_instruments/server.py`、`C:\Users\AlwaysTS\.codex\cc-switch-model-catalog.json`、
 > `C:\Users\AlwaysTS\.agents\skills\instrument-mcp\SKILL.md`
+>
+> ⚠ **历史文档（2026-09-13 标注）**：下文结论限定于当时的 Codex + DeepSeek 组合。
+> 此后 MCP 工具在支持工具注入的客户端（项目内 zcode 用户级 config 已注册
+> `instruments`）已正常使用，`server.py` 当前共 **31 个工具**（28 专用 + 3 通用护栏）。
+> 文中"17 个 MCP 工具"为当时规模，**已过时**；第六节的"放弃 MCP 路线"决策亦不再代表现状。
 
 ## 一、结论（TL;DR）
 
@@ -78,6 +83,7 @@ Codex（Windows）对同时声明 `prompts + resources` 能力的 stdio MCP 服�
 
 1. `instrument-mcp` skill 目前只有 `SKILL.md`，无 `scripts/`；后续补 `scripts/` 目录。
 2. 把 17 个 MCP 工具对应的能力，封装成 CLI 脚本，复用现有设备库：
+   （2026-09-13 标注：工具数已从 17 增至 31，该路线未继续；现状见 AGENTS.md §三）
    `common/`（统一发现）、`dh1766_control/`、`sds_control/`、`sdg_control/`、
    `keysight_3446x/`、`dho_control/`。
 3. `SKILL.md` 改为"指引 AI 选择并调用 `scripts/` 下脚本"的决策文档（保留安全门语义：

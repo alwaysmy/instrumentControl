@@ -4,6 +4,11 @@
 状态：已批准（傅师傅，2026-08-23）
 范围：instrumentControl 主项目 + dg832-control（独立 git 仓库）
 
+> **实现偏离注记（2026-09-13 补）**：§4 里的 `proto: str = "inst0"` 参数**已不存在**——
+> 实现改为 `LAN_PROTOCOLS` 自动轮询（inst0 → hislip0 → raw5025 → raw5555），
+> 并新增 `prefilter: bool = True`（TCP 端口预筛）。当前签名见
+> `common/discovery.py::find_device`。本文保留为历史设计记录，不再逐条维护。
+
 ## 1. 背景与目标
 
 当前设备发现仅靠 `pyvisa.ResourceManager().list_resources()`（USB 资源会列出，

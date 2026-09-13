@@ -41,6 +41,22 @@
 **风险集中在文档资源表与 31 个测试脚本**——它们把"2026-08-23 当时的地址"固化成了"设备资源"，
 换网段后照抄即失败（或更糟：照抄旧地址连到别的设备）。
 
+> **改造完成情况（2026-09-13 收尾）**：
+> - §2.1 文档：4 处资源表已改为"发现入口"（`README.md` / `AGENTS.md` /
+>   `AI_OPERATION_GUIDE.md`；同日早间的 doc_drift 审计报告已就其 A-5 条目标注作废）；
+>   MCP `README.md` 与 `SKILL.md` 已补解析链说明与 `devices.json` 示例。
+> - §2.2 脚本：**34 个脚本**改走 `common/resolver.py` / `find_*()`，
+>   `python -m compileall -q TEST_SCRIPTS` 全通过（未运行任何连设备的脚本）；
+>   逐文件对照见 `docs/script_ip_refactor_20260913.md`。
+> - §2.3：`server.py` 的 `cidr` 示例已改为中性网段（`10.0.0.0/24`）。
+> - §三 历史留痕：按建议加统一标注，未改留痕内容本身（`TEST_RECORDS.md`、
+>   superpowers 设计稿、dh1766 `EXPERIENCE.md` / `SCPI_COMMANDS_DH1766A.md`）。
+> - 解析层落点：**`common/resolver.py`**（MCP 服务器与脚本共用），
+>   `server.py` 只保留 `_resolve` 等别名；`instr_discover` 新增
+>   `resolved` / `recognised_now` / `psu_local_restored` 三个返回字段。
+> - 附带修掉：`instr_discover` 探测到 DH1766 时补发 `SYST:LOC`
+>   （否则"跑一次发现，电源面板就进 REM"）。
+
 ---
 
 ## 二、必须改造清单

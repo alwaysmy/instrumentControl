@@ -5,6 +5,10 @@
 实测日期：2026-08-17（全功能验证 40/40 PASS，留痕见 `TEST_DATA/dh1766/dh1766_full_*.json`）
 补充实测：2026-09-08（输出模式四态互斥）、2026-09-13（远程模式 REM / RLST 查询，见 §3.1）
 
+> **地址说明**：本文中的 USB/LAN 资源串均为**当时实测值**，不是设备固定资产——
+> 换 USB 口/换机换序列号、DHCP 换 IP、换网段都会变。接入一律先发现
+> （`find_dh1766()` / `resolve("psu")` / `instr_discover`），**勿照抄**。
+
 ## 1. Windows 平台访问约束（重要）
 
 - **禁止用 pyusb/libusb 直接访问仪器**。Windows 上 libusb 打开设备需要 WinUSB/libusb 驱动，

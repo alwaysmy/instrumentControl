@@ -63,7 +63,7 @@ MCP 注册（示例，路径按需替换）：
 
 | 目录 | 说明 |
 |---|---|
-| `common/` | VISA 客户端 `VisaClient` + 统一发现 `find_device`（多设备共用） |
+| `common/` | VISA 客户端 `VisaClient` + 统一发现 `find_device` + **地址解析 `resolve`**（`resolver.py`，不写死 IP） |
 | `mcp_instruments/` | MCP 服务器（`server.py`）+ 工具清单（`README.md`）+ AI 使用指引（`SKILL.md`） |
 | `dh1766_control/` | 电源库（可 pip 安装；手册提取/命令速查/经验总结在 `docs/`） |
 | `dho_control/`、`sds_control/`、`sdg_control/`、`keysight_3446x/`、`emoe_control/` | 各设备库 + 手册提取 |
@@ -73,16 +73,23 @@ MCP 注册（示例，路径按需替换）：
 | `dg832-control/` | DG832 信号源独立嵌套 git 仓库（历史库，勿混入主仓提交） |
 | `archive/` | 历史版本归档（旧版驱动，可回溯） |
 
-## 设备与资源
+## 设备与发现入口
 
-| 设备 | 库 | 资源 |
+**地址不是固定资产**：仪器 IP 随 DHCP/换网段变化、USB 换口会换资源串、串口 ASRL 编号会漂移。
+所以这里只列"怎么找到它"，**不列地址**——地址由解析层在运行时确定，任何环节都不写死。
+
+| 设备 | 库 | 发现入口（库函数 · 解析层 · MCP 工具前缀） |
 |---|---|---|
-| DH1766A-1 三路电源 | `dh1766_control` | USB 或 `TCPIP0::192.168.31.144::5025::SOCKET` |
-| RIGOL DHO924S | `dho_control` | `TCPIP0::192.168.31.146::5555::SOCKET` |
-| Siglent SDS824X HD | `sds_control` | VXI-11 `192.168.31.220::inst0` |
-| Siglent SDG2122X | `sdg_control` | VXI-11 `192.168.31.206::inst0` |
-| Keysight 34465A | `keysight_3446x` | VXI-11 `192.168.31.123::inst0` |
-| Emoe 校准器 | `emoe_control` | 串口（ASRL 端口号会漂移，接入前先 `instr_discover`） |
+| DH1766A-1 三路电源 | `dh1766_control` | `find_dh1766()` · `resolve("psu")` · `psu_*` |
+| RIGOL DHO924S | `dho_control` | `find_dho()` · `resolve("dho")` · `dho_*` |
+| Siglent SDS824X HD | `sds_control` | `find_sds()` · `resolve("sds")` · `sds_*` |
+| Siglent SDG2122X | `sdg_control` | `find_sdg()` · `resolve("sdg")` · `sdg_*` |
+| Keysight 34465A | `keysight_3446x` | `find_dmm()` · `resolve("dmm")` · `dmm_*` |
+| Emoe 校准器（骨架） | `emoe_control` | `instr_discover`（串口 ASRL 编号漂移最频繁，接入前必先发现） |
+
+MCP 专用工具的 `resource` 参数**默认省略**：server 端按
+`显式入参 > 环境变量 INSTRUMENT_<KIND>_RES > 用户配置 devices.json > 上次成功缓存 > 自动发现`
+解析（实现见 `common/resolver.py`）；换网段/换口后先跑一次 `instr_discover`，发现结果会自动记住。
 
 ## 安全摘要（完整红线见 `AGENTS.md`）
 
@@ -108,5 +115,6 @@ MCP 注册（示例，路径按需替换）：
 | `mcp_instruments/README.md` | MCP 工具清单与安全约定 |
 | `docs/AI_OPERATION_GUIDE.md` | AI 操作手册：各库 API、固件特性、闭环范例 |
 | `docs/TEST_RECORDS.md` | **历轮实测记录（时间线）** |
+| `docs/ip_hardcode_audit_20260913.md` | 仪器地址硬编码专项审计（结论：地址一律走解析层，勿写死） |
 | `docs/command_audit_20260823.md` | SCPI 命令审计报告（零猜测命令结论） |
 | `dh1766_control/docs/EXPERIENCE.md` | DH1766 时序/固件差异/上电过渡态等实测经验 |

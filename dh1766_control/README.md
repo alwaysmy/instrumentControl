@@ -55,6 +55,20 @@ dh1766_control/
     └── EXPERIENCE.md                            # 实测经验总结（固件差异/时序/坑）
 ```
 
+## 地址与缓存说明（**地址不是固定资产**）
+
+仪器地址会随 DHCP 续租、换网段、换 USB 口漂移，本库不保存任何默认地址：
+
+- `find_dh1766()`：显式 resource → 本库**自己的**上次成功缓存 →
+  `common.find_device`（显式 hosts → VISA 列表 → CIDR 扫描，默认关）。
+  缓存文件写在用户级目录 `%LOCALAPPDATA%\instrumentControl\last_good_resource.json`
+  （键 `DH1766`；旧位置曾在本包源码树内，首次读取会自动迁移）。
+- 在**项目内**（含 MCP 服务器与 `TEST_SCRIPTS/`）推荐统一用
+  `common.resolve("psu")`——它与 MCP、其它设备共用 `last_good_resources.json`
+  与 `devices.json`（`common/resolver.py`）；本库自带的 `find_dh1766()` 缓存仅用于
+  **脱离项目根独立安装**的场景，两者互不冲突但也不是同一个文件。
+- 两种方式都失败时，先跑 `instr_discover` 重新定位（结果会自动记住）。
+
 ## 平台注意
 
 Windows 上 USB TMC 访问依赖厂商 VISA 运行时；禁止 pyusb/libusb 直接访问仪器

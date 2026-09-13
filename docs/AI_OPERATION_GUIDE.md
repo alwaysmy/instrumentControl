@@ -6,19 +6,24 @@
 
 ## 一、设备清单与连接
 
-| 设备 | 库 | 发现函数 | 实测资源 |
+| 设备 | 库 | 发现函数 | 地址解析（kind） |
 |---|---|---|---|
-| DH1766A-1 电源 | dh1766_control | find_dh1766() | USB 或 TCPIP0::192.168.31.144::5025::SOCKET |
-| RIGOL DHO924S | dho_control | find_dho() | TCPIP0::192.168.31.146::5555::SOCKET |
-| Siglent SDS824X HD | sds_control | find_sds() | TCPIP0::192.168.31.220::inst0::INSTR |
-| Siglent SDG2122X | sdg_control | find_sdg() | TCPIP0::192.168.31.206::inst0::INSTR |
-| Keysight 34465A | keysight_3446x | find_dmm() | TCPIP0::192.168.31.123::inst0::INSTR |
+| DH1766A-1 电源 | dh1766_control | find_dh1766() | `resolve("psu")` |
+| RIGOL DHO924S | dho_control | find_dho() | `resolve("dho")` |
+| Siglent SDS824X HD | sds_control | find_sds() | `resolve("sds")` |
+| Siglent SDG2122X | sdg_control | find_sdg() | `resolve("sdg")` |
+| Keysight 34465A | keysight_3446x | find_dmm() | `resolve("dmm")` |
 
-> IP 为 MCP `server.py` 内置默认资源（`SDS_RES`/`SDG_RES`/`DMM_RES`/`DHO_RES`/`PSU_RES`）；
-> 地址变动后以 `instr_discover` 实测结果为准。
+> **不列具体地址**：仪器 IP 随 DHCP/换网段变化、USB 换口换资源串、ASRL 编号漂移，
+> 写死地址换环境即失效（严重时连到同网段其他设备并对它下发 SCPI）。
+> 地址一律运行时解析：`common.resolve(kind)` 依次取
+> **显式入参 → 环境变量 `INSTRUMENT_<KIND>_RES` → 用户配置 `devices.json`
+> → 上次成功缓存 → 自动发现**（实现在 `common/resolver.py`，
+> MCP 专用工具的 `resource` 参数同理可省略）。
 
 统一发现入口 `common.find_device(idn_contains, resource, hosts, allow_scan, cidr)`：
-显式 resource → hosts 自动选协议 → VISA 列表 → CIDR 网段扫描（默认关）。
+显式 resource → hosts 自动选协议 → VISA 列表 → CIDR 网段扫描（默认关，
+最后手段）；LAN 未注册设备先跑 `instr_discover`，其发现结果会自动回写地址缓存。
 
 ## 二、AI 安全操作规范（必须遵守）
 

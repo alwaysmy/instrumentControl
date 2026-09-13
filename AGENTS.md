@@ -92,6 +92,9 @@ AI/Agent 操作仪器必须遵守以下规范。
 - 统一发现：`common.find_device(idn_contains, resource, hosts, allow_scan, cidr)`
   查找链：显式 resource → hosts(自动选协议 inst0/hislip0/raw5025/raw5555) →
   VISA 列表 → CIDR 扫描（默认关，最后手段）
+- 地址解析（**禁止写死 IP**）：`common.resolve(kind, resource=None)`，
+  kind ∈ sds/sdg/dmm/dho/psu；MCP 专用工具与 `TEST_SCRIPTS/` 共用它
+  （实现在 `common/resolver.py`）
 - 冒烟脚本：`TEST_SCRIPTS/common/test_discovery.py`(T1~T5)、
   `three_libs_smoke.py`、`libs_full_verify.py`、`waveform_matrix.py`(SDG→SDS 闭环)
 - 命令审计器：`TEST_SCRIPTS/common/audit_all_commands.py`（新增命令后必跑，
@@ -104,16 +107,28 @@ AI/Agent 操作仪器必须遵守以下规范。
   instr_discover/instr_query/instr_write——新设备零代码接入；zcode 用户级 config 已注册
   `instruments`；工具选择/参数语义/安全门见 skill `instrument-mcp`）
 
-## 四、当前设备与资源
+## 四、当前设备与地址解析
 
-| 设备 | 库 | 资源 |
+**地址不是固定资产，禁止写死**：仪器 IP 随 DHCP 续租/换网段变化，USB 换口换资源串，
+串口 ASRL 编号漂移。因此本表只列"发现入口"，**不列地址**；任何文档/脚本/代码都不得
+把某个具体地址当成设备资源（历史上曾把 2026-08 实测地址写进资源表，换网段后照抄即失败，
+甚至可能连到同网段其他设备并对它下发 SCPI）。
+
+| 设备 | 库 | 发现入口（库函数 · 解析层 · MCP 前缀） |
 |---|---|---|
-| DH1766A-1 电源 | dh1766_control | USB 或 `TCPIP0::192.168.31.144::5025::SOCKET` |
-| RIGOL DHO924S 示波器 | dho_control | `TCPIP0::192.168.31.146::5555::SOCKET` |
-| Siglent SDS824X HD | sds_control | VXI-11（.220）|
-| Siglent SDG2122X 信号源 | sdg_control | VXI-11（.206）|
-| Keysight 34465A 万用表 | keysight_3446x | VXI-11（.123）|
-| Emoe 校准器（骨架） | emoe_control | 串口，仅发现+*IDN?（编程手册未提供）。**ASRL 端口号会漂移**：校准器原 ASRL31 现离线；ASRL5 现为另一台新设备 ADS127L11-DAQ-EV——接入新串口设备一律先 `instr_discover` 重新定位 |
+| DH1766A-1 电源 | dh1766_control | `find_dh1766()` · `resolve("psu")` · `psu_*` |
+| RIGOL DHO924S 示波器 | dho_control | `find_dho()` · `resolve("dho")` · `dho_*` |
+| Siglent SDS824X HD | sds_control | `find_sds()` · `resolve("sds")` · `sds_*` |
+| Siglent SDG2122X 信号源 | sdg_control | `find_sdg()` · `resolve("sdg")` · `sdg_*` |
+| Keysight 34465A 万用表 | keysight_3446x | `find_dmm()` · `resolve("dmm")` · `dmm_*` |
+| Emoe 校准器（骨架） | emoe_control | `instr_discover`（仅发现 + *IDN?，编程手册未提供）。**ASRL 编号漂移最频繁**：校准器原 ASRL31 现离线、ASRL5 现为 ADS127L11-DAQ-EV——串口设备一律先重发现 |
+
+地址解析链（`common/resolver.py`，MCP 服务器与 `TEST_SCRIPTS/` 共用同一套来源）：
+**显式入参 > 环境变量 `INSTRUMENT_<KIND>_RES` > 用户配置
+`%LOCALAPPDATA%\instrumentControl\devices.json` > 上次成功缓存
+`last_good_resources.json` > `find_device()` 自动发现**（默认不扫网段，
+需要自动扫描设 `INSTRUMENT_ALLOW_SCAN=1`；LAN 未注册设备先跑 `instr_discover`，
+其发现结果会按 `*IDN?` 自动回写缓存）。
 
 DH1766 现场状态备注（2026-09-13 实测留痕 `TEST_DATA/dh1766/psu_lock_probe_*.json`）：
 该机长期挂在 **TRAC 跟踪模式**、CH1/CH2 带电（±12V、CH1 ≈0.39A 带载）——

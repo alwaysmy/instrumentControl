@@ -18,7 +18,7 @@
 | A-2 | L110（原 L96） | `gen.set_output(2, True)   # ⚠ 真实信号输出` | 现签名为 `set_output(ch, on, expect_load)`，**expect_load 必填**（仅校验不设置，不符拒绝）；照抄原示例会 `TypeError` | `sdg_control/sdg.py:127-134`；`AGENTS.md` §二 | 改为 `gen.set_output(2, True, "HZ")`，注明 expect_load 必填 |
 | A-3 | L123-139（原 L109-110） | "见各自 docstring 与 EXPERIENCE.md。**DHO 全功能验证待设备空闲。**" | 已完成：2026-08-24 留痕覆盖 *IDN? / snapshot / 波形读取 / 通道·时基·触发写入与恢复比对 | `TEST_DATA/dho/dho_first_verify_20260824_112452.json`、`dho_write_verify_20260824_112935.json`、`dho_ch1_wave_20260824_112452.csv`；脚本 `TEST_SCRIPTS/dho/test_dho_read.py`、`test_dho_write.py` | 更新为实测留痕说明；原句标"已过时（2026-09-13 更新）" |
 | A-4 | L149-157（原 L120-123） | 待办 1「SDS800X HD 波形读取 DESC 结构布局与手册示例不符（读出全零），待专研」；待办 3「DHO924S 全功能验证待空闲」 | 同 A-1、A-3：均已推翻/完成 | 同上 | 保留原文，追加"——（2026-09-13 已更新：…）"标注 |
-| A-5 | L13-15（原 L12-14） | 资源串写 "VXI-11 inst0"（无地址，与同表其余两行格式不一致） | 实际默认资源：SDS `TCPIP0::192.168.31.220::inst0::INSTR`、SDG `.206`、DMM `.123` | `mcp_instruments/server.py:52-56`（`SDS_RES`/`SDG_RES`/`DMM_RES`） | 补全三段资源串，并加注"IP 为 server.py 内置默认资源，以 instr_discover 实测为准" |
+| A-5 | L13-15（原 L12-14） | 资源串写 "VXI-11 inst0"（无地址，与同表其余两行格式不一致） | 实际默认资源：SDS `TCPIP0::192.168.31.220::inst0::INSTR`、SDG `.206`、DMM `.123` | `mcp_instruments/server.py:52-56`（`SDS_RES`/`SDG_RES`/`DMM_RES`） | ~~补全三段资源串~~ **（2026-09-13 晚更正：本条已作废）**——仪器地址不是固定资产（DHCP/网段/换口/串口号都会漂移），**不得**把具体 IP 写进资源表。`server.py` 已删除 5 个硬编码常量、改为 `common/resolver.py` 解析层；GUIDE 该表已改为"发现入口 + `resolve(kind)`" |
 | A-6 | L32-37、L130-139 | （新增，非纠正）安全规范缺"输出开关声明状态""远程锁定禁止"两条；dh1766 无远程模式说明 | AGENTS.md 已列为安全红线；DH1766 任何远程会话置 REM、`SYST:LOC` 交还 | `AGENTS.md` §二；`dh1766.py:93-104`；`server.py:139-157`（`_psu_close`）、`:291-299`（黑名单）；`TEST_DATA/dh1766/psu_lock_probe_20260913_*.json` | 安全规范补第 7、8 条；dh1766 节补远程模式四条要点（含留痕路径） |
 
 ### B. `docs/feature_gap_20260909.md`
@@ -134,8 +134,10 @@
 6. **SDS DESC 澄清**：读 `AGENTS.md` §五/§六；`Glob pattern="TEST_SCRIPTS/sds/verify_wave_*.py"`。
 7. **矩阵成绩**：`Grep pattern="\"verdict\": \"PASS\"" output_mode=count` 与
    `Grep pattern="\"case\":"` 统计 `TEST_DATA/common/waveform_matrix*_2026*.json`。
-8. **资源串**：`Read mcp_instruments/server.py` 头部常量（`SDS_RES`/`SDG_RES`/`DMM_RES`/
-   `DHO_RES`/`PSU_RES`，L52-56）。
+8. **资源串**：~~`Read mcp_instruments/server.py` 头部常量（`SDS_RES`/`SDG_RES`/`DMM_RES`/
+   `DHO_RES`/`PSU_RES`，L52-56）~~ **（2026-09-13 晚更正）**：该常量已删除，
+   改为 `Grep "_resolve|DEVICE_KINDS|common.resolver" mcp_instruments/server.py`
+   与 `Read common/resolver.py`（地址解析层）。
 9. **黑名单**：`Read mcp_instruments/server.py:289-307`（`_FORBIDDEN_RE` 与 `_is_forbidden`）。
 10. **待办真实性**：凡文档写"待办/待专研"，均按 §1 的方法找对应留痕文件或代码变更，
     有则标注完成、无则保留原状并记入"未处置"。

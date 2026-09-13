@@ -116,8 +116,9 @@ def find_device(
 | LAN 多协议探测 | hosts 仅 inst0 (VXI-11) | DH1766A-1 仅 raw socket 5025 可达；.111 设备仅 4880 开但 HiSLIP 握手 VI_ERROR_IO | identify_lan 按 LAN_PROTOCOLS 依次试 inst0 → hislip0 → 5025-SOCKET |
 | SOCKET 终止符 | 未涉及 | VISA SOCKET 会话不配 \n 终止符则命令不完整、设备不应答（*IDN? 超时） | identify()/LAN_PROTOCOLS 对 SOCKET 资源自动配 read/write_termination=\n |
 
-实测发现记录：192.168.31.111 与 .144 同 MAC `ce-92-d9-59-a6-31`（本地管理地址，
-虚拟接口特征）；.144 = DH1766A-1（raw5025）；.111 身份待查（4880 开，HiSLIP 握手失败）。
+实测发现记录（**下列地址为 2026-08-23 当时值，会随 DHCP/换网段变化，非设备固定资产**）：
+192.168.31.111 与 .144 同 MAC `ce-92-d9-59-a6-31`（本地管理地址，虚拟接口特征）；
+.144 = DH1766A-1（raw5025）；.111 身份待查（4880 开，HiSLIP 握手失败）。
 诊断留痕：TEST_DATA/common/lan_diag*.txt/json。
 
 ## 9. 测试结果（2026-08-23）

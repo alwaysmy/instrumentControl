@@ -46,12 +46,50 @@ MCP 注册（opencode/cursor 等）：command 用 python 全路径，args 为本
 | `psu_set_mode(mode)` | 电源模式设置（输出必须全关，库内强制） | 改配置 |
 
 安全约定：复位类命令不暴露（instr_write 黑名单亦不放行）；**远程锁定类命令
-（`SYSTem:REMote` / `SYST:REM` / `SYST:LOCK`）同样黑名单拦截**（查询 `SYST:REM?` 保留）；
+（`SYSTem:REMote` / `SYST:REM` / `SYST:RWL` / `SYST:LOCK` / `:SYST:COMM:RLST`）
+同样黑名单拦截**（纯查询形式放行，如 `SYST:REM?` / `SYST:COMM:RLST?`）；
 关机/开输出/通用写必须 `confirm=True`；每次调用连接→操作→关闭（无状态）+ 全局锁串行化 +
 通用写硬超时看门狗（离线资源不冻结 MCP）；错误统一
 `{ok:false, error_type, error}` 分类返回。
 DH1766 工具每次调用收尾自动补发 `SYST:LOC` 归还面板控制权——**任何远程会话都会把该电源
 置为 REM**（2026-09-13 实测，见 dh1766_control/docs/EXPERIENCE.md §3.1）。
+
+## 资源地址解析（**不写死 IP**）
+
+仪器地址不是固定资产：DHCP 续租换 IP、换网段不可达、USB 换口换资源串、串口号漂移。
+因此**专用工具的 `resource` 参数默认省略**（`resource=None`），server 端按
+`common/resolver.py` 的优先级解析：
+
+```
+① 工具入参 resource                       显式指定（最高优先）
+② 环境变量 INSTRUMENT_<KIND>_RES          如 INSTRUMENT_SDS_RES
+③ 用户配置 devices.json                   长期固定部署写这里
+④ 上次成功缓存 last_good_resources.json   instr_discover / 连接成功后自动回写
+⑤ 自动发现 find_device(IDN)               只查 VISA 已注册资源（秒级）
+                                          设 INSTRUMENT_ALLOW_SCAN=1 可放开扫网段
+```
+
+| kind | 设备 | 环境变量 | IDN 匹配串 |
+|---|---|---|---|
+| `sds` | Siglent SDS800X HD 示波器 | `INSTRUMENT_SDS_RES` | `SDS` |
+| `sdg` | Siglent SDG2000X 信号源 | `INSTRUMENT_SDG_RES` | `SDG` |
+| `dmm` | Keysight 34465A 万用表 | `INSTRUMENT_DMM_RES` | `34465A` |
+| `dho` | RIGOL DHO800/900 示波器 | `INSTRUMENT_DHO_RES` | `DHO` |
+| `psu` | DH1766 三路电源 | `INSTRUMENT_PSU_RES` | `DH1766` |
+
+配置/缓存目录：`%LOCALAPPDATA%\instrumentControl\`（非 Windows 退 `XDG_CACHE_HOME` / `~/.cache`）。
+`devices.json` 示例：
+
+```json
+{ "sds": "TCPIP0::<sds-ip>::inst0::INSTR",
+  "psu": "TCPIP0::<psu-ip>::5025::SOCKET" }
+```
+
+换网段/换口后：先调一次 `instr_discover`（返回体里 `resolved` 是当前解析表、
+`recognised_now` 是本次识别并写入缓存的设备），之后照常调用各工具。
+工具报"未确定 XX 的资源地址"时，按报错文案给的三条路径处理即可
+（`instr_discover` / 设环境变量 / 写 `devices.json`）。
+`instr_query` / `instr_write` 是通用工具，**`resource` 必填**（面向任意设备，不能猜）。
 
 ## 依赖
 

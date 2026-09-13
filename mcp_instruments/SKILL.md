@@ -41,6 +41,18 @@ DHO 示波器 → dho_status / dho_measure_item
 电源（DH1766）→ **psu_status（先查！含安全 warnings）** / psu_mode / psu_set_mode / psu_output / psu_power_cycle
 ```
 
+### 资源地址：专用工具的 `resource` 默认不传
+
+仪器地址**不是固定资产**（DHCP/换网段/换 USB 口/串口号漂移），**不要**在任何地方
+把具体 IP 当成设备资源记住或写死。专用工具的 `resource` 参数默认省略，server 端按
+`显式入参 > 环境变量 INSTRUMENT_<KIND>_RES > 用户配置 devices.json > 上次成功缓存 > 自动发现`
+解析（`common/resolver.py`）。
+
+- 工具报"未确定 XX 的资源地址"→ 先跑一次 **`instr_discover`**（结果按 `*IDN?` 自动记住），
+  再重试原工具即可；也可让用户设 `INSTRUMENT_<KIND>_RES` 或写 `devices.json`。
+- `instr_discover` 的返回体里 `resolved` = 当前解析表、`recognised_now` = 本次识别的设备。
+- 只有通用工具 `instr_query` / `instr_write` 必须显式给 `resource`（面向任意设备，不能猜）。
+
 ## 一.五、通用护栏工具（新设备零代码接入）
 
 有专用库的设备优先用专用工具；以下用于骨架设备（如 emoe）、临时设备、
@@ -65,7 +77,7 @@ DHO 示波器 → dho_status / dho_measure_item
 | sds_auto_scale | ch=1-4；use_autoset | **use_autoset=True 破坏性**（重置所有通道），仅简单周期信号+无其他已调通道时用；无信号/小信号时逐档重试最长约 60s，最终优雅报错 |
 | sds_measure | item | SIMPle:ITEM 表 51 项：PKPK/MAX/MIN/AMPL/TOP/BASE/RMS/CRMS/MEAN/STDEV/MEDIAN/OVSP/OVSN/PER/FREQ/TMAX/TMIN/PWID/NWID/DUTY/NDUTY/RISE/FALL/EDGES/PPULSES...；ch=1-4 |
 | sds_get_waveform | ch, points=50000, save_csv | 读通道波形（电压+时间轴，**FFT 交叉验证可信**）：返回摘要（点数/时间窗/Vpp/interval/档位），save_csv=True 存 CSV 到 TEST_DATA/common/ 并返回路径；**不返回完整数组**（防上下文爆炸）；分析频率用 FFT/自相关，朴素过零对调幅信号会误判 |
-| sds_screenshot | resource | 截屏存 PNG 并返回路径，**可直接 Read 读图**；看波形形态/削顶/居中/菜单/光标/测量栏；无视觉能力时用 analyze_screen 像素分析兜底 |
+| sds_screenshot | resource（可省略） | 截屏存 PNG 并返回路径，**可直接 Read 读图**；看波形形态/削顶/居中/菜单/光标/测量栏；无视觉能力时用 analyze_screen 像素分析兜底 |
 | sds_meas_threshold | source, thr_type, absolute, percent | 测量阈值源/类型/绝对值/百分比（边沿判据基础，手册 p.183-185）|
 | sds_meas_gate | on, ga, gb | 测量门限：只统计 GA~GB 窗口内波形（p.179-180）|
 | sds_meas_statistics | on, max_count, histogram, reset, slot, which | 统计开关/次数/直方图/重置；给 slot 查该槽统计（p.166-174）|

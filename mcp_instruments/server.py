@@ -207,7 +207,9 @@ def instr_discover(cidr: str | None = None) -> str:
     visa: VISA 资源列表——USB/GPIB/串口均自动探测 *IDN?（串口被占用时
     返回占用提示，空闲则探测后立即断开，约 2s/口）；
     resolved: 地址解析层当前已知映射（配置+缓存，键=设备类 sds/sdg/dmm/dho/psu）；
-    recognised_now: 本次发现按 *IDN? 识别并写入缓存的设备地址。
+    recognised_now: 本次发现按 *IDN? 识别并写入缓存的设备地址；
+    psu_local_restored: 探测到 DH1766 时是否已补发 SYST:LOC 归还面板控制权
+    （该电源任何远程会话都会进 REM，见 dh1766_control/docs/EXPERIENCE.md §3.1）。
     cidr 参数可选（如 '10.0.0.0/24'），默认自动探测本机 /24
     （代理虚拟网卡环境需显式传）。
 
@@ -327,8 +329,26 @@ def instr_discover(cidr: str | None = None) -> str:
         pairs += [(e.get("resource", ""), e.get("idn") or "") for e in visa]
         recognised = _remember_candidates(pairs)
 
+        # DH1766 特例：任何远程会话（含发现时的 *IDN? 探测）都会把电源置为 REM，
+        # 现场面板可能因此不可操作；探测到它就补发一次 SYST:LOC 归还面板控制权
+        # （仅改面板控制权，不触碰输出/电压/模式；失败静默，不影响发现结果）。
+        restored_local = False
+        psu_res = recognised.get("psu")
+        if psu_res:
+            try:
+                from dh1766_control import DH1766
+                from dh1766_control.visa import VisaClient
+
+                p = DH1766(VisaClient(psu_res, timeout_ms=2000))
+                p.local()
+                p.client.close()
+                restored_local = True
+            except Exception:
+                restored_local = False
+
         out = {"cidr": seg, "lan": lan, "visa": visa,
-               "resolved": _known_resources(), "recognised_now": recognised}
+               "resolved": _known_resources(), "recognised_now": recognised,
+               "psu_local_restored": restored_local}
         if warn:
             out["warning"] = warn
         return out

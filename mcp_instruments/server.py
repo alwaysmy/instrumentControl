@@ -137,8 +137,24 @@ def _psu_connect(resource: str = PSU_RES) -> DH1766:
 
 
 def _psu_close(p: DH1766) -> None:
-    if p.client is not None:
-        p.client.close()
+    """DH1766 会话收尾：先把面板控制权还给现场，再关连接。
+
+    2026-09-13 实测（V0.1.4.3）：**任何远程会话都会把电源置为 REM（远程模式）**
+    ——`SYST:COMM:RLST?` 在新会话的第一条命令即返回 'REM'（此前手册/库用的
+    `SYST:COMM:RLST:STAT?` 在本机无响应，已修正）。REM 下现场面板可能不可操作，
+    故每次 DH1766 工具调用结束都补发一次 `SYST:LOC`（LOC 只归还面板控制权，
+    **不改动输出/电压/模式**；同一会话内后续 SCPI 查询实测仍正常）。
+    """
+    try:
+        if getattr(p, "client", None) is not None:
+            p.local()
+    except Exception:
+        pass
+    try:
+        if getattr(p, "client", None) is not None:
+            p.client.close()
+    except Exception:
+        pass
 
 
 # ============ 发现 ============
@@ -275,17 +291,35 @@ def instr_discover(cidr: str | None = None) -> str:
 _FORBIDDEN_RE = re.compile(
     r"\*(RST|SAV|RCL)"  # *RST / *SAV n / *RCL n（含带参写法）
     r"|:?(SYST|SYSTEM):(RESET|RES|FACTORY|FACT|PRESET|PRES)(:|\?|$)"
-    # 远程锁定类：SDS :SYSTem:REMote ON 会禁用触摸屏/面板按键（界面显示 Remote），
-    # 影响人工操作——自动化一律禁止（skill instrument-mcp 明文约定）。
-    # 注意：_is_forbidden 先做空白归一（"SYST:REM ON"→"SYST:REMON"），
-    # 故此处不能用结尾断言，前缀匹配即可（REM 开头的 SYSTem 子命令仅远程锁定类）。
-    r"|:?(SYST|SYSTEM):(REMOTE|REM|LOCK|LOCKED)"
+)
+
+# 远程锁定类（**写**才拦，纯查询放行）：SDS :SYSTem:REMote ON 会禁用触摸屏/
+# 面板按键（界面显示 Remote），影响现场人工操作——自动化一律禁止。
+# 注意：_is_forbidden 先做空白归一（"SYST:REM ON"→"SYST:REMON"），故不能用
+# 结尾断言；REM 开头的 SYSTem 子命令也仅远程锁定类。
+# RWL 是 DH1766 的锁定命令（面板 Lock 键不可切回本地，2026-09-13 实测确认；
+# 原正则只覆盖 REM/REMOTE/LOCK，会把它漏放）；:SYST:COMM:RLST <state> 是标准
+# 远程/本地状态设置（RWL 值同样锁面板）。
+_LOCK_RE = re.compile(
+    r":?(SYST|SYSTEM):(REMOTE|REM|RWL|LOCK|LOCKED)"
+    r"|:?(SYST|SYSTEM):COMM(UNICATE)?:RLST"
 )
 
 
 def _is_forbidden(cmd: str) -> bool:
-    """空白归一后匹配黑名单（兼容 SCPI 长短形式与大小写）。"""
-    return bool(_FORBIDDEN_RE.search(re.sub(r"\s+", "", cmd).upper()))
+    """空白归一后匹配黑名单（兼容 SCPI 长短形式与大小写）。
+
+    语义：复位/存储覆写类一律 forbidden；远程锁定类**只拦写**——纯查询
+    （整条以 `?` 结尾且无 `;` 多命令）不改变锁定状态，保留用于状态诊断
+    （`SYST:REM?`、`SYST:COMM:RLST?`），写入形式（`SYST:RWL`、`SYST:COMM:RLST RWL`）
+    一律拒绝。
+    """
+    c = re.sub(r"\s+", "", cmd).upper()
+    if _FORBIDDEN_RE.search(c):
+        return True
+    if c.endswith("?") and ";" not in c:
+        return False
+    return bool(_LOCK_RE.search(c))
 
 
 _ERR_CLEAN_RE = re.compile(r"^\+?0\s*,")

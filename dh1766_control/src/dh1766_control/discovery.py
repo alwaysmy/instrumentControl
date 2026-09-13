@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -18,13 +19,36 @@ from common.discovery import (  # noqa: F401  (re-export)
 
 
 _LAST_GOOD: dict[str, str] = {}
-_LAST_GOOD_FILE = Path(__file__).resolve().parent / ".last_good_resource.json"
+
+# 运行期缓存放**用户级缓存目录**，不写进包源码树（此前落在包目录内，污染安装目录、
+# 且 pip 安装到 site-packages 时可能无写权限）。Windows 用 %LOCALAPPDATA%，
+# 其他平台退回 XDG_CACHE_HOME / ~/.cache。
+_CACHE_DIR = Path(
+    os.environ.get("LOCALAPPDATA")
+    or os.environ.get("XDG_CACHE_HOME")
+    or (Path.home() / ".cache")
+) / "instrumentControl"
+_LAST_GOOD_FILE = _CACHE_DIR / "last_good_resource.json"
+# 旧位置（包目录内）——只读兼容：一次性迁移到新位置后不再写入
+_LEGACY_FILE = Path(__file__).resolve().parent / ".last_good_resource.json"
+
+
+def _load_json(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
 
 
 def _remember(key: str, resource: str) -> None:
-    """记住上次成功地址（下次 find 同 key 设备优先直连，省扫描时间）。"""
+    """记住上次成功地址（下次 find 同 key 设备优先直连，省扫描时间）。
+
+    写入用户级缓存目录（`%LOCALAPPDATA%\\instrumentControl\\last_good_resource.json`）。
+    """
     _LAST_GOOD[key] = resource
     try:
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
         _LAST_GOOD_FILE.write_text(
             json.dumps(_LAST_GOOD, ensure_ascii=False), encoding="utf-8"
         )
@@ -35,12 +59,20 @@ def _remember(key: str, resource: str) -> None:
 def _recall(key: str) -> Optional[str]:
     if key in _LAST_GOOD:
         return _LAST_GOOD[key]
-    try:
-        data = json.loads(_LAST_GOOD_FILE.read_text(encoding="utf-8"))
-        _LAST_GOOD.update(data)
-        return data.get(key)
-    except Exception:
-        return None
+    data = _load_json(_LAST_GOOD_FILE)
+    if not data and _LEGACY_FILE.exists():  # 旧位置兼容：读到即迁移
+        data = _load_json(_LEGACY_FILE)
+        if data:
+            try:
+                _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                _LAST_GOOD_FILE.write_text(
+                    json.dumps(data, ensure_ascii=False), encoding="utf-8"
+                )
+                _LEGACY_FILE.unlink(missing_ok=True)
+            except Exception:
+                pass
+    _LAST_GOOD.update(data)
+    return data.get(key)
 
 
 def find_dh1766(

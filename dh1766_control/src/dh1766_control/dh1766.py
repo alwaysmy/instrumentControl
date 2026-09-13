@@ -91,9 +91,14 @@ class DH1766:
         time.sleep(CMD_DELAY_S)
 
     def rlstate(self) -> Optional[str]:
-        """SYST:COMM:RLST:STAT? 工作模式 LOC/REM/RWL。
+        """SYST:COMM:RLST? 工作模式 LOC / REM / RWL。
 
-        注：本机固件 V0.1.4.3 实测返回空串（手册按 V0.1.2.8 编写），返回 None。
+        2026-09-13 实测（固件 V0.1.4.3）：
+        - 手册写的 `SYST:COMM:RLST:STAT?`（带 :STAT）在本机**无响应**（超时），
+          不是"返回空串"（此前文档记录有误）；正确形式是 `SYST:COMM:RLST?`；
+        - **任何远程会话都会把设备置为 REM**：多次新建会话后第一条命令查询
+          均返回 'REM'（即用户观察到的"一连就进远程模式"）；
+        - 发 `SYST:LOC` 后立即返回 'LOC'，可把面板控制权还给现场。
         """
         resp = self.client.query(C.SYST_RLST)
         return resp or None

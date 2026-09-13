@@ -32,7 +32,10 @@ SYST_BEEP = "SYST:BEEP"
 SYST_LOC = "SYST:LOC"
 SYST_REM = "SYST:REM"
 SYST_RWL = "SYST:RWL"
-SYST_RLST = "SYST:COMM:RLST:STAT?"
+# 手册 4.2.1 写作 `SYST:COMM:RLST:STAT?`，但本机固件 V0.1.4.3 对该形式**无响应**
+# （超时，非空串）；去掉 `:STAT` 的 `SYST:COMM:RLST?` 才返回 LOC/REM/RWL
+# （2026-09-13 实测，见 TEST_SCRIPTS/dh1766/psu_remote_lock_probe.py 留痕）。
+SYST_RLST = "SYST:COMM:RLST?"
 
 # ---- 状态指令集（手册 4.2.2）----
 STAT_PRES = "STAT:PRES"

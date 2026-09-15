@@ -485,7 +485,7 @@ def _psu_close(p: DH1766) -> None:
 
 # ============ 发现 ============
 
-@device_tool()
+@device_tool(budget_s=300.0)   # 多网段扫描比单网段慢，给它更宽裕的等待上限
 def instr_discover(cidr: str | None = None) -> str:
     """发现本机所有仪器。返回：
     lan: 网段扫描（TCP 预筛 + 多协议 *IDN?，键=资源串 值=IDN）；
@@ -495,8 +495,10 @@ def instr_discover(cidr: str | None = None) -> str:
     recognised_now: 本次发现按 *IDN? 识别并写入缓存的设备地址；
     psu_local_restored: 探测到 DH1766 时是否已补发 SYST:LOC 归还面板控制权
     （该电源任何远程会话都会进 REM，见 dh1766_control/docs/EXPERIENCE.md §3.1）。
-    cidr 参数可选（如 '10.0.0.0/24'），默认自动探测本机 /24
-    （代理虚拟网卡环境需显式传）。
+    cidr 参数可选（如 '10.0.0.0/24'）；**默认扫本机所有接口所在的私网网段**
+    （`cidrs` 字段列出实际用到的网段列表）——本机多网卡/挂 VPN 时能覆盖到仪器
+    所在的那张网卡；代理 TUN 开启时也能扫（TUN 只加虚拟网卡、不改物理网卡地址）。
+    只想扫特定网段时显式传 cidr。
 
     **仪器地址不是固定资产**（DHCP/网段/换口/串口号都会漂移）：本工具发现的
     结果会自动回写地址缓存，之后各专用工具不传 resource 也能连上；换了网段或
@@ -506,11 +508,16 @@ def instr_discover(cidr: str | None = None) -> str:
     from common.discovery import (
         detect_cidr,
         forget_hanging_ports,
+        local_cidrs,
+        proxy_likely,
         identify,
         identify_all,
         identify_lan,
+        identify_lan_all,
         list_resources,
         probe_alive,
+        probe_alive_many,
+        probe_open_ports,
         probe_serials_isolated,
     )
 
@@ -550,31 +557,56 @@ def instr_discover(cidr: str | None = None) -> str:
                 item["note"] = entry["note"]
             visa.append(item)
 
-        # LAN 网段扫描（代理 fake-IP 会污染，任何异常降级为警告，不拖垮 VISA 结果）
-        seg = cidr or detect_cidr()
+        # LAN 网段扫描：扫**本机所有接口**所在的网段（不只默认路由那张网卡）。
+        # 为什么不用单网段（detect_cidr）：本机常挂着多个私网段（公司网/其它 WiFi/
+        # 仪器网段/VPN），默认路由指向别的网段时会静默扫错并返回空结果；代理 TUN
+        # 开启时出口 IP 还会变成 198.18.0.1 致整个 LAN 段被跳过——而仪器网段的接口
+        # 地址其实一直都在（TUN 只加虚拟网卡、不改物理网卡地址）。
+        # 任何异常都降级为警告，绝不拖垮 VISA 结果。
+        segs = [cidr] if cidr else local_cidrs()
         lan, warn = {}, None
         try:
-            if not seg:
-                warn = "无法探测本机网段（代理/VPN 虚拟网卡？），LAN 部分跳过；可显式传 cidr"
+            if not segs:
+                hint = ("检测到本机在跑代理/VPN，且没有可扫的私网接口地址；"
+                        "请把 192.168.0.0/16、10.0.0.0/8、172.16.0.0/12 加入代理直连，"
+                        "或用 resource 参数直连。") if proxy_likely() else \
+                       "本机没有 RFC1918 私网接口地址；可显式传 cidr 指定网段。"
+                warn = f"LAN 部分跳过（未得到可扫网段）。{hint}"
             else:
-                addrs = [str(h) for h in ipaddress.ip_network(seg, strict=False).hosts()]
-                with cf.ThreadPoolExecutor(max_workers=128) as pool:
-                    alive = [a for a, ok in zip(addrs, pool.map(probe_alive, addrs)) if ok]
-                # 代理 fake-IP 模式会对任意 IP 立即 SYN-ACK → 全部误报 alive →
-                # 后续 VISA open 逐个挂起拖死线程池（实测 254 全 alive 卡死 5min+）
-                if len(alive) > 64:
-                    warn = (
-                        f"网段 {seg} 探测到 {len(alive)}/{len(addrs)} 地址端口全开——"
-                        "疑似代理/VPN fake-IP 干扰，LAN 结果已丢弃。"
-                        "请关闭代理后重试，或用 resource 参数直连。"
-                    )
-                else:
-                    with cf.ThreadPoolExecutor(max_workers=32) as pool:
-                        for a, r in pool.map(lambda x: (x, identify_lan(x)), alive):
-                            if r:
-                                lan[r[0]] = r[1]
+                # ① 所有网段的地址**合并后一次性并行预筛**（逐网段串行要 4×4.9s；
+                #    合并后 ~5s）；② 再按网段分组判 fake-IP；③ 存活地址统一 VISA 识别。
+                per_seg_addrs = {
+                    seg: [str(h) for h in ipaddress.ip_network(seg, strict=False).hosts()]
+                    for seg in segs
+                }
+                all_addrs = [a for addrs in per_seg_addrs.values() for a in addrs]
+                # asyncio 并发 + 限流预筛（比线程池逐地址 4 端口串行快 ~7 倍；
+                # 限流是必需的——不限并发会假阴性漏检，见 probe_alive_many 说明）
+                open_ports = probe_open_ports(all_addrs)
+                alive_all = [a for a, ports in open_ports.items() if ports]
+                alive_set = set(alive_all)
+                candidates: list[str] = []
+                for seg, addrs in per_seg_addrs.items():
+                    alive = [a for a in addrs if a in alive_set]
+                    # 代理 fake-IP 模式会对任意 IP 立即 SYN-ACK → 全部误报 alive →
+                    # 后续 VISA open 逐个挂起拖死线程池（实测 254 全 alive 卡死 5min+）
+                    if len(alive) > 64:
+                        w = (f"网段 {seg} 探测到 {len(alive)}/{len(addrs)} 地址端口全开——"
+                             "疑似代理/VPN fake-IP 干扰，该网段结果已丢弃。"
+                             "请把内网网段加入代理直连（bypass），或用 resource 直连。")
+                        warn = f"{warn} {w}" if warn else w
+                        continue
+                    candidates.extend(alive)
+                if candidates:
+                    # 共享单个 RM（并发各自建 RM 会随机 VI_ERROR_INV_OBJECT，
+                    # 且异常从 rm.close() 抛出会冲垮整轮扫描——见 identify_lan_all）
+                    for r in identify_lan_all(candidates, timeout_ms=1500,
+                                              open_ports=open_ports).values():
+                        if r:
+                            lan[r[0]] = r[1]
         except Exception as e:
-            warn = f"LAN 扫描异常降级（VISA 结果不受影响）: {type(e).__name__}: {e}"
+            w = f"LAN 扫描异常降级（VISA 结果不受影响）: {type(e).__name__}: {e}"
+            warn = f"{warn} {w}" if warn else w
 
         # 把发现到的设备按 IDN 回写地址缓存：之后各专用工具无需显式传 resource
         # 即可自动解析（IP 会变，所以地址只做"上次成功"缓存，不是固定资源配置）。
@@ -599,7 +631,22 @@ def instr_discover(cidr: str | None = None) -> str:
             except Exception:
                 restored_local = False
 
-        out = {"cidr": seg, "lan": lan, "visa": visa,
+        # cidr 为兼容字段（消费方可能还在读它）：给出"真正扫出设备的网段"，
+        # 扫不到设备时退回第一个候选；权威列表在 cidrs。
+        hit_segs: list[str] = []
+        for res in lan:
+            m = re.search(r"::([\d.]+)::", res)
+            if not m:
+                continue
+            try:
+                addr = ipaddress.ip_address(m.group(1))
+            except ValueError:
+                continue
+            for seg in segs:
+                if addr in ipaddress.ip_network(seg, strict=False) and seg not in hit_segs:
+                    hit_segs.append(seg)
+        out = {"cidr": (hit_segs[0] if hit_segs else (segs[0] if segs else None)),
+               "cidrs": segs, "lan": lan, "visa": visa,
                "resolved": _known_resources(), "recognised_now": recognised,
                "psu_local_restored": restored_local}
         if warn:

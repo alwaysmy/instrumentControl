@@ -14,8 +14,10 @@
 """
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -34,6 +36,9 @@ SCAN_TIMEOUT_MS = 1500
 SCAN_PROBE_PORTS = (111, 4880, 5025, 5555)
 PROBE_TIMEOUT_S = 0.6
 PROBE_WORKERS = 128
+# 端口预筛并发上限：不限并发会打满本机 TCP 栈导致**假阴性**（实测 1016 地址
+# 无限并发时连已知在线的 4 台仪器全部漏检；限流 256 后 4/4 命中）。
+PROBE_ALIVE_CONCURRENCY = 256
 
 # 串口探测挂起硬超时（驱动层 open 可能不受 open_timeout 约束）。
 # 实测（9 口）：并发 8 会让子进程互相争抢串口资源、多数误报超时；并发 4 正常，
@@ -251,14 +256,39 @@ LAN_PROTOCOLS: tuple[tuple[str, dict], ...] = (
      {"read_termination": "\n", "write_termination": "\n"}),
 )
 
+# 各协议对应的「预筛端口」，顺序与 LAN_PROTOCOLS 一一对应。
+# 识别阶段据此**只试端口开着的协议**，避免对每个候选把 4 个协议挨个超时试一遍
+# （实测这是 LAN 识别阶段 23s 的主因）：inst0(VXI-11) 走 portmapper 111、
+# hislip0 走 4880、后两条是 SCPI raw socket（5025 / 5555）。
+LAN_PROTOCOL_PORTS: tuple[int, ...] = (111, 4880, 5025, 5555)
 
-def identify_lan(host: str, timeout_ms: int = 3000) -> Optional[tuple[str, str]]:
+
+def identify_lan(host: str, timeout_ms: int = 3000,
+                 rm: "pyvisa.ResourceManager | None" = None,
+                 open_ports: "set[int] | None" = None) -> Optional[tuple[str, str]]:
     """按 LAN_PROTOCOLS 逐协议探测 *IDN?，成功返回 (可用资源串, idn)，全败返回 None。
 
     host 含 '::' 视为完整资源串，仅按其本身探测。
+
+    `rm`：可选，传入**调用方共享的** ResourceManager（并发探测多个地址时建议）。
+    实测（2026-09-15）：多线程各自 `ResourceManager()` 并发 open 会随机抛
+    `VI_ERROR_INV_OBJECT`，且该异常会从 `rm.close()` 里抛出、冲垮整轮扫描——
+    `instr_discover` 的 LAN 段因此可能整个失败。共享单例可消除。
     """
-    resources = [host] if "::" in host else [t.format(host=host) for t, _ in LAN_PROTOCOLS]
-    rm = pyvisa.ResourceManager()
+    if "::" in host:
+        resources = [host]
+    else:
+        pairs = list(zip(LAN_PROTOCOLS, LAN_PROTOCOL_PORTS))
+        if open_ports is not None:
+            # 预筛已探明端口：只试端口开着的协议（开着才可能应答），
+            # 保留其余作为兜底——端口探测可能因限流/防火墙漏报。
+            picked = [p for p in pairs if p[1] in open_ports]
+            resources = [t.format(host=host) for (t, _), _p in picked] or                         [t.format(host=host) for t, _ in LAN_PROTOCOLS]
+        else:
+            resources = [t.format(host=host) for t, _ in LAN_PROTOCOLS]
+    own = rm is None
+    if own:
+        rm = pyvisa.ResourceManager()
     try:
         for res in resources:
             kwargs = next(
@@ -279,7 +309,116 @@ def identify_lan(host: str, timeout_ms: int = 3000) -> Optional[tuple[str, str]]
                 continue
         return None
     finally:
-        rm.close()
+        if own:
+            try:
+                rm.close()
+            except Exception:   # 会话已失效时 close 仍可能抛，不能让它冲垮调用方
+                pass
+
+
+def identify_lan_all(hosts: list[str], timeout_ms: int = 3000,
+                     workers: int = 32,
+                     open_ports: "dict[str, set[int]] | None" = None) -> dict[str, Optional[tuple[str, str]]]:
+    """批量识别 LAN 地址，返回 {host: (资源串, idn) 或 None}。
+
+    共享单个 ResourceManager——并发各自建 RM 会随机 `VI_ERROR_INV_OBJECT`
+    并冲垮整轮 LAN 扫描（见 `identify_lan` 说明）。
+    """
+    if not hosts:
+        return {}
+    rm = pyvisa.ResourceManager()
+    try:
+        with ThreadPoolExecutor(max_workers=min(workers, len(hosts))) as pool:
+            out = list(pool.map(
+                lambda h: identify_lan(h, timeout_ms, rm,
+                                       (open_ports or {}).get(h)),
+                hosts))
+        return dict(zip(hosts, out))
+    finally:
+        try:
+            rm.close()
+        except Exception:
+            pass
+
+
+def _is_scannable(addr: "ipaddress.IPv4Address") -> bool:
+    """该地址是否值得当作「仪器可能在的网段」。
+
+    接受 RFC1918 私网；显式排除 198.18.0.0/15（benchmark 段，代理 fake-IP 用——
+    VISA open 会挂起且地址全是假的）、以及 169.254/16（APIPA 自动配置，无路由）。
+    """
+    if addr in ipaddress.ip_network("198.18.0.0/15"):
+        return False
+    if addr in ipaddress.ip_network("169.254.0.0/16"):
+        return False
+    return (addr in ipaddress.ip_network("10.0.0.0/8")
+            or addr in ipaddress.ip_network("172.16.0.0/12")
+            or addr in ipaddress.ip_network("192.168.0.0/16"))
+
+
+def local_cidrs() -> list[str]:
+    """本机所有接口所在的 RFC1918 /24 网段（按接口顺序去重，可能多个）。
+
+    为什么不用「连 8.8.8.8 看出口 IP」（`detect_cidr` 的做法）：仪器可达与否
+    取决于**本机是否有该网段的接口地址**，与「默认路由指向哪」是两回事。实测
+    （2026-09-15）本机同时挂着 4 个私网段（公司网 10.165/另一个 WiFi 192.168.2/
+    仪器网段 192.168.31/ZeroTier 172.29）——出口 IP 只是其中一张网卡，默认路由
+    指向别的网段时会**静默扫错网段并返回空结果**（看起来像"所有设备都离线"）。
+
+    代理 TUN 模式下这个方法尤其重要：TUN 只加虚拟网卡 + 改默认路由，**不会删掉
+    物理网卡的地址**——所以仪器网段仍在列表里，照常可扫；而出口 IP 会变成
+    198.18.0.1（fake-IP），旧的 `detect_cidr` 会直接放弃扫描。
+
+    依赖 psutil；不可用时退回 `detect_cidr()` 的单网段结果（行为不劣化）。
+    """
+    seen: list[str] = []
+    try:
+        import psutil
+        for _name, addrs in psutil.net_if_addrs().items():
+            for a in addrs:
+                if a.family != socket.AF_INET or not a.address:
+                    continue
+                try:
+                    ip = ipaddress.ip_address(a.address)
+                except ValueError:
+                    continue
+                if not _is_scannable(ip):
+                    continue
+                net = str(ipaddress.ip_network(f"{ip}/24", strict=False))
+                if net not in seen:
+                    seen.append(net)
+    except Exception:
+        pass
+    if not seen:
+        single = detect_cidr()
+        if single:
+            seen.append(single)
+    return seen
+
+
+def proxy_likely() -> bool:
+    """本机是否疑似在跑代理/VPN（用于把"扫不到"解释成可操作的建议）。
+
+    只看两件事：环境变量里有 proxy 配置，或存在 198.18.0.0/15 的接口地址
+    （TUN fake-IP 的典型特征）。不追求完备——目的是让报错文案能对症下药。
+    """
+    for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy",
+                "https_proxy", "all_proxy"):
+        if os.environ.get(key):
+            return True
+    try:
+        import psutil
+        for _name, addrs in psutil.net_if_addrs().items():
+            for a in addrs:
+                if a.family == socket.AF_INET and a.address:
+                    try:
+                        if ipaddress.ip_address(a.address) in ipaddress.ip_network("198.18.0.0/15"):
+                            return True
+                    except ValueError:
+                        pass
+    except Exception:
+        pass
+    return False
 
 
 def detect_cidr() -> Optional[str]:
@@ -288,16 +427,16 @@ def detect_cidr() -> Optional[str]:
     仅接受 RFC1918 私网（10/172.16-31/192.168）。注意 Python 的 is_private
     会把 198.18.0.0/15（benchmark 段，代理 fake-IP 常用）也判为私有，
     必须显式排除——扫它得到 254 个假地址且 VISA open 全部挂起。
+
+    ⚠ 这是「默认路由那张网卡」的网段，多网卡/代理开启时会选错或返回 None。
+    需要"仪器可能在哪几个网段"请用 `local_cidrs()`（发现层用的是它）。
     """
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
         addr = ipaddress.ip_address(ip)
-        ok = addr in ipaddress.ip_network("10.0.0.0/8") or \
-            addr in ipaddress.ip_network("172.16.0.0/12") or \
-            addr in ipaddress.ip_network("192.168.0.0/16")
-        if not ok:
+        if not _is_scannable(addr):
             return None
         return str(ipaddress.ip_network(f"{ip}/24", strict=False))
     except Exception:
@@ -316,6 +455,96 @@ def probe_alive(ip: str, ports: tuple[int, ...] = SCAN_PROBE_PORTS,
         except OSError:
             continue
     return False
+
+
+async def _probe_alive_async(ip: str, ports: tuple[int, ...], timeout_s: float) -> bool:
+    """单个地址：**所有端口并发**探测，任一通即 True。
+
+    为什么并发：对不存在的主机，TCP SYN 无响应要等满超时——端口串行时一个地址
+    最坏 sum(ports)×timeout（实测 4×0.6=2.4s，1016 个地址要 19.5s）；并发后
+    降到 max(timeout)（约 0.6s），整轮预筛 19.5s → ~5s。
+    """
+    async def one(port: int) -> bool:
+        try:
+            fut = asyncio.open_connection(ip, port)
+            reader, writer = await asyncio.wait_for(fut, timeout=timeout_s)
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+            return True
+        except Exception:
+            return False
+
+    results = await asyncio.gather(*(one(p) for p in ports), return_exceptions=True)
+    return any(r is True for r in results)
+
+
+def probe_open_ports(ips: list[str], ports: tuple[int, ...] = SCAN_PROBE_PORTS,
+                     timeout_s: float = PROBE_TIMEOUT_S,
+                     concurrency: int = PROBE_ALIVE_CONCURRENCY) -> dict[str, set[int]]:
+    """批量探测各地址**开放了哪些**预筛端口，返回 {ip: {port,...}}（只含通了的）。
+
+    比 `probe_alive_many` 多返回端口明细——识别阶段据此**只试对应协议**，避免对
+    每个候选把 4 个协议挨个超时试一遍（实测识别阶段 23s 主要就是这些空等）。
+    """
+    if not ips:
+        return {}
+    sem = asyncio.Semaphore(max(1, concurrency))
+
+    async def guarded(ip: str) -> tuple[str, set[int]]:
+        async with sem:
+            async def one(port: int) -> tuple[int, bool]:
+                try:
+                    r, w = await asyncio.wait_for(asyncio.open_connection(ip, port),
+                                                  timeout=timeout_s)
+                    w.close()
+                    try:
+                        await w.wait_closed()
+                    except Exception:
+                        pass
+                    return port, True
+                except Exception:
+                    return port, False
+            pairs = await asyncio.gather(*(one(p) for p in ports))
+            return ip, {p for p, ok in pairs if ok}
+
+    async def run_all() -> dict[str, set[int]]:
+        return dict(await asyncio.gather(*(guarded(ip) for ip in ips)))
+
+    try:
+        return asyncio.run(run_all())
+    except RuntimeError:
+        return {ip: {p for p in ports if probe_alive(ip, (p,), timeout_s)} for ip in ips}
+
+
+def probe_alive_many(ips: list[str], ports: tuple[int, ...] = SCAN_PROBE_PORTS,
+                     timeout_s: float = PROBE_TIMEOUT_S,
+                     concurrency: int = PROBE_ALIVE_CONCURRENCY) -> list[bool]:
+    """批量 TCP 端口预筛（asyncio 并发 + **限流**），返回与 `ips` 等长的存活列表。
+
+    ⚠ 必须限流：实测（2026-09-16，本机 1016 地址）不限并发时 4000+ 连接同时发起会
+    打满本机 TCP 栈 → 已知在线的 4 台仪器**全部漏检**（alive=0，0.9s 就"扫完"，看着
+    很快其实全是假阴性）；限流 256 后 4/4 命中。宁可慢几秒，不可漏报设备。
+    """
+    if not ips:
+        return []
+    sem = asyncio.Semaphore(max(1, concurrency))
+
+    async def guarded(ip: str) -> bool:
+        async with sem:
+            return await _probe_alive_async(ip, ports, timeout_s)
+
+    async def run_all() -> list[bool]:
+        return list(await asyncio.gather(*(guarded(ip) for ip in ips)))
+
+    try:
+        return asyncio.run(run_all())
+    except RuntimeError:
+        # 已在事件循环中（不该发生——调用方在 worker 线程）：退回线程池版本
+        with ThreadPoolExecutor(max_workers=PROBE_WORKERS) as pool:
+            return list(pool.map(lambda ip: probe_alive(ip, ports, timeout_s), ips))
 
 
 def scan_cidr(
@@ -453,15 +682,19 @@ def find_device(
     if not allow_scan:
         attempts.append(("scanned", "-", "allow_scan=False，跳过网段扫描"))
     else:
-        segment = cidr or detect_cidr()
-        if segment is None:
+        # 显式 cidr 优先；否则扫本机**所有**接口所在的私网网段（多网卡/挂 VPN 时
+        # 只看默认路由那张网卡会选错网段，详见 local_cidrs 说明）。
+        segments = [cidr] if cidr else local_cidrs()
+        if not segments:
             attempts.append(("scanned", "-", "无法探测本机网段且未显式给 cidr"))
         else:
             if not cidr:
-                print(f"[scan] 未指定网段，自动探测为 {segment}（多网卡环境建议显式传 cidr）", file=sys.stderr)
-            for cand in scan_cidr(segment, idn_contains, SCAN_TIMEOUT_MS, prefilter=prefilter):
-                if matches(cand.idn):
-                    return cand
+                print(f"[scan] 未指定网段，自动探测为本机接口网段 {segments}"
+                      "（多网卡环境建议显式传 cidr）", file=sys.stderr)
+            for segment in segments:
+                for cand in scan_cidr(segment, idn_contains, SCAN_TIMEOUT_MS, prefilter=prefilter):
+                    if matches(cand.idn):
+                        return cand
 
     chain = "\n".join(f"  [{layer}] {target}: {result}" for layer, target, result in attempts)
     raise RuntimeError(f"未找到 *IDN? 含 {idn_contains!r} 的设备，尝试链路：\n{chain}")

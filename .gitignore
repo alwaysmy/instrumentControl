@@ -31,3 +31,14 @@ TEST_DATA/**/smoke_shot.png
 TEST_DATA/**/*.bmp
 
 # 说明：TEST_DATA/**/*.json（小体积实测留痕）仍然入库，作为可回溯证据。
+
+# ---- 本机专有事实 / 运行期产物（不入库）----
+# 设备序列号、固件、实测资源串、现场带电状态：换机器即失效，
+# 但排障/写断言要用 —— 维护在本地，AGENTS.md 有引用说明。
+docs/DEVICE_FACTS.local.md
+*.local.md
+
+# TEST_DATA 整体不入库（2026-09-15 起）：实测留痕体积大、含设备序列号与网内 IP，
+# 可由设备重建。上面的精细规则保留（对存量已追踪文件仍是 no-op）。
+# 若确需留档某份证据，用 git add -f 显式加。
+TEST_DATA/

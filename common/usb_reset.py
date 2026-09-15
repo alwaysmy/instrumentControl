@@ -58,7 +58,7 @@ def is_admin() -> bool:
 
 
 def parse_usb_resource(resource: str) -> tuple[str, str, str] | None:
-    """从 VISA 资源串解析 (vid, pid, serial)：USB0::0x1AB1::0x0643::DG8A265103205::INSTR。"""
+    """从 VISA 资源串解析 (vid, pid, serial)：USB0::0x1AB1::0x0643::<serial>::INSTR。"""
     m = re.match(r"USB\d*::0x([0-9A-Fa-f]+)::0x([0-9A-Fa-f]+)::([^:]+)::INSTR", resource or "")
     if not m:
         return None
@@ -96,7 +96,7 @@ def list_usb_instruments() -> list[dict]:
 def find_instance(vid: str, pid: str, serial: str | None = None) -> str | None:
     """按 VID/PID（可选序列号）找到 PnP 实例 ID。
 
-    PnP 的 InstanceId 形如 `USB\\VID_1AB1&PID_0643\\DG8A265103205`（序列号在末段，
+    PnP 的 InstanceId 形如 `USB\\VID_1AB1&PID_0643\\<serial>`（序列号在末段，
     也可能被系统改写）——故序列号只作**优先匹配**，找不到就退回 VID/PID 唯一命中。
     """
     pat = f"USB\\\\VID_{vid.upper()}&PID_{pid.upper()}"

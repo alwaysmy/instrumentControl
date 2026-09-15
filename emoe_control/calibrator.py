@@ -4,7 +4,7 @@
 （输出/量程/设置）待手册到位后按手册逐条补充，禁止猜测。
 
 实测环境（2026-08-24）：串口 ASRL31::INSTR，*IDN? =
-'Emoe R&D,EmoeCalibrator,SN20260507,A1526'
+'Emoe R&D,EmoeCalibrator,<serial>,<asset>'
 """
 from __future__ import annotations
 
@@ -150,8 +150,8 @@ def find_emoe(timeout_ms: int = 1500) -> str:
         t.join(6.0)
         idn = result.get("idn", "")
         if "EmoeCalibrator" in idn:
-            print(f"[find_emoe] 命中 {r} -> {idn}")
+            print(f"[find_emoe] 命中 {r} -> {idn}", file=sys.stderr)
             return r
         note = result.get("note", "")
-        print(f"[find_emoe] {r}: {idn or note or '无响应'}")
+        print(f"[find_emoe] {r}: {idn or note or '无响应'}", file=sys.stderr)
     raise RuntimeError("未找到 *IDN? 含 'EmoeCalibrator' 的设备（检查串口接线/占用）")

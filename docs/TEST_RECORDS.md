@@ -8,7 +8,7 @@
 > 不是设备固定资产——会随 DHCP 续租、换网段、换 USB 口、串口号漂移而变化。
 > 接入前一律先 `instr_discover`（或 `resolve(kind)`）重新定位，**勿直接照抄**。
 
-- 2026-08-17：DH1766A-1 识别为 `USB0::0x0957::0xA007::100260004670::INSTR`，
+- 2026-08-17：DH1766A-1 识别为 `USB0::0x0957::0xA007::<serial>::INSTR`，
   `*IDN?` = `BJDH,DH1766A-1,0,V0.1.4.3`；三路读回电压/电流正常，输出开关命令验证通过。
   注：该设备 VID=0x0957（Keysight ID），为国产仪器兼容 VISA 驱动常见做法，以 `*IDN?` 为准。
 - 2026-08-17：手册 4.2 全部指令集 40/40 读写验证通过（`test_dh1766_full.py`，留痕见
@@ -135,7 +135,7 @@
     `AGENTS.md` 待办"skill/scripts 双副本需人工同步"关闭。
   - **真机验收（只读）**：`TEST_SCRIPTS/dg832/verify_dg832.py` → **15/15 PASS**
     （留痕 `TEST_DATA/dg832/verify_dg832_20260915_105953.json`）。实测：`resolve("dg")`
-    经 VISA 列表层自动发现 `USB0::0x1AB1::0x0643::DG8A265103205::INSTR`（无需写死地址）；
+    经 VISA 列表层自动发现 `USB0::0x1AB1::0x0643::<serial>::INSTR`（无需写死地址）；
     CH1 SIN 1kHz 输出 OFF、CH1 保护 ON（high 4V/low −2.5V）、CH2 SQU 50kHz 输出 OFF；
     多命令走私 `dg_query("*IDN?;*RST")` 被拒；`dg_output` 无 confirm 被拒。
     **写路径（改频率→回读→恢复）在 `--allow-write` 下可用，本轮未跑**（现场输出状态未知，

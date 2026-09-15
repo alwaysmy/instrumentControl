@@ -1,7 +1,7 @@
 # DH1766 控制经验总结
 
 实测环境：Windows 10 Pro + Python 3.11 + pyvisa 1.13（厂商 VISA `C:\Windows\system32\visa32.dll`）
-设备：北京大华 DH1766A-1，固件 V0.1.4.3，USB TMC：`USB0::0x0957::0xA007::100260004670::INSTR`
+设备：北京大华 DH1766A-1，固件 V0.1.4.3，USB TMC：`USB0::0x0957::0xA007::<serial>::INSTR`
 实测日期：2026-08-17（全功能验证 40/40 PASS，留痕见 `TEST_DATA/dh1766/dh1766_full_*.json`）
 补充实测：2026-09-08（输出模式四态互斥）、2026-09-13（远程模式 REM / RLST 查询，见 §3.1）
 

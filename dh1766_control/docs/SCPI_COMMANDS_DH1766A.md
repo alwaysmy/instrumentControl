@@ -1,7 +1,7 @@
 # DH1766A SCPI 命令速查
 
 来源：`DH1766A系列电源用户手册V2.1.pdf` 第四章《远程控制与指令集》（页 21-47，PDF 页码）。
-设备实测：`BJDH,DH1766A-1,0,V0.1.4.3`（USB TMC：`USB0::0x0957::0xA007::100260004670::INSTR`）
+设备实测：`BJDH,DH1766A-1,0,V0.1.4.3`（USB TMC：`USB0::0x0957::0xA007::<serial>::INSTR`）
 
 > **地址说明**：上面这个 USB 资源串是**当时实测值**，换 USB 口/换机会变（LAN 地址同理，
 > 会随 DHCP 漂移）。接入前先发现：`find_dh1766()` / `resolve("psu")` / `instr_discover`。

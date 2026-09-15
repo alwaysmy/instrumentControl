@@ -146,10 +146,10 @@
 |---|---|---|---|
 | `docs/TEST_RECORDS.md:18-19` | `TCPIP0::192.168.31.144::5025::SOCKET`（DH1766）、`.146::5555`（DHO）实测记录 | 历史实测时间线 | 保留；行首或段首加统一标注 |
 | `docs/TEST_RECORDS.md:24-25` | "新发现三台在线仪器…`.123`、`.206`、`.220`" | 历史实测时间线 | 保留；加标注 |
-| `docs/TEST_RECORDS.md:7` | `USB0::0x0957::0xA007::100260004670::INSTR` | 历史实测（USB 序列号） | 保留；加标注（USB 资源串随换口/序列号变化） |
+| `docs/TEST_RECORDS.md:7` | `USB0::0x0957::0xA007::<serial>::INSTR` | 历史实测（USB 序列号） | 保留；加标注（USB 资源串随换口/序列号变化） |
 | `docs/TEST_RECORDS.md:44,58` | `ASRL31`、`ASRL5`（串口号漂移） | 历史实测，文本已自带"会漂移"说明 | 无需改（已是正确写法范例） |
 | `docs/superpowers/specs/2026-08-23-common-discovery-design.md:119-121,127` | `192.168.31.111`/`.144` 同 MAC、扫描命中记录 | 设计文档中的实测发现记录 | 保留；段首加"（下列地址为 2026-08-23 实测，会变）" |
-| `dh1766_control/docs/EXPERIENCE.md:4,13` | `USB TMC：USB0::0x0957::0xA007::100260004670::INSTR` | 设备经验文档 | 保留；加标注（USB 换口/换机即变） |
+| `dh1766_control/docs/EXPERIENCE.md:4,13` | `USB TMC：USB0::0x0957::0xA007::<serial>::INSTR` | 设备经验文档 | 保留；加标注（USB 换口/换机即变） |
 | `dh1766_control/docs/SCPI_COMMANDS_DH1766A.md:4` | 同上（设备实测行） | 命令速查 | 保留；加标注 |
 | `docs/AI_OPERATION_GUIDE.md:11-15` | 5 个完整资源串 | **混合**：若保留地址列则须加标注；建议直接改为"发现入口"列（见 2.1） | 二选一，推荐删地址 |
 | `AGENTS.md:111-115`、`README.md:80-84` | 同上 | 同上 | 同上 |

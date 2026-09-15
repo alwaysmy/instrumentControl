@@ -4,7 +4,7 @@
 证据见 `docs/rigol_scope_compare_20260915.md`）；本文件只声明家族与型号解析，
 其余实现（波形/测量/截屏/快照/校验）在内核里——**修一处两系列同时受益**。
 
-实测基准：MHO984D（`RIGOL TECHNOLOGIES,MHO984D,MHO9B282003181,00.01.00`），
+实测基准：MHO984D（`RIGOL TECHNOLOGIES,MHO984D,MHO0000000001,00.01.00`），
 本系列 4 通道 12bit，1~2ch 4GSa/s / 3~4ch 1GSa/s，标准深度 100Mpts。
 命令来源：`docs/MHO900编程手册_output/`（480 页提取版）。
 

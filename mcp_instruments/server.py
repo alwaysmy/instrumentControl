@@ -20,6 +20,7 @@ dho_control(示波器) / dh1766_control(电源)，经 common 统一发现层。
     - 关机/输出类工具需显式 confirm=True；
     - 每次调用连接→操作→关闭（无状态）+ 全局设备锁串行化。
 """
+import contextlib
 import os
 import re
 import sys
@@ -55,6 +56,23 @@ for _req_type in (
 
 _DEVICE_LOCK = threading.Lock()
 _PREWARM_DONE = threading.Event()  # VISA/设备库冷启动完成前置位（看门狗放宽依据）
+
+
+def _env_float(name: str, default: float) -> float:
+    """读环境变量浮点覆盖值（坏值回退默认，配置写错不打断服务）。"""
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+# 看门狗与设备锁等待（设计见 _call 顶部；两者都可用环境变量覆盖，不必改码）：
+#   INSTRUMENT_CALL_BUDGET_S：单次调用墙钟上限，超时放弃并报 timeout
+#   INSTRUMENT_LOCK_WAIT_S  ：等设备锁的上限，超时报 device_busy（不再无限等）
+# 默认 150s：须长于最长合法操作（SDS auto_scale 闭环最坏 ~7 档 ×(PKPK+FREQ 各 6s
+# 超时) ≈ 90s+），否则会把正常慢操作误判成挂起。
+_CALL_BUDGET_S = _env_float("INSTRUMENT_CALL_BUDGET_S", 150.0)
+_LOCK_WAIT_S = _env_float("INSTRUMENT_LOCK_WAIT_S", 30.0)
 
 # 设备专用工具返回体里回填"本次实际用的地址"：模型名 → 解析层的 kind
 _MODEL_KIND = {"SDS": "sds", "SDG": "sdg", "DMM": "dmm", "DHO": "dho", "MHO": "mho",
@@ -106,36 +124,95 @@ def _err(error_type, msg, model=None, resource=None):
     return json.dumps(d, ensure_ascii=False, default=str)
 
 
-def _call(model_name, connect_fn, fn, close_fn=None, resource=None):
-    """统一执行：连接→操作→关闭，错误分类，全局锁串行化。
+def _call_locked(model_name, connect_fn, fn, close_fn=None, resource=None,
+                 lock_wait_s=None):
+    """持锁执行：连接→操作→关闭，错误分类。**不直接给工具用**（见 _call）。
 
-    close_fn 缺省时调 dev.close()（DH1766 无该方法，须显式传 _psu_close）。
-    resource 由通用工具显式传入；设备专用工具未传时，回填本次**实际解析出的地址**
-    （连接函数写入 _LAST_RESOLVED；都在 _DEVICE_LOCK 内，无并发问题）。
-    返回体带上资源串便于排障与留痕。
+    设备锁用 acquire(timeout) 而非无限等待：一旦前一个调用挂在 open 上（实测
+    VXI-11 可无视 open_timeout 挂 2min+）并占着锁，后续调用会**快速失败**并明确
+    告知原因，而不是全体无限排队（审查文档 D5 的另一半根因）。
+
+    stdout 兜底：连接与操作在 `redirect_stdout(sys.stderr)` 下执行——本仓库函数
+    （发现层/校准器）与第三方（pyvisa）都可能有 `print()`，而 stdio 模式下 stdout
+    是 JSON-RPC 协议通道，一旦被污染客户端就 `Connection closed`（2026-09-15 实测：
+    设备离线触发自动发现 → discovery 的 10 行 print 打进协议流 → 服务器掉线）。
+    根因已按库修（改 stderr），这里再兜一层防未来漏网。MCP SDK 在启动时已用
+    `sys.stdout.buffer` 捕获协议流，故重定向 `sys.stdout` 不影响协议写出；
+    所有设备操作都在 `_DEVICE_LOCK` 内串行，重定向窗口不会并发交叉。
     """
-    with _DEVICE_LOCK:
-        try:
-            dev = connect_fn()
-        except Exception as e:
-            return _err("connection", f"{type(e).__name__}: {e}", model_name, _out_res(model_name, resource))
-        res = _out_res(model_name, resource)
-        try:
-            return _ok(model_name, fn(dev), res)
-        except ValueError as e:
-            return _err("param_validation", str(e), model_name, res)
-        except RuntimeError as e:
-            return _err("device_error", str(e), model_name, res)
-        except Exception as e:
-            return _err("communication", f"{type(e).__name__}: {e}", model_name, res)
-        finally:
+    wait = _LOCK_WAIT_S if lock_wait_s is None else lock_wait_s
+    if not _DEVICE_LOCK.acquire(timeout=max(0.0, wait)):
+        return _err("device_busy",
+                    f"设备锁被占用超过 {wait:.0f}s（另有调用挂起未释放，通常是某台"
+                    "设备离线导致 open 卡住）；本次未向任何设备下发命令。"
+                    "可稍后重试，或重启 MCP 服务彻底恢复。",
+                    model_name, _out_res(model_name, resource))
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
             try:
-                if close_fn is not None:
-                    close_fn(dev)
-                elif hasattr(dev, "close"):
-                    dev.close()
-            except Exception:
-                pass
+                dev = connect_fn()
+            except Exception as e:
+                return _err("connection", f"{type(e).__name__}: {e}", model_name, _out_res(model_name, resource))
+            res = _out_res(model_name, resource)
+            try:
+                return _ok(model_name, fn(dev), res)
+            except ValueError as e:
+                return _err("param_validation", str(e), model_name, res)
+            except RuntimeError as e:
+                return _err("device_error", str(e), model_name, res)
+            except Exception as e:
+                return _err("communication", f"{type(e).__name__}: {e}", model_name, res)
+            finally:
+                try:
+                    if close_fn is not None:
+                        close_fn(dev)
+                    elif hasattr(dev, "close"):
+                        dev.close()
+                except Exception:
+                    pass
+    finally:
+        _DEVICE_LOCK.release()
+
+
+def _call(model_name, connect_fn, fn, close_fn=None, resource=None,
+          budget_s=None, lock_wait_s=None):
+    """**所有工具的统一入口**：看门狗（墙钟上限）+ 持锁执行。
+
+    为什么专用工具也要看门狗：设备的 `resource` 默认走解析链（含上次成功缓存），
+    缓存地址可能已过期——指向离线主机时 `open` 会挂起（VXI-11 实测无视
+    `open_timeout`）。通用工具早先已加看门狗，专用工具当时没有 → 同一个失效地址
+    走专用工具即永久冻结。现在统一：调用跑在守护线程里，`join(budget_s)` 到点
+    即返回 `timeout`（挂起线程随进程退出，不会永久占住线程）。
+
+    ⚠ 局限性（如实记录）：看门狗**不释放设备锁**——Python 无法中断持有锁的线程。
+    所以超时后，本服务器进入"快速失败"模式：后续调用由 `_call_locked` 的锁超时
+    报 `device_busy`（不再无限卡死），但真正的恢复需要重启 MCP 进程。要彻底消除
+    该模式需改成**按设备分锁**（一台设备挂起只影响它自己），但那要重新论证
+    VISA 运行时的并发安全假设，属独立课题，不在此改。
+
+    budget_s=None 时用 `_CALL_BUDGET_S`；预热未完成（VISA 冷启动实测 30-40s）再
+    放宽 90s，防误杀首调用。close_fn 缺省调 dev.close()（DH1766 须显式传 _psu_close）。
+    """
+    budget = (_CALL_BUDGET_S if budget_s is None else budget_s)
+    if not _PREWARM_DONE.is_set():
+        budget += 90.0
+    holder: dict = {}
+
+    def work():
+        holder["r"] = _call_locked(model_name, connect_fn, fn, close_fn, resource,
+                                   lock_wait_s)
+
+    t = threading.Thread(target=work, daemon=True)
+    t.start()
+    t.join(budget)
+    if t.is_alive():
+        return _err("timeout",
+                    f"{model_name} 调用超过 {budget:.0f}s 未返回（设备离线/总线挂起）。"
+                    "已放弃等待；挂起线程仍占着设备锁，后续调用会改报 device_busy，"
+                    "重启 MCP 服务可彻底恢复。",
+                    model_name, _out_res(model_name, resource))
+    return holder.get("r") or _err("internal", "worker 未返回结果", model_name,
+                                   _out_res(model_name, resource))
 
 
 
@@ -285,11 +362,17 @@ def instr_discover(cidr: str | None = None) -> str:
     import concurrent.futures as cf
     from common.discovery import (
         detect_cidr,
+        forget_hanging_ports,
         identify,
         identify_lan,
         list_resources,
         probe_alive,
+        probe_serials_isolated,
     )
+
+    # 显式重新发现：清空"挂起串口"缓存，允许重新探测这些口（自动发现路径会跳过
+    # 它们以省时；只有用户主动调本工具时才值得重试一遍）
+    forget_hanging_ports()
 
     def fn(_):
         # VISA 资源（USB/串口/GPIB）先探测——不依赖网段，代理干扰不影响
@@ -305,62 +388,26 @@ def instr_discover(cidr: str | None = None) -> str:
                 entry.update(kind="other", online=None)
             return entry
 
-        def probe_serial(r: str, rm, timeout_s: float = 6.0):
-            """串口探测：被占用给提示；空闲则 *IDN? 后立即断开。
-
-            驱动层 open 可能无限挂起（open_timeout 管不到），故串口不进并行池
-            （会拖死全部 worker），单独线程 join 硬超时；挂起线程为 daemon
-            随进程退出。RM 由调用方共享单例传入——每探测各建 RM 曾致原生层
-            崩溃（8 串口实测 2026-09-03，进程直接死亡）。
-            """
-            result: dict = {}
-
-            def work():
-                try:
-                    inst = rm.open_resource(r, open_timeout=2000)
-                    inst.timeout = 1500
-                    inst.write_termination = "\n"
-                    inst.read_termination = "\n"
-                    try:
-                        idn = inst.query("*IDN?").strip()
-                        if idn:
-                            result.update(online=True, idn=idn)
-                        else:
-                            result.update(
-                                online=False,
-                                note="打开成功但无 *IDN? 响应（非 SCPI 设备或波特率不匹配）",
-                            )
-                    finally:
-                        inst.close()
-                except Exception as e:
-                    if "BUSY" in str(e).upper() or getattr(e, "error_code", 0) == -1073807346:
-                        result.update(online=None, note="串口被占用（其他程序打开中）")
-                    else:
-                        result.update(online=None, note=f"打开失败: {type(e).__name__}")
-
-            t = threading.Thread(target=work, daemon=True)
-            t.start()
-            t.join(timeout_s)
-            if t.is_alive():
-                return {"online": None, "note": f"探测超时({timeout_s:.0f}s，驱动挂起，疑似被占用)"}
-            return result
-
+        # 串口：**子进程隔离**探测（每口一进程，并行）。
+        # 为什么不是本进程线程：驱动层 open 可能永久挂起，线程 join 超时只是
+        # "放弃等待"——那个线程仍卡在驱动里持有 VISA 原生状态，之后本进程任何
+        # VISA 调用都会让进程直接死亡（2026-09-15 实测，MCP 反复掉线）。
+        # 子进程超时可 kill，卡住的句柄随子进程一起消失（见
+        # common/discovery.probe_serial_isolated 的完整说明）。
         resources = list_resources()
         non_serial = [r for r in resources if not r.upper().startswith("ASRL")]
         serial_res = [r for r in resources if r.upper().startswith("ASRL")]
         with cf.ThreadPoolExecutor(max_workers=16) as pool:
             visa = list(pool.map(probe_visa, non_serial))
-        rm_serial = pyvisa.ResourceManager()
-        try:
-            for r in serial_res:
-                entry = {"resource": r, "kind": "serial"}
-                entry.update(probe_serial(r, rm_serial))
-                visa.append(entry)
-        finally:
-            try:
-                rm_serial.close()
-            except Exception:
-                pass
+        for entry in probe_serials_isolated(serial_res, timeout_ms=1500):
+            idn = entry.get("idn")
+            item = {"resource": entry["resource"], "kind": "serial",
+                    "online": bool(idn) if idn else (None if entry.get("note") else False)}
+            if idn:
+                item["idn"] = idn
+            if entry.get("note"):
+                item["note"] = entry["note"]
+            visa.append(item)
 
         # LAN 网段扫描（代理 fake-IP 会污染，任何异常降级为警告，不拖垮 VISA 结果）
         seg = cidr or detect_cidr()
@@ -601,34 +648,16 @@ def _visa(resource: str, timeout_ms: int = 5000):
 
 
 def _guarded_call(resource: str, timeout_ms: int, fn) -> str:
-    """带硬超时看门狗的 _call（通用工具专用）。
+    """通用工具入口：预算由调用方 `timeout_ms` 推出，墙钟兜底与锁超时都交给
+    统一 `_call`（专用工具走的是同一个入口，不再有两套看门狗实现）。
 
-    实测（2026-09-03）：DMM 离线时 VXI-11 open 无视 open_timeout 挂起 2min+，
-    而 VISA 全局锁会让全部后续工具连锁冻结。通用工具会指向任意发现地址
-    （含离线），必须在 MCP 层兜底：connect+fn 跑 daemon 线程，join 硬超时。
-    超时后挂起线程仍占用 _DEVICE_LOCK，后续调用会继续超时直至 MCP 重启——
-    宁可报错也不冻死服务器。
-    看门狗预算 = max(30, 12+timeout_ms)；若预热未完成（VISA 冷启动实测 30-40s，
-    且工作线程 import 会被预热线程的 import 锁串行阻塞）再放宽 90s，防误杀首调用。
+    通用工具会指向**任意**发现到的地址（含离线），故预算比专用工具保守：
+    max(30, 12+timeout_ms)——下限 30s 覆盖 VISA 冷启动，随后随调用方给的
+    timeout_ms 增长（clamp 500-30000ms）。
     """
     budget = max(30.0, 12.0 + timeout_ms / 1000.0)
-    if not _PREWARM_DONE.is_set():
-        budget += 90.0
-    holder: dict = {}
-
-    def work():
-        holder["r"] = _call("instruments", lambda: _visa(resource, timeout_ms), fn,
-                            resource=resource)
-
-    t = threading.Thread(target=work, daemon=True)
-    t.start()
-    t.join(budget)
-    if t.is_alive():
-        return _err("timeout",
-                    f"设备 {resource} 无响应超过 {budget:.0f}s（离线/总线挂起），"
-                    "已放弃本次调用；后续调用可能仍超时（挂起线程占用设备锁）",
-                    "instruments", resource)
-    return holder.get("r") or _err("internal", "worker 未返回结果", "instruments", resource)
+    return _call("instruments", lambda: _visa(resource, timeout_ms), fn,
+                 resource=resource, budget_s=budget)
 
 
 def _audit_scpi(tool: str, resource: str, cmd: str, **extra) -> str:

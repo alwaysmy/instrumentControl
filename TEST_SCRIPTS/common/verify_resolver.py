@@ -34,10 +34,10 @@ results: list[dict] = []
 
 # 真实 *IDN? 文本（取自 TEST_DATA 留痕）
 IDNS = {
-    "sds": "Siglent Technologies,SDS824X HD,SDS08A0C8R0274,2.8.12.1.1.6.5",
-    "sdg": "Siglent Technologies,SDG2122X,SDG2XFBX800780,2.01.01.38R4",
-    "dmm": "Keysight Technologies,34465A,MY59026806,A.03.02-03.15-03.02-00.52-05-02",
-    "dho": "RIGOL TECHNOLOGIES,DHO924S,DHO9A253600386,KFCVME50114",
+    "sds": "Siglent Technologies,SDS824X HD,SDS0000000001,2.8.12.1.1.6.5",
+    "sdg": "Siglent Technologies,SDG2122X,SDG0000000001,2.01.01.38R4",
+    "dmm": "Keysight Technologies,34465A,MY00000000,A.03.02-03.15-03.02-00.52-05-02",
+    "dho": "RIGOL TECHNOLOGIES,DHO924S,DHO0000000001,KFCVME50114",
     "psu": "BJDH,DH1766A-1,0,V0.1.4.3",
 }
 

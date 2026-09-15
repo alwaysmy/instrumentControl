@@ -5,7 +5,7 @@
 按手册逐条补充并实测。
 
 已实测确认（2026-08-24，ASRL31 串口）：
-    *IDN? -> 'Emoe R&D,EmoeCalibrator,SN20260507,A1526'
+    *IDN? -> 'Emoe R&D,EmoeCalibrator,<serial>,<asset>'
 """
 
 # ---- IEEE 488.2 必需命令（SCPI-99 §4.11；存在性待逐条实测确认）----

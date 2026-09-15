@@ -250,7 +250,13 @@ CH2 的 −11.99V 是跟踪跟随，不是故障；同时任何远程会话都�
 - ~~设备序列号/现场地址散落在文档与脚本里~~ **已收敛（2026-09-15）**：真实序列号
   统一移入 `docs/DEVICE_FACTS.local.md`（本机专有、已 gitignore），仓库内一律用
   `<serial>`/占位符；`TEST_DATA/` 整体不入库（体积 + 含序列号与网内 IP）。
-- **看门狗/锁语义**（2026-09-15 实测修复）：所有工具统一走 `_call`（墙钟看门狗 +
-  限时设备锁），`device_busy` 表示"上次调用挂起未释放、需重启 MCP"；串口探测改为
-  **子进程隔离**（本进程线程探测会留下卡死线程，导致后续任何 VISA 调用打死服务器）。
-  可用 `INSTRUMENT_CALL_BUDGET_S` / `INSTRUMENT_LOCK_WAIT_S` 调阈值。
+- **看门狗/锁语义 → 已升级为统一异步调用边界**（2026-09-15）：所有工具经
+  `@device_tool` 注册，由**单 worker 执行器**串行执行（MCP 层 async，设备 I/O 仍在
+  worker 线程；50 个工具函数体一行未改）。语义：设备忙→立即 `device_busy`（不排队）；
+  等待上限默认 150s（`sds_auto_scale` 300s，`INSTRUMENT_CALL_BUDGET_S` 可覆盖）；
+  **超时 ≠ 操作终止**——worker 会跑完、设备保持 BUSY，之后自动恢复；事件循环不再被
+  慢调用冻结。设计评审（含与网页版 GPT 的两轮辩论）见
+  `docs/gpt_qa/20260915-mcp-async-refactor.md`。
+- 串口探测**子进程隔离**：本进程线程探测会留下卡死线程，导致后续任何 VISA 调用打死
+  服务器（2026-09-15 实测）。另：非串口批量识别须**共享单个 ResourceManager**——
+  多线程各建 RM 会随机 `VI_ERROR_INV_OBJECT`（`common.discovery.identify_all`）。

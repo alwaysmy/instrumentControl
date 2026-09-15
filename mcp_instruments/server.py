@@ -20,7 +20,11 @@ dho_control(示波器) / dh1766_control(电源)，经 common 统一发现层。
     - 关机/输出类工具需显式 confirm=True；
     - 每次调用连接→操作→关闭（无状态）+ 全局设备锁串行化。
 """
+import asyncio
+import concurrent.futures
 import contextlib
+import functools
+import inspect
 import os
 import re
 import sys
@@ -28,6 +32,7 @@ import json
 import csv
 import time
 import threading
+import typing
 from datetime import datetime
 from pathlib import Path
 
@@ -124,95 +129,233 @@ def _err(error_type, msg, model=None, resource=None):
     return json.dumps(d, ensure_ascii=False, default=str)
 
 
-def _call_locked(model_name, connect_fn, fn, close_fn=None, resource=None,
-                 lock_wait_s=None):
-    """持锁执行：连接→操作→关闭，错误分类。**不直接给工具用**（见 _call）。
+def _call(model_name, connect_fn, fn, close_fn=None, resource=None,
+          lock_wait_s=None):
+    """**同步执行体**：持锁 → 连接 → 操作 → 关闭，错误分类。
 
-    设备锁用 acquire(timeout) 而非无限等待：一旦前一个调用挂在 open 上（实测
-    VXI-11 可无视 open_timeout 挂 2min+）并占着锁，后续调用会**快速失败**并明确
-    告知原因，而不是全体无限排队（审查文档 D5 的另一半根因）。
+    只被 `_DeviceExecutor` 的 worker 线程调用（经 `@device_tool` 装饰器），
+    **不要**在事件循环线程里直接调它——它会阻塞。
 
-    stdout 兜底：连接与操作在 `redirect_stdout(sys.stderr)` 下执行——本仓库函数
-    （发现层/校准器）与第三方（pyvisa）都可能有 `print()`，而 stdio 模式下 stdout
-    是 JSON-RPC 协议通道，一旦被污染客户端就 `Connection closed`（2026-09-15 实测：
-    设备离线触发自动发现 → discovery 的 10 行 print 打进协议流 → 服务器掉线）。
-    根因已按库修（改 stderr），这里再兜一层防未来漏网。MCP SDK 在启动时已用
-    `sys.stdout.buffer` 捕获协议流，故重定向 `sys.stdout` 不影响协议写出；
-    所有设备操作都在 `_DEVICE_LOCK` 内串行，重定向窗口不会并发交叉。
+    设备锁：单 worker 下正常情况下没有竞争者，此处 `acquire(timeout)` 只作
+    第二道防线（防止将来有代码绕过 executor 直接碰 VISA）——真要等满 timeout，
+    恰恰说明有这个 bug 或异常路径长期占锁，是有价值的告警信号。
     """
     wait = _LOCK_WAIT_S if lock_wait_s is None else lock_wait_s
     if not _DEVICE_LOCK.acquire(timeout=max(0.0, wait)):
         return _err("device_busy",
-                    f"设备锁被占用超过 {wait:.0f}s（另有调用挂起未释放，通常是某台"
-                    "设备离线导致 open 卡住）；本次未向任何设备下发命令。"
-                    "可稍后重试，或重启 MCP 服务彻底恢复。",
+                    f"设备锁被占用超过 {wait:.0f}s（有路径绕过统一执行器，或异常"
+                    "路径长期占锁）；本次未向任何设备下发命令。重启 MCP 服务可恢复。",
                     model_name, _out_res(model_name, resource))
     try:
-        with contextlib.redirect_stdout(sys.stderr):
+        try:
+            dev = connect_fn()
+        except Exception as e:
+            return _err("connection", f"{type(e).__name__}: {e}", model_name, _out_res(model_name, resource))
+        res = _out_res(model_name, resource)
+        try:
+            return _ok(model_name, fn(dev), res)
+        except ValueError as e:
+            return _err("param_validation", str(e), model_name, res)
+        except RuntimeError as e:
+            return _err("device_error", str(e), model_name, res)
+        except Exception as e:
+            return _err("communication", f"{type(e).__name__}: {e}", model_name, res)
+        finally:
             try:
-                dev = connect_fn()
-            except Exception as e:
-                return _err("connection", f"{type(e).__name__}: {e}", model_name, _out_res(model_name, resource))
-            res = _out_res(model_name, resource)
-            try:
-                return _ok(model_name, fn(dev), res)
-            except ValueError as e:
-                return _err("param_validation", str(e), model_name, res)
-            except RuntimeError as e:
-                return _err("device_error", str(e), model_name, res)
-            except Exception as e:
-                return _err("communication", f"{type(e).__name__}: {e}", model_name, res)
-            finally:
-                try:
-                    if close_fn is not None:
-                        close_fn(dev)
-                    elif hasattr(dev, "close"):
-                        dev.close()
-                except Exception:
-                    pass
+                if close_fn is not None:
+                    close_fn(dev)
+                elif hasattr(dev, "close"):
+                    dev.close()
+            except Exception:
+                pass
     finally:
         _DEVICE_LOCK.release()
 
 
-def _call(model_name, connect_fn, fn, close_fn=None, resource=None,
-          budget_s=None, lock_wait_s=None):
-    """**所有工具的统一入口**：看门狗（墙钟上限）+ 持锁执行。
+# ============ 异步调用边界（单 worker 执行器）============
+#
+# 为什么要有这一层（2026-09-15 定稿，设计评审见 docs/gpt_qa/20260915-mcp-async-refactor.md）：
+#
+# FastMCP 对**同步**工具直接 `fn(**args)` 跑在事件循环线程上（读 SDK 源码确认，
+# 1.27.0 的 tools 分支没有 to_thread）。而设备 I/O 是阻塞的、最坏约 90s（auto_scale）
+# → 整个事件循环被冻结那么久：协议层收不到/发不出任何消息，超时也无法在等锁阶段生效。
+#
+# 本层把「异步」收敛到**唯一一处**（不改 50 个工具的实现）：
+#     MCP(事件循环) → admission 闸门 → 单 worker 线程 → 原来的同步函数 → VISA
+#
+# 三条核心语义（都是实测教训的产物）：
+#   1. 设备占用状态绑定**真正执行 VISA 的 worker**，不绑定等待结果的协程——
+#      否则协程超时返回后锁就没了，下一个请求会与仍在跑的 VISA 并发（危险）；
+#   2. MCP 超时 ≠ 操作终止：超时只是「调用方不再等待」，worker 继续跑、设备保持
+#      BUSY，后续请求立即拿到 device_busy（而不是白等一轮锁超时）；
+#   3. BUSY 只在 worker 的 Future 真正 done 时清除（在事件循环线程里清）。
+#
+# 局限（如实记录）：超时后 worker 仍会跑完——Python 无法安全强杀线程。若某天真
+# 需要「到点无条件恢复」，只能把 VISA 挪进子进程再 kill（另立课题）。
 
-    为什么专用工具也要看门狗：设备的 `resource` 默认走解析链（含上次成功缓存），
-    缓存地址可能已过期——指向离线主机时 `open` 会挂起（VXI-11 实测无视
-    `open_timeout`）。通用工具早先已加看门狗，专用工具当时没有 → 同一个失效地址
-    走专用工具即永久冻结。现在统一：调用跑在守护线程里，`join(budget_s)` 到点
-    即返回 `timeout`（挂起线程随进程退出，不会永久占住线程）。
+_EXECUTOR: "_DeviceExecutor | None" = None
+_STDOUT_FIXED = False
 
-    ⚠ 局限性（如实记录）：看门狗**不释放设备锁**——Python 无法中断持有锁的线程。
-    所以超时后，本服务器进入"快速失败"模式：后续调用由 `_call_locked` 的锁超时
-    报 `device_busy`（不再无限卡死），但真正的恢复需要重启 MCP 进程。要彻底消除
-    该模式需改成**按设备分锁**（一台设备挂起只影响它自己），但那要重新论证
-    VISA 运行时的并发安全假设，属独立课题，不在此改。
 
-    budget_s=None 时用 `_CALL_BUDGET_S`；预热未完成（VISA 冷启动实测 30-40s）再
-    放宽 90s，防误杀首调用。close_fn 缺省调 dev.close()（DH1766 须显式传 _psu_close）。
+def _fix_stdout_once() -> None:
+    """把 `sys.stdout` 永久指向 stderr（只做一次，首次工具调用时）。
+
+    为什么需要：stdio 模式下 stdout 是 JSON-RPC 协议通道，底层库（本仓库历史代码、
+    pyvisa 等）可能 `print()`，污染协议流会让客户端直接断开（2026-09-15 实测过）。
+
+    为什么是「首次工具调用时」而不是启动时：`mcp/server/stdio.py` 在 `mcp.run()`
+    内部才执行 `TextIOWrapper(sys.stdout.buffer)` 捕获协议流。若在 `run()` 之前就
+    改 `sys.stdout`，捕获到的就是 **stderr 的 buffer** → 协议写到 stderr → 服务器
+    等于死了。首次工具调用必然晚于 transport 绑定，是最晚可证的时机（时序分析见
+    评审文档 Q3-①）。检查与赋值之间没有 await，单事件循环下无需加锁。
+
+    局限：只覆盖 Python 层经 `sys.stdout` 的输出；`os.write(1, ...)` 或 native 库
+    直接写 fd 1 的不受影响（但那些也改不了——`os.dup2(2, 1)` 会把协议 writer 的
+    底层 fd 一起换掉，绝不能做）。
     """
-    budget = (_CALL_BUDGET_S if budget_s is None else budget_s)
-    if not _PREWARM_DONE.is_set():
-        budget += 90.0
-    holder: dict = {}
+    global _STDOUT_FIXED
+    if _STDOUT_FIXED:
+        return
+    _STDOUT_FIXED = True
+    if sys.stdout is not sys.stderr:
+        sys.stdout = sys.stderr
 
-    def work():
-        holder["r"] = _call_locked(model_name, connect_fn, fn, close_fn, resource,
-                                   lock_wait_s)
 
-    t = threading.Thread(target=work, daemon=True)
-    t.start()
-    t.join(budget)
-    if t.is_alive():
-        return _err("timeout",
-                    f"{model_name} 调用超过 {budget:.0f}s 未返回（设备离线/总线挂起）。"
-                    "已放弃等待；挂起线程仍占着设备锁，后续调用会改报 device_busy，"
-                    "重启 MCP 服务可彻底恢复。",
-                    model_name, _out_res(model_name, resource))
-    return holder.get("r") or _err("internal", "worker 未返回结果", model_name,
-                                   _out_res(model_name, resource))
+class _DeviceExecutor:
+    """单 worker 设备执行器：准入闸门 + 墙钟 deadline + 线程封闭。
+
+    - 所有设备 I/O 只在这一个 worker 线程里发生（thread confinement，比"多线程
+      抢一把锁"更容易推理）；
+    - BUSY 期间新请求**立即**返回 device_busy，不排队、不白等；
+    - deadline 到期只放弃等待，不清 BUSY（worker 还在跑，见模块级说明）。
+    """
+
+    def __init__(self, default_budget_s: float):
+        self._pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="visa")
+        self._default_budget = default_budget_s
+        self._busy = False          # 只在事件循环线程读写（见 _on_done）
+        self._started_at = 0.0
+
+    def _on_done(self, _fut) -> None:
+        """worker 的 Future 真正完成时清除 BUSY。
+
+        由 asyncio 在**事件循环线程**里调度，因此 `_busy` 全程只被同一个线程读写，
+        不需要跨线程同步（此前打算在 worker 的 finally 里清，会留下「BUSY=False
+        但 Future 未 done」的语义窗口，且引入跨线程共享状态）。
+        """
+        self._busy = False
+
+    def _budget_for(self, budget_s, args, kwargs) -> float:
+        """预算解析：None→默认；数值→直接用；可调用→按本次入参算（通用工具的预算
+        随 `timeout_ms` 变，需要这种动态形式）。预热未完成（VISA 冷启动实测
+        30-40s）再放宽 90s，防误杀首调用。"""
+        if budget_s is None:
+            b = self._default_budget
+        elif callable(budget_s):
+            b = budget_s(args, kwargs)
+        else:
+            b = budget_s
+        b = float(b)
+        if not _PREWARM_DONE.is_set():
+            b += 90.0
+        return b
+
+    async def run(self, fn, budget_s=None, label: str = "call",
+                  args=(), kwargs=None) -> str:
+        budget = self._budget_for(budget_s, args, kwargs or {})
+
+        # 检查与置位之间没有 await → 对同一事件循环内的其它协程是原子的
+        if self._busy:
+            waited = time.monotonic() - self._started_at
+            return _err("device_busy",
+                        f"设备正被另一个调用占用（已运行 {waited:.0f}s），本次未向任何"
+                        "设备下发命令、也未排队。等它结束后重试；若它已超时仍长时间"
+                        "BUSY，说明底层驱动真的卡死了——重启 MCP 服务可恢复。",
+                        label)
+        self._busy = True
+        self._started_at = time.monotonic()
+
+        loop = asyncio.get_running_loop()
+        try:
+            fut = loop.run_in_executor(self._pool, fn)
+        except BaseException:
+            self._busy = False
+            raise
+        fut.add_done_callback(self._on_done)
+
+        try:
+            # shield：wait_for 超时只取消"等待"，不取消底层 future——
+            # 保证 worker 继续跑完并把设备状态收干净（VISA 会话正常关闭）。
+            return await asyncio.wait_for(asyncio.shield(fut), timeout=budget)
+        except asyncio.TimeoutError:
+            elapsed = time.monotonic() - self._started_at
+            _log(f"{label} 超过 deadline {budget:.0f}s（已运行 {elapsed:.0f}s）——"
+                 f"放弃等待；worker 仍在跑，设备保持 BUSY 直到它真正结束")
+            return _err("timeout",
+                        f"等待超过 {budget:.0f}s 已放弃（设备离线/驱动挂起）。注意："
+                        "超时只代表不再等待，操作**可能仍在执行或随后成功**——"
+                        "有副作用的命令请回读确认；期间其它设备调用会返回 device_busy。",
+                        label)
+
+
+def _log(msg: str) -> None:
+    """服务端日志走 stderr（stdout 是协议通道）。"""
+    print(f"[instruments] {msg}", file=sys.stderr, flush=True)
+
+
+def device_tool(budget_s=None):
+    """注册一个 MCP 工具，并把它接入统一异步执行器。
+
+    用法与 `@device_tool()` 完全一致，只是把装饰器换成本函数：
+        @device_tool()                    # 用默认预算
+        @device_tool(budget_s=300.0)      # 实测确认的慢操作
+        @device_tool(budget_s=lambda kw: ...)  # 按入参动态算预算
+
+    返回**原同步函数**（不是包装器）：模块内其它代码直接调用 `foo()` 时行为不变，
+    只有 MCP 注册表持有 async 包装——对既有代码侵入最小。
+    """
+    def deco(fn):
+        @functools.wraps(fn)
+        async def wrapper(*args, **kwargs):
+            _fix_stdout_once()
+            return await _executor().run(functools.partial(fn, *args, **kwargs),
+                                         budget_s, label=fn.__name__,
+                                         args=args, kwargs=kwargs)
+        _preserve_signature(wrapper, fn)   # 保 50 个工具的入参 schema 不变
+        mcp.tool()(wrapper)
+        return fn
+    return deco
+
+
+def _preserve_signature(wrapper, fn) -> None:
+    """让包装器的签名/注解与原函数逐字一致，保证 FastMCP 生成的 JSON Schema 不变。
+
+    本模块启用了 `from __future__ import annotations`，所以注解都是**字符串**，
+    FastMCP 走 `inspect.signature(func, eval_str=True)` 解析。`functools.wraps`
+    通常够（同模块 globals 相同），但这里显式解析并固定一次，消除"将来把工具挪到
+    别的模块"或 SDK 改用 `get_type_hints()` 时的静默漂移。
+    """
+    try:
+        hints = typing.get_type_hints(fn, include_extras=True)
+    except Exception:
+        hints = {}
+    sig = inspect.signature(fn)
+    params = [p.replace(annotation=hints.get(n, p.annotation))
+              for n, p in sig.parameters.items()]
+    wrapper.__signature__ = sig.replace(
+        parameters=params,
+        return_annotation=hints.get("return", sig.return_annotation))
+    if hints:
+        wrapper.__annotations__ = dict(hints)
+
+
+def _executor() -> _DeviceExecutor:
+    """惰性取执行器（首次调用时创建，避免 import 期就占一个线程）。"""
+    global _EXECUTOR
+    if _EXECUTOR is None:
+        _EXECUTOR = _DeviceExecutor(_CALL_BUDGET_S)
+    return _EXECUTOR
 
 
 
@@ -342,7 +485,7 @@ def _psu_close(p: DH1766) -> None:
 
 # ============ 发现 ============
 
-@mcp.tool()
+@device_tool()
 def instr_discover(cidr: str | None = None) -> str:
     """发现本机所有仪器。返回：
     lan: 网段扫描（TCP 预筛 + 多协议 *IDN?，键=资源串 值=IDN）；
@@ -364,6 +507,7 @@ def instr_discover(cidr: str | None = None) -> str:
         detect_cidr,
         forget_hanging_ports,
         identify,
+        identify_all,
         identify_lan,
         list_resources,
         probe_alive,
@@ -376,29 +520,26 @@ def instr_discover(cidr: str | None = None) -> str:
 
     def fn(_):
         # VISA 资源（USB/串口/GPIB）先探测——不依赖网段，代理干扰不影响
-
-        def probe_visa(r: str):
-            """非串口 VISA 资源探测（USB/GPIB 走 VISA，有 open_timeout 兜底）。"""
-            up = r.upper()
-            entry = {"resource": r}
-            if "INSTR" in up:
-                idn = identify(r, timeout_ms=2000)
-                entry.update(kind="usb/gpib", online=bool(idn), idn=idn)
-            else:
-                entry.update(kind="other", online=None)
-            return entry
+        def make_entry(r: str, idn) -> dict:
+            """非串口 VISA 资源条目（USB/GPIB 走 VISA，有 open_timeout 兜底）。"""
+            if "INSTR" in r.upper():
+                return {"resource": r, "kind": "usb/gpib", "online": bool(idn), "idn": idn}
+            return {"resource": r, "kind": "other", "online": None}
 
         # 串口：**子进程隔离**探测（每口一进程，并行）。
         # 为什么不是本进程线程：驱动层 open 可能永久挂起，线程 join 超时只是
         # "放弃等待"——那个线程仍卡在驱动里持有 VISA 原生状态，之后本进程任何
         # VISA 调用都会让进程直接死亡（2026-09-15 实测，MCP 反复掉线）。
         # 子进程超时可 kill，卡住的句柄随子进程一起消失（见
-        # common/discovery.probe_serial_isolated 的完整说明）。
+        # common.discovery.probe_serial_isolated 的完整说明）。
         resources = list_resources()
         non_serial = [r for r in resources if not r.upper().startswith("ASRL")]
         serial_res = [r for r in resources if r.upper().startswith("ASRL")]
-        with cf.ThreadPoolExecutor(max_workers=16) as pool:
-            visa = list(pool.map(probe_visa, non_serial))
+        # 非串口：共享单个 ResourceManager + 低并发识别。
+        # 实测（2026-09-15）16 线程各自建 RM 会随机 VI_ERROR_INV_OBJECT（VISA 运行时
+        # 初始化竞争）→ 整轮 discover 间歇性失败；identify_all 统一收口该问题。
+        idns = identify_all(non_serial, timeout_ms=2000, workers=4)
+        visa = [make_entry(r, idns.get(r)) for r in non_serial]
         for entry in probe_serials_isolated(serial_res, timeout_ms=1500):
             idn = entry.get("idn")
             item = {"resource": entry["resource"], "kind": "serial",
@@ -474,7 +615,7 @@ def instr_discover(cidr: str | None = None) -> str:
 # 恢复顺序见 AGENTS.md 铁律#14：先重连 → 不行再重启该 USB 的 PnP 设备
 # （USB 重新枚举，**仪器固件不重启、设定不丢**；DG832 实测 2.4s 恢复）→ 最后才拔插/断电。
 
-@mcp.tool()
+@device_tool()
 def usb_reset(kind: str | None = None, resource: str | None = None,
               confirm: bool = False, escalate: bool = False,
               verify_idn: bool = True, timeout_s: int = 20) -> str:
@@ -656,17 +797,23 @@ def _visa(resource: str, timeout_ms: int = 5000):
     return VisaClient(resource, timeout_ms=max(500, min(timeout_ms, 30000)))
 
 
-def _guarded_call(resource: str, timeout_ms: int, fn) -> str:
-    """通用工具入口：预算由调用方 `timeout_ms` 推出，墙钟兜底与锁超时都交给
-    统一 `_call`（专用工具走的是同一个入口，不再有两套看门狗实现）。
+def _generic_budget(args, kwargs) -> float:
+    """通用工具预算：随调用方 `timeout_ms` 走（下限 30s 覆盖 VISA 冷启动）。
 
-    通用工具会指向**任意**发现到的地址（含离线），故预算比专用工具保守：
-    max(30, 12+timeout_ms)——下限 30s 覆盖 VISA 冷启动，随后随调用方给的
-    timeout_ms 增长（clamp 500-30000ms）。
+    通用工具会指向**任意**发现到的地址（含离线），给它的等待上限要与它自己的
+    IO 超时相称——不能像专用工具那样一刀切用默认预算。
     """
-    budget = max(30.0, 12.0 + timeout_ms / 1000.0)
+    try:
+        t = float(kwargs.get("timeout_ms", 5000))
+    except (TypeError, ValueError):
+        t = 5000.0
+    return max(30.0, 12.0 + t / 1000.0)
+
+
+def _guarded_call(resource: str, timeout_ms: int, fn) -> str:
+    """通用工具的同步执行体（预算在 `@device_tool(budget_s=_generic_budget)` 层）。"""
     return _call("instruments", lambda: _visa(resource, timeout_ms), fn,
-                 resource=resource, budget_s=budget)
+                 resource=resource)
 
 
 def _audit_scpi(tool: str, resource: str, cmd: str, **extra) -> str:
@@ -681,7 +828,7 @@ def _audit_scpi(tool: str, resource: str, cmd: str, **extra) -> str:
     return str(p)
 
 
-@mcp.tool()
+@device_tool(budget_s=_generic_budget)
 def instr_query(resource: str, cmd: str, timeout_ms: int = 5000) -> str:
     """通用 SCPI 查询——新设备零代码接入：拿到 resource 即可对照手册直发查询。
     resource: 完整 VISA 资源串（instr_discover 可得）；
@@ -711,7 +858,7 @@ def instr_query(resource: str, cmd: str, timeout_ms: int = 5000) -> str:
     return _guarded_call(resource, timeout_ms, fn)
 
 
-@mcp.tool()
+@device_tool(budget_s=_generic_budget)
 def instr_write(resource: str, cmd: str, readback_cmd: str | None = None,
                 confirm: bool = False, timeout_ms: int = 5000) -> str:
     """通用 SCPI 写——新设备零代码接入。⚠ 必须 confirm=True（raw 写权限大）。
@@ -768,13 +915,13 @@ def instr_write(resource: str, cmd: str, readback_cmd: str | None = None,
 
 # ============ SDS 示波器 ============
 
-@mcp.tool()
+@device_tool()
 def sds_status(resource: str | None = None) -> str:
     """SDS 示波器只读快照：IDN/采集/时基/触发/各通道档位耦合。"""
     return _call("SDS", lambda: _sds(resource), lambda s: s.snapshot())
 
 
-@mcp.tool()
+@device_tool(budget_s=300.0)
 def sds_auto_scale(ch: int, use_autoset: bool = False, resource: str | None = None) -> str:
     """SDS 自动定标让通道 ch(1-4) 波形正确显示。
     use_autoset=True 为破坏性 :AUToset（重置所有通道档位/时基/触发），仅限
@@ -783,7 +930,7 @@ def sds_auto_scale(ch: int, use_autoset: bool = False, resource: str | None = No
                  lambda s: s.auto_scale(ch, use_autoset=use_autoset))
 
 
-@mcp.tool()
+@device_tool()
 def sds_measure(item: str, ch: int = 4, resource: str | None = None) -> str:
     """SDS 单次测量（SIMPLE 模式，自动切模式+设信源）。ch=1-4。
     item 枚举（SIMPle:ITEM 表，51 项全支持）：PKPK/MAX/MIN/AMPL/TOP/BASE/
@@ -796,7 +943,7 @@ def sds_measure(item: str, ch: int = 4, resource: str | None = None) -> str:
                  lambda s: s.measure_simple(item, f"C{ch}"))
 
 
-@mcp.tool()
+@device_tool()
 def sds_measure_phase(src_a: str = "C2", src_b: str = "C1",
                       resource: str | None = None) -> str:
     """SDS 双通道相位差（度）= B 相对 A 的相位（A/B 第一个上升沿中值点间）。
@@ -821,7 +968,7 @@ def sds_measure_phase(src_a: str = "C2", src_b: str = "C1",
     return _call("SDS", lambda: _sds(resource), fn)
 
 
-@mcp.tool()
+@device_tool()
 def sds_meas_threshold(source: str | None = None, thr_type: str | None = None,
                        absolute: str | None = None, percent: str | None = None,
                        resource: str | None = None) -> str:
@@ -859,7 +1006,7 @@ def sds_meas_threshold(source: str | None = None, thr_type: str | None = None,
     return _call("SDS", lambda: _sds(resource), fn)
 
 
-@mcp.tool()
+@device_tool()
 def sds_meas_gate(on: bool | None = None, ga: float | None = None,
                   gb: float | None = None, resource: str | None = None) -> str:
     """SDS 测量门限（手册 p.179-180）：只统计 GA~GB 窗口内的波形。
@@ -881,7 +1028,7 @@ def sds_meas_gate(on: bool | None = None, ga: float | None = None,
     return _call("SDS", lambda: _sds(resource), fn)
 
 
-@mcp.tool()
+@device_tool()
 def sds_meas_statistics(on: bool | None = None, max_count: int | None = None,
                         histogram: bool | None = None, reset: bool = False,
                         slot: int | None = None, which: str = "ALL",
@@ -921,7 +1068,7 @@ def sds_meas_statistics(on: bool | None = None, max_count: int | None = None,
     return _call("SDS", lambda: _sds(resource), fn)
 
 
-@mcp.tool()
+@device_tool()
 def sds_meas_dtime(index: int = 1, edge1: int | None = None,
                    edge2: int | None = None, slope1: str | None = None,
                    slope2: str | None = None, threshold1: float | None = None,
@@ -950,7 +1097,7 @@ def sds_meas_dtime(index: int = 1, edge1: int | None = None,
     return _call("SDS", lambda: _sds(resource), fn)
 
 
-@mcp.tool()
+@device_tool()
 def sds_meas_display(rdisplay: str | None = None, style: str | None = None,
                      linenumber: int | None = None, strategy: str | None = None,
                      astra_base: str | None = None, astra_top: str | None = None,
@@ -993,7 +1140,7 @@ def sds_meas_display(rdisplay: str | None = None, style: str | None = None,
     return _call("SDS", lambda: _sds(resource), fn)
 
 
-@mcp.tool()
+@device_tool()
 def sds_get_waveform(ch: int = 2, points: int = 50000, save_csv: bool = False,
                      resource: str | None = None) -> str:
     """SDS 读取通道波形数据（电压 + 时间轴，2026-09-09 经 FFT 交叉验证可信）。
@@ -1035,7 +1182,7 @@ def sds_get_waveform(ch: int = 2, points: int = 50000, save_csv: bool = False,
     return _call("SDS", lambda: _sds(resource), fn)
 
 
-@mcp.tool()
+@device_tool()
 def sds_screenshot(resource: str | None = None) -> str:
     """SDS 截屏并保存 PNG，返回文件路径——**该 PNG 可直接用 Read 工具查看**（AI
     视觉判断波形形态/削顶/居中/菜单状态/光标/测量栏）。2026-09-09 修复
@@ -1053,13 +1200,13 @@ def sds_screenshot(resource: str | None = None) -> str:
     return _call("SDS", lambda: _sds(resource), fn)
 
 
-@mcp.tool()
+@device_tool()
 def sds_diagnose(resource: str | None = None) -> str:
     """SDS 触发链路诊断：模式/状态/源/电平/时基（无波形时第一步）。"""
     return _call("SDS", lambda: _sds(resource), lambda s: s.diagnose_trigger())
 
 
-@mcp.tool()
+@device_tool()
 def sds_shutdown(confirm: bool, resource: str | None = None) -> str:
     """SDS 远程关机。⚠ 破坏性：设备离线需面板手动开机。必须 confirm=True。"""
     if not confirm:
@@ -1081,13 +1228,13 @@ def sds_shutdown(confirm: bool, resource: str | None = None) -> str:
 
 # ============ SDG 信号源 ============
 
-@mcp.tool()
+@device_tool()
 def sdg_status(resource: str | None = None) -> str:
     """SDG 信号源快照：输出状态/波形参数/调制（两通道）。"""
     return _call("SDG", lambda: _sdg(resource), lambda g: g.snapshot())
 
 
-@mcp.tool()
+@device_tool()
 def sdg_set_wave(ch: int, wvtp: str, freq_hz: float, amp_v: float,
                  offset_v: float = 0.0, resource: str | None = None) -> str:
     """SDG 设置通道 ch(1-2) 波形参数。wvtp: SINE/SQUARE/RAMP/PULSE/NOISE/DC；
@@ -1104,7 +1251,7 @@ def sdg_set_wave(ch: int, wvtp: str, freq_hz: float, amp_v: float,
     return _call("SDG", lambda: _sdg(resource), fn)
 
 
-@mcp.tool()
+@device_tool()
 def sdg_counter(on: bool | None = None, resource: str | None = None) -> str:
     """SDG 内置频率计（FCNT，手册 §3.24）。on=None 仅查询；True/False 先开关再查。
 
@@ -1115,7 +1262,7 @@ def sdg_counter(on: bool | None = None, resource: str | None = None) -> str:
     return _call("SDG", lambda: _sdg(resource), lambda g: g.counter(on))
 
 
-@mcp.tool()
+@device_tool()
 def sdg_output(ch: int, on: bool, expect_load: str, confirm: bool = False,
                resource: str | None = None) -> str:
     """SDG 开关通道 ch(1-2) 输出。⚠ 开/关都需 confirm=True（关闭可能打断
@@ -1141,20 +1288,20 @@ def sdg_output(ch: int, on: bool, expect_load: str, confirm: bool = False,
 
 # ============ Keysight 34465A ============
 
-@mcp.tool()
+@device_tool()
 def dmm_measure(function: str, resource: str | None = None) -> str:
     """34465A 单次测量。function: volt_dc/volt_ac/curr_dc/curr_ac/res/fres/
     cont/cap/diod/freq。"""
     return _call("DMM", lambda: _dmm(resource), lambda d: d.measure(function))
 
 
-@mcp.tool()
+@device_tool()
 def dmm_status(resource: str | None = None) -> str:
     """34465A 快照：IDN/选件/配置/最近读数。"""
     return _call("DMM", lambda: _dmm(resource), lambda d: d.snapshot())
 
 
-@mcp.tool()
+@device_tool()
 def dmm_configure(function: str, range_v: float | None = None,
                   resolution: float | None = None,
                   resource: str | None = None) -> str:
@@ -1166,7 +1313,7 @@ def dmm_configure(function: str, range_v: float | None = None,
                             d.configuration())[1])
 
 
-@mcp.tool()
+@device_tool()
 def dmm_nplc(value: float | None = None, resource: str | None = None) -> str:
     """34465A 电压 DC 积分时间 NPLC（手册 [SENSe:]VOLTage[:DC]:NPLC）。
 
@@ -1184,13 +1331,13 @@ def dmm_nplc(value: float | None = None, resource: str | None = None) -> str:
 
 # ============ DHO 示波器 ============
 
-@mcp.tool()
+@device_tool()
 def dho_status(resource: str | None = None) -> str:
     """DHO 示波器只读快照（通道/时基/触发/采集）。"""
     return _call("DHO", lambda: _dho(resource), lambda s: s.snapshot())
 
 
-@mcp.tool()
+@device_tool()
 def dho_measure_item(item: str, ch: int = 1, resource: str | None = None) -> str:
     """DHO 单次测量查询。item 枚举（RIGOL 表）: VPP/VMAX/VMIN/VAMP/VAVG/VRMS/
     PERiod/FREQuency/PWIDth/NWIDth/PDUTy/RTIMe/FTIMe 等；ch=1-4。
@@ -1200,7 +1347,7 @@ def dho_measure_item(item: str, ch: int = 1, resource: str | None = None) -> str
 
 # ============ MHO 示波器（RIGOL MHO900 系列，实测基准 MHO984D） ============
 
-@mcp.tool()
+@device_tool()
 def mho_status(resource: str | None = None) -> str:
     """MHO 示波器只读快照：IDN/SCPI 版本/触发状态与类型/采集方式/存储深度/采样率/
     时基/边沿触发源与电平/CH1-4 开关·耦合·档位·偏移·探头比。
@@ -1208,7 +1355,7 @@ def mho_status(resource: str | None = None) -> str:
     return _call("MHO", lambda: _mho(resource), lambda s: s.snapshot())
 
 
-@mcp.tool()
+@device_tool()
 def mho_measure_item(item: str, ch: int = 1, ch2: int | None = None,
                      resource: str | None = None) -> str:
     """MHO 单次测量查询（手册 3.17.2 参数表）。
@@ -1225,7 +1372,7 @@ def mho_measure_item(item: str, ch: int = 1, ch2: int | None = None,
                  lambda s: {"item": item, "value": s.measure_item(item, ch, ch2)})
 
 
-@mcp.tool()
+@device_tool()
 def mho_screenshot(resource: str | None = None) -> str:
     """MHO 截屏并保存 PNG，返回文件路径——**该 PNG 可直接用 Read 工具查看**
     （波形形态/有无信号/削顶/居中/菜单/测量栏/网络配置）。
@@ -1240,7 +1387,7 @@ def mho_screenshot(resource: str | None = None) -> str:
     return _call("MHO", lambda: _mho(resource), fn)
 
 
-@mcp.tool()
+@device_tool()
 def mho_get_waveform(ch: int = 1, points: int = 1000, mode: str = "NORMal",
                      fmt: str = "BYTE", save_csv: bool = False,
                      resource: str | None = None) -> str:
@@ -1274,7 +1421,7 @@ def mho_get_waveform(ch: int = 1, points: int = 1000, mode: str = "NORMal",
     return _call("MHO", lambda: _mho(resource), fn)
 
 
-@mcp.tool()
+@device_tool()
 def mho_acquisition(action: str, resource: str | None = None) -> str:
     """MHO 采集控制：action ∈ run（连续采集）/ stop（冻结，**RAW 读内存波形前必须**）/
     single（单次触发）/ force（强制触发一次）。
@@ -1295,7 +1442,7 @@ def mho_acquisition(action: str, resource: str | None = None) -> str:
     return _call("MHO", lambda: _mho(resource), fn)
 
 
-@mcp.tool()
+@device_tool()
 def mho_autoset(confirm: bool = False, resource: str | None = None) -> str:
     """MHO 一键自动设置 `:AUToset`（手册 3.2.1）。⚠ **全局破坏性**：会重新调整
     **所有**通道的垂直档位、水平时基与触发配置——多信号实验台上会毁掉别人已调好的
@@ -1321,7 +1468,7 @@ def mho_autoset(confirm: bool = False, resource: str | None = None) -> str:
 #   ② DC 切换快照：set_dc_only 返回切换前配置，切回时要求显式传参（不做隐式恢复）。
 # 仓库侧新增的只有 dg_output 的 confirm 门（AGENTS.md 红线：开关输出需授权）。
 
-@mcp.tool()
+@device_tool()
 def dg_status(model: str | None = None, resource: str | None = None) -> str:
     """DG832 快照：设备信息（型号/序列号/固件）+ CH1/CH2 当前波形配置（波形/频率/
     幅度/偏移/相位）、输出开关、负载。**动这台之前先查它**。
@@ -1331,7 +1478,7 @@ def dg_status(model: str | None = None, resource: str | None = None) -> str:
     return _call("DG832", lambda: _dg(resource, model), lambda g: g.status())
 
 
-@mcp.tool()
+@device_tool()
 def dg_protect(ch: int, high: float | None = None, low: float | None = None,
                state: bool | None = None, model: str | None = None,
                resource: str | None = None) -> str:
@@ -1346,7 +1493,7 @@ def dg_protect(ch: int, high: float | None = None, low: float | None = None,
                  lambda g: g.set_voltage_limit(ch, high=high, low=low, state=state))
 
 
-@mcp.tool()
+@device_tool()
 def dg_get_protect(ch: int, model: str | None = None,
                    resource: str | None = None) -> str:
     """DG832 查询指定通道的电压保护配置（开关/上限/下限）。"""
@@ -1354,7 +1501,7 @@ def dg_get_protect(ch: int, model: str | None = None,
                  lambda g: g.get_voltage_limit(ch))
 
 
-@mcp.tool()
+@device_tool()
 def dg_set_wave(ch: int, shape: str, freq: float | None = None, amp: float | None = None,
                 offset: float | None = None, phase: float | None = None,
                 sample_rate: float | None = None, model: str | None = None,
@@ -1370,7 +1517,7 @@ def dg_set_wave(ch: int, shape: str, freq: float | None = None, amp: float | Non
                  lambda g: g.set_wave(ch, shape, freq, amp, offset, phase, sample_rate))
 
 
-@mcp.tool()
+@device_tool()
 def dg_set_param(ch: int, param: str, value: str, model: str | None = None,
                  resource: str | None = None) -> str:
     """DG832 单参数设置并读回。param: freq(Hz)/amp(Vpp)/offset(Vdc)/phase(°)/load(Ω，inf=高阻)。
@@ -1391,7 +1538,7 @@ def dg_set_param(ch: int, param: str, value: str, model: str | None = None,
     return _call("DG832", lambda: _dg(resource, model), fn)
 
 
-@mcp.tool()
+@device_tool()
 def dg_set_dc(ch: int, level: float, model: str | None = None,
               resource: str | None = None) -> str:
     """DG832 DC 专用切换：设直流电平（V）并返回切换前配置快照（restore: shape/freq/amp/
@@ -1401,7 +1548,7 @@ def dg_set_dc(ch: int, level: float, model: str | None = None,
                  lambda g: g.set_dc_only(ch, level))
 
 
-@mcp.tool()
+@device_tool()
 def dg_sweep(ch: int, start: float | None = None, stop: float | None = None,
              time: float | None = None, spacing: str | None = None,
              step: int | None = None, htime_start: float | None = None,
@@ -1420,14 +1567,14 @@ def dg_sweep(ch: int, start: float | None = None, stop: float | None = None,
                                        htime_start, htime_stop, rtime, trig_source, state))
 
 
-@mcp.tool()
+@device_tool()
 def dg_sweep_trigger(ch: int, model: str | None = None,
                      resource: str | None = None) -> str:
     """DG832 手动触发一次扫频（需触发源为 manual 且该通道输出已打开）。"""
     return _call("DG832", lambda: _dg(resource, model), lambda g: g.sweep_trigger(ch))
 
 
-@mcp.tool()
+@device_tool()
 def dg_output(ch: int, on: bool, confirm: bool = False, model: str | None = None,
               resource: str | None = None) -> str:
     """DG832 开关通道 ch(1-2) 输出。⚠ **开/关都需 confirm=True**——关断同样可能打断
@@ -1442,7 +1589,7 @@ def dg_output(ch: int, on: bool, confirm: bool = False, model: str | None = None
     return _call("DG832", lambda: _dg(resource, model), lambda g: g.output(ch, on))
 
 
-@mcp.tool()
+@device_tool()
 def dg_counter(model: str | None = None, resource: str | None = None) -> str:
     """DG832 内置频率计测量（面板 [Counter] 输入口信号），返回频率等读数。"""
     def fn(g):
@@ -1451,7 +1598,7 @@ def dg_counter(model: str | None = None, resource: str | None = None) -> str:
     return _call("DG832", lambda: _dg(resource, model), fn)
 
 
-@mcp.tool()
+@device_tool()
 def dg_query(scpi: str, model: str | None = None, resource: str | None = None) -> str:
     """DG832 只读 SCPI 查询（如 `:SOUR1:APPL?`、`:OUTP1?`、`:MEASure:ITEM? VPP,CHANnel1`）。
     整条必须是纯查询——判据同 instr_query：每条 `;` 分段的**命令头带 '?'** 即可，
@@ -1464,7 +1611,7 @@ def dg_query(scpi: str, model: str | None = None, resource: str | None = None) -
     return _call("DG832", lambda: _dg(resource, model), lambda g: g.query(cmd))
 
 
-@mcp.tool()
+@device_tool()
 def dg_check_error(model: str | None = None, resource: str | None = None) -> str:
     """DG832 查询并清空设备错误队列（空列表 = 正常）。命令疑似被拒后用它诊断。"""
     def fn(g):
@@ -1475,7 +1622,7 @@ def dg_check_error(model: str | None = None, resource: str | None = None) -> str
 
 # ============ DH1766 电源 ============
 
-@mcp.tool()
+@device_tool()
 def psu_status(resource: str | None = None) -> str:
     """DH1766 只读状态总览（**操作电源前先调这个**）：三路(CH1-3)电压/电流/功率/
     设定值/OVP/OCP/输出状态/**输出模式**/耦合，并附**安全检查**：
@@ -1490,7 +1637,7 @@ def psu_status(resource: str | None = None) -> str:
     return _call("DH1766", lambda: _psu_connect(resource), fn, close_fn=_psu_close)
 
 
-@mcp.tool()
+@device_tool()
 def psu_mode(resource: str | None = None) -> str:
     """DH1766 输出模式查询（只读，轻量）：NORM（正常三路独立）/TRAC（跟踪：
     CH2 跟随 CH1 输出同等值负电压）/SERI（串联）/PARA（并联）。
@@ -1501,7 +1648,7 @@ def psu_mode(resource: str | None = None) -> str:
                  close_fn=_psu_close)
 
 
-@mcp.tool()
+@device_tool()
 def psu_output(ch: int, on: bool, expect_mode: str, confirm: bool = False,
                resource: str | None = None) -> str:
     """DH1766 单通道输出开关。⚠ 开/关都需 confirm=True（关闭可能中断供电，
@@ -1525,7 +1672,7 @@ def psu_output(ch: int, on: bool, expect_mode: str, confirm: bool = False,
                  close_fn=_psu_close)
 
 
-@mcp.tool()
+@device_tool()
 def psu_set_mode(mode: str, resource: str | None = None) -> str:
     """DH1766 设置输出模式：NORM/TRAC/SERI/PARA（写后回读比对）。
     ⚠ 继电器联动拓扑变化：输出必须全关，否则直接拒绝（库内无条件强制）。
@@ -1537,7 +1684,7 @@ def psu_set_mode(mode: str, resource: str | None = None) -> str:
                  close_fn=_psu_close)
 
 
-@mcp.tool()
+@device_tool()
 def psu_power_cycle(ch: int, expect_mode: str, cycles: int = 1,
                     off_delay_s: float = 1.0, on_delay_s: float = 1.0,
                     confirm: bool = False, resource: str | None = None) -> str:

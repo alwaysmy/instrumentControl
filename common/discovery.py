@@ -167,17 +167,25 @@ def list_resources() -> list[str]:
         rm.close()
 
 
-def identify(resource: str, timeout_ms: int = 3000) -> Optional[str]:
+def identify(resource: str, timeout_ms: int = 3000, rm: "pyvisa.ResourceManager | None" = None) -> Optional[str]:
     """对单个资源发送 *IDN?，成功返回识别串，失败/超时返回 None。
 
     SOCKET 资源自动配置 \\n 读写终止符（VISA socket 会话无协议层终止符，
     不配则命令不完整导致设备不应答）。open_timeout 与读超时同设——
     否则离线资源的 TCP 连接阶段可达 60s+（系统默认）。
+
+    `rm`：可选，传入**调用方共享的** ResourceManager（探测多个资源时强烈建议）。
+    实测（2026-09-15）：多线程各自 `ResourceManager()` 并发 open 会随机抛
+    `VI_ERROR_INV_OBJECT`（进程内 VISA 运行时初始化竞争）——`instr_discover`
+    的并行探测因此间歇性整轮失败。共享单例 + 串行/低并发可消除；不传则保持
+    原行为（自己建、自己关）。
     """
     kwargs: dict = {}
     if "SOCKET" in resource.upper():
         kwargs = {"read_termination": "\n", "write_termination": "\n"}
-    rm = pyvisa.ResourceManager()
+    own = rm is None
+    if own:
+        rm = pyvisa.ResourceManager()
     try:
         inst = rm.open_resource(resource, open_timeout=timeout_ms, **kwargs)
         inst.timeout = timeout_ms
@@ -188,7 +196,32 @@ def identify(resource: str, timeout_ms: int = 3000) -> Optional[str]:
     except Exception:
         return None
     finally:
-        rm.close()
+        if own:
+            rm.close()
+
+
+def identify_all(resources: list[str], timeout_ms: int = 3000,
+                 workers: int = 4) -> dict[str, Optional[str]]:
+    """批量识别资源，返回 {resource: idn 或 None}。
+
+    共享**单个** ResourceManager（并发各自建 RM 会随机 `VI_ERROR_INV_OBJECT`，
+    见 `identify` 说明）。默认 4 线程——低并发既快又稳（VISA 运行时对并发
+    open 敏感，实测 16 线程必挂、8 偶挂、4 稳定）。
+    """
+    if not resources:
+        return {}
+    rm = pyvisa.ResourceManager()
+    try:
+        if len(resources) == 1 or workers <= 1:
+            return {r: identify(r, timeout_ms, rm) for r in resources}
+        with ThreadPoolExecutor(max_workers=min(workers, len(resources))) as pool:
+            out = list(pool.map(lambda r: identify(r, timeout_ms, rm), resources))
+        return dict(zip(resources, out))
+    finally:
+        try:
+            rm.close()
+        except Exception:
+            pass
 
 
 def scan() -> dict[str, Optional[str]]:

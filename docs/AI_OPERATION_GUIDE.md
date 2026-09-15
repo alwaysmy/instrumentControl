@@ -25,6 +25,25 @@
 显式 resource → hosts 自动选协议 → VISA 列表 → CIDR 网段扫描（默认关，
 最后手段）；LAN 未注册设备先跑 `instr_discover`，其发现结果会自动回写地址缓存。
 
+## 一.五、USB-TMC 卡死的恢复（真机实测 2026-09-15）
+
+USB 仪器偶发"设备在但会话卡死"（`*IDN?` 超时 / `VI_ERROR_TMO` / `VI_ERROR_SYSTEM_ERROR`）。
+按此顺序处理，**不要一上来就给人拔电**：
+
+1. **重连一次**——多数情况即恢复（DG832 实测遇过一次，重连后正常）；
+2. 仍不行 → **重启该 USB 的 PnP 设备**（USB 重新枚举，仪器固件不重启、**设定不丢**）：
+
+   ```bash
+   python TEST_SCRIPTS/common/usb_pnp_reset.py --kind dg --dry-run          # 免权限：只看要做什么
+   python TEST_SCRIPTS/common/usb_pnp_reset.py --kind dg --allow-reset --verify-idn
+   ```
+
+   实测 **2.4 秒**恢复，CH1/CH2 的波形/频率/幅度/偏移/输出/保护 100% 保留
+   （留痕 `TEST_DATA/dg832/usb_pnp_reset_verify_20260915.json`）。
+   改设备节点需**管理员权限**（弹 UAC）：非管理员环境加 `--escalate`，或按提示在
+   管理员终端手动跑 `pnputil /restart-device "<实例ID>"`；
+3. 还不行才拔插 USB / 换口 / 仪器断电。
+
 ## 二、AI 安全操作规范（必须遵守）
 
 1. **禁止复位类命令**：`*RST`、`:SYST:RESet`、`:SYST:FACT`（已从库中移除）、

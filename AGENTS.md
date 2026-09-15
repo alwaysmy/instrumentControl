@@ -51,6 +51,16 @@ AI/Agent 操作仪器必须遵守以下规范。
     DHO 真机复验交接单 `docs/dho_live_verification_handoff.md`，6 项检查 + 不符时改哪个字段）。
 14. **USB TMC 一律走 VISA**：禁止 pyusb/libusb 直连（Windows 无驱动时
     NotImplementedError）。LAN raw socket 会话必须配 `\n` 终止符。
+    **USB-TMC 卡死的恢复顺序**（真机实测 2026-09-15）：
+    ① `*IDN?` 超时 / `VI_ERROR_TMO` / `VI_ERROR_SYSTEM_ERROR` 先**重连一次**
+       ——多数情况重连即恢复（DG832 实测遇过一次 `VI_ERROR_SYSTEM_ERROR`，重连后正常）；
+    ② 重连仍不行 → **重启该 USB 的 PnP 设备**（不是给仪器上下电）：
+       `python TEST_SCRIPTS/common/usb_pnp_reset.py --kind dg --allow-reset --verify-idn`
+       ——实测 **2.4 秒**恢复，**仪器固件不重启、通道设定/输出/保护 100% 保留**；
+    ③ 该操作改设备节点需要**管理员权限**（会弹 UAC）：管理员进程可直接跑，否则加
+       `--escalate` 自动弹 UAC；先 `--dry-run` 可只打印将要执行的
+       `pnputil /restart-device` 命令（不需权限）；
+    ④ 还不行才拔插 USB / 换口 / 仪器断电（最后手段）。
 15. **示波器"无波形/测量全 `****`"标准排查流程**（先读后写，截图辅助）：
     a. **先读配置不猜**：触发源/触发电平/触发模式/通道开关/时基/垂直档位/采集参数
        ——`sds_control.diagnose_trigger()`、DHO 用 `snapshot()`；

@@ -58,14 +58,15 @@
 - [DYN ] `state:{cmd}` @ TEST_SCRIPTS\dh1766\psu_remote_lock_probe.py:133（运行时拼接，静态不可核）
 - [DYN ] `OUTP:{mode}` @ TEST_SCRIPTS\dh1766\test_dh1766_full.py:177（运行时拼接，静态不可核）
 
-## dg832（36 HIT / 0 MISS / 2 DYN）
+## dg832（37 HIT / 0 MISS / 2 DYN）
 
 - [HIT ] `SOUR1:FREQ?` @ TEST_SCRIPTS\dg832\verify_dg832.py:113
 - [HIT ] `OUTP1?` @ TEST_SCRIPTS\dg832\verify_dg832.py:68
-- [HIT ] `SOUR2:APPL` @ TEST_SCRIPTS\dg832\verify_dg832_edge_cases.py:113
-- [HIT ] `OUTP2:VOLL:HIGH` @ TEST_SCRIPTS\dg832\verify_dg832_edge_cases.py:117
-- [HIT ] `OUTP2:VOLL:LOW` @ TEST_SCRIPTS\dg832\verify_dg832_edge_cases.py:118
-- [HIT ] `OUTP2:VOLL:STAT` @ TEST_SCRIPTS\dg832\verify_dg832_edge_cases.py:119
+- [HIT ] `SOUR2:VOLT:OFFS?` @ TEST_SCRIPTS\dg832\verify_dg832_edge_cases.py:141
+- [HIT ] `OUTP2:VOLL:HIGH` @ TEST_SCRIPTS\dg832\verify_dg832_edge_cases.py:151
+- [HIT ] `OUTP2:VOLL:LOW` @ TEST_SCRIPTS\dg832\verify_dg832_edge_cases.py:152
+- [HIT ] `SOUR2:APPL` @ TEST_SCRIPTS\dg832\verify_dg832_edge_cases.py:153
+- [HIT ] `OUTP2:VOLL:STAT` @ TEST_SCRIPTS\dg832\verify_dg832_edge_cases.py:156
 - [HIT ] `SYST:ERR?` @ dg832_control\dg832.py:301
 - [HIT ] `*IDN?` @ dg832_control\dg832.py:309
 - [HIT ] `SOUR{ch}:APPL?` @ dg832_control\dg832.py:464
@@ -96,7 +97,7 @@
 - [HIT ] `SOUR{ch}:SWE:TRIG:IMM` @ dg832_control\dg832.py:829
 - [HIT ] `COUN:MEAS?` @ dg832_control\dg832.py:841
 - [HIT ] `*RST` @ dg832_control\dg832.py:852
-- [DYN ] `SOUR2:APPL:{x}` @ TEST_SCRIPTS\dg832\verify_dg832_edge_cases.py:113（运行时拼接，静态不可核）
+- [DYN ] `SOUR2:APPL:{x}` @ TEST_SCRIPTS\dg832\verify_dg832_edge_cases.py:153（运行时拼接，静态不可核）
 - [DYN ] `SOUR{ch}:APPL:{x}` @ dg832_control\dg832.py:457（运行时拼接，静态不可核）
 
 ## dho（40 HIT / 0 MISS / 0 DYN）
@@ -297,7 +298,7 @@
 - [HIT ] `CURR:AC` @ keysight_3446x\dmm.py:142
 - [DYN ] `CONF:{base}` @ keysight_3446x\dmm.py:151（运行时拼接，静态不可核）
 
-## scripts(multi-device，按全部手册并集判)（19 HIT / 9 MISS / 1 DYN）
+## scripts(multi-device，按全部手册并集判)（19 HIT / 10 MISS / 1 DYN）
 
 - [HIT ] `*IDN?` @ TEST_SCRIPTS\common\probe_new_instruments.py:36
 - [HIT ] `*OPT?` @ TEST_SCRIPTS\common\probe_new_instruments.py:36
@@ -327,6 +328,7 @@
 - [HIT ] `TRIG:MODE?` @ TEST_SCRIPTS\common\probe_siglent.py:83
 - [HIT ] `TRIG:SOURCE?` @ TEST_SCRIPTS\common\probe_siglent.py:84
 - [HIT ] `ACQ:MDEP?` @ TEST_SCRIPTS\common\probe_siglent.py:85
+- [**MISS**] `*VID` @ TEST_SCRIPTS\common\usb_pnp_reset.py:71
 - [DYN ] `resolve:{kind}` @ TEST_SCRIPTS\common\verify_all_devices.py:77（运行时拼接，静态不可核）
 
 ## rigol_scope(共享内核，按两系列并集判)（39 HIT / 1 MISS / 1 DYN）

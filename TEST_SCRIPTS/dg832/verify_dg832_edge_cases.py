@@ -167,7 +167,12 @@ def main() -> int:
                     except Exception as e:
                         ok = False
                         if attempt == 2:
-                            rec(f"[恢复失败] {label}", False, f"{cmd} → {type(e).__name__}: {str(e)[:60]}")
+                            hint = ("；若是 USB-TMC 卡死：先重连，仍不行跑 "
+                                    "python TEST_SCRIPTS/common/usb_pnp_reset.py --kind dg "
+                                    "--allow-reset --verify-idn（约 2 秒恢复、设定不丢）"
+                                    if ("VISA" in type(e).__name__ or "TMO" in str(e)) else "")
+                            rec(f"[恢复失败] {label}", False,
+                                f"{cmd} → {type(e).__name__}: {str(e)[:60]}{hint}")
                 if ok:
                     rec(f"[恢复] {label}", True, cmd)
             try:

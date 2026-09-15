@@ -328,7 +328,8 @@ def main() -> int:
              ROOT / "TEST_SCRIPTS/common/probe_all.py",
              ROOT / "TEST_SCRIPTS/common/probe_siglent.py",
              ROOT / "TEST_SCRIPTS/common/verify_all_devices.py",
-             ROOT / "TEST_SCRIPTS/common/verify_resolver.py"]
+             ROOT / "TEST_SCRIPTS/common/verify_resolver.py",
+             ROOT / "TEST_SCRIPTS/common/usb_pnp_reset.py"]
     extra = {
         "dg832": ["TEST_SCRIPTS/dg832/verify_dg832.py",
                   "TEST_SCRIPTS/dg832/test_dg832_write_matrix.py",

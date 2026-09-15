@@ -147,7 +147,9 @@ MISS_BASELINE: dict[str, list[str]] = {
     # 与 MHO 实测"查询超时"一致）。
     "rigol_scope": ["*OPT"],
     # 探测脚本**故意**发无出处/待验证命令（探针语义），MISS 属预期。
-    "scripts": ["ATTN", "CHDR", "CPLE", "READ", "SANU", "SYST:FIRM", "TRDL",
+    # *VID = 探测器里的 PowerShell 通配符（'*VID_1AB1*'），被提取器当成 IEEE-488 公共命令
+    # 的形状了；非 SCPI，属已知提取假阳性。
+    "scripts": ["*VID", "ATTN", "CHDR", "CPLE", "READ", "SANU", "SYST:FIRM", "TRDL",
                 "VDIV", "WVTP"],
 }
 
@@ -172,7 +174,8 @@ indexes = {t: A.build_index((ROOT / m).read_text(encoding="utf-8")) for t, _d, m
 multi_files = [ROOT / p for p in (
     "TEST_SCRIPTS/common/probe_new_instruments.py", "TEST_SCRIPTS/common/probe_all.py",
     "TEST_SCRIPTS/common/probe_siglent.py", "TEST_SCRIPTS/common/verify_all_devices.py",
-    "TEST_SCRIPTS/common/verify_resolver.py")]
+    "TEST_SCRIPTS/common/verify_resolver.py",
+    "TEST_SCRIPTS/common/usb_pnp_reset.py")]
 EXTRA_FILES = {
     "dg832": ["TEST_SCRIPTS/dg832/verify_dg832.py",
               "TEST_SCRIPTS/dg832/test_dg832_write_matrix.py",

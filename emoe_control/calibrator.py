@@ -15,6 +15,7 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from common import discovery as cd
 from common.visa_client import VisaClient
 
 from . import commands as C
@@ -91,19 +92,14 @@ class EmoeCalibrator:
 def find_emoe(timeout_ms: int = 1500) -> str:
     """扫描本机串口 + VISA 资源，返回 *IDN? 含 'EmoeCalibrator' 的资源地址。
 
-    串口探测带驱动挂起硬超时（6s）；被占用/无响应的口跳过并打印提示。
-    未找到抛 RuntimeError。
+    串口经**子进程**探测（驱动挂起即在硬超时后杀掉子进程）——本进程线程探测会留下
+    卡死线程、此后任何 VISA 调用都会打死进程，见 `common/discovery.py::
+    probe_serial_isolated` 的说明。被占用/无响应的口跳过并打印提示。
+    非串口资源在本进程直接识别（open_timeout 可兜底）。未找到抛 RuntimeError。
     """
-    import pyvisa
-    import threading
-
     candidates: list[str] = []
     try:
-        rm = pyvisa.ResourceManager()
-        try:
-            resources = list(rm.list_resources())
-        finally:
-            rm.close()
+        resources = cd.list_resources()
     except Exception as e:
         raise RuntimeError(f"VISA 资源列举失败: {e}")
     for r in resources:
@@ -111,47 +107,21 @@ def find_emoe(timeout_ms: int = 1500) -> str:
         if up.startswith("ASRL") or "EMOE" in up or "INSTR" in up:
             candidates.append(r)
 
-    seen: set[str] = set()
+    serial = [r for r in candidates if r.upper().startswith("ASRL")]
+    idn_of: dict[str, str] = {}
+    note_of: dict[str, str] = {}
+    if serial:
+        for entry in cd.probe_serials_isolated(serial, timeout_ms):
+            idn_of[entry["resource"]] = entry.get("idn") or ""
+            note_of[entry["resource"]] = entry.get("note") or ""
+
     for r in candidates:
-        if r in seen:
-            continue
-        seen.add(r)
-        result: dict = {}
-
-        def work(r=r):
-            rm2 = None
-            try:
-                rm2 = pyvisa.ResourceManager()
-                inst = rm2.open_resource(
-                    r,
-                    open_timeout=2000,
-                    read_termination="\n",
-                    write_termination="\n",
-                )
-                inst.timeout = timeout_ms
-                try:
-                    idn = inst.query("*IDN?").strip()
-                    if idn:
-                        result["idn"] = idn
-                finally:
-                    inst.close()
-            except Exception as e:
-                code = getattr(e, "error_code", 0)
-                if "BUSY" in str(e).upper() or code == -1073807346:
-                    result["note"] = "被占用"
-                else:
-                    result["note"] = type(e).__name__
-            finally:
-                if rm2 is not None:
-                    rm2.close()
-
-        t = threading.Thread(target=work, daemon=True)
-        t.start()
-        t.join(6.0)
-        idn = result.get("idn", "")
+        if r.upper().startswith("ASRL"):
+            idn, note = idn_of.get(r, ""), note_of.get(r, "")
+        else:
+            idn, note = cd.identify(r, timeout_ms) or "", ""
         if "EmoeCalibrator" in idn:
             print(f"[find_emoe] 命中 {r} -> {idn}", file=sys.stderr)
             return r
-        note = result.get("note", "")
         print(f"[find_emoe] {r}: {idn or note or '无响应'}", file=sys.stderr)
     raise RuntimeError("未找到 *IDN? 含 'EmoeCalibrator' 的设备（检查串口接线/占用）")

@@ -57,13 +57,22 @@ ALLOWED = (
 )
 # 2026-09-15：多命令走私。**SCPI 里 `;` 分隔的是同一条消息内的多个命令单元，设备逐个执行**
 # （Keysight 手册明文："A semicolon separates commands within the same subsystem…"），
-# 实测 DG832 `:SOUR1:PHAS?;:SOUR1:PHAS 123` 的写单元真的生效——所以查询口必须限制成
-# **单条命令单元**（`_QUERY_MSG_RE`）。下面这些含 `;` 的消息一律拒。
+# 实测 DG832 `:SOUR1:PHAS?;:SOUR1:PHAS 123` 的写单元真的生效——所以查询口必须**逐段**判：
+# 每段都得是查询单元（`_QUERY_UNIT_RE`）。下面这些"含写命令/复位/锁定"的消息一律拒。
 SMUGGLE = (
     "*RST;*IDN?", "*IDN?;*RST", ":SYSTem:LOCKed ON;*IDN?", "*IDN?;:SYST:RESE",
     ":SYSTem:REM ON;:SYSTem:ERRor?", "*CLS;*RST",
-    # 2026-09-15 判据简化后：**即使全是查询**的多单元消息也拒（每次调用一条命令）
-    "*IDN?;:SYSTem:ERRor?", ":OUTP1?;:OUTP2?",
+    # 查询在前、写在后的夹带（最典型的"走私"形态）
+    ":CHANnel4:DISPlay?;:OUTP4 ON", ":OUTP1?;:OUTP1 OFF",
+)
+# 多段**纯查询**是合法且常用的（多段回读）——必须放行；判据逐段检查，
+# 因此不会因为"允许 `;`"而给写命令开口子。
+MULTI_QUERY_OK = (
+    ":CHANnel4:DISPlay?;:CHANnel4:SCALe?;:CHANnel4:OFFSet?",   # 用户报障的三段回读
+    ":OUTP1?;:OUTP2?",
+    "*IDN?;:SYSTem:ERRor?",
+    ":SYST:ERR?;:SYST:VERS?",
+    ":MEASure:ITEM? VPP,CHANnel1;:WAVeform:DATA?",             # 段内带参数
 )
 
 print("=== §1 拦截用例（期望 error_type=forbidden，且不发起连接）===", flush=True)
@@ -95,19 +104,31 @@ for cmd in SMUGGLE:
     print(f"  [{'PASS' if ok_q and ok_w else 'FAIL'}] {cmd:32s} "
           f"query={r.get('error_type')} readback={rw.get('error_type')}", flush=True)
 
-print("\n=== §4 纯查询的**多单元**消息（含 `;`）也应拒——查询口每次只收一条命令单元 ===", flush=True)
-for cmd in ("*IDN?;:SYSTem:ERRor?", ":OUTP1?;:OUTP2?"):
-    r = json.loads(server.instr_query(RES, cmd))
-    ok = r.get("ok") is False and r.get("error_type") in ("forbidden", "param_validation")
+print("\n=== §4 多段**纯查询**必须放行（多段回读是常用写法）===", flush=True)
+# 2026-09-15 用户报障第二次：判据一度收紧成"只允许单条命令单元"，
+# 把 `:CHANnel4:DISPlay?;:CHANnel4:SCALe?;:CHANnel4:OFFSet?` 这类多段回读也拒了。
+# 现判据＝**逐段**检查每段都是查询单元（写/复位/锁定仍逐段拦），故多段纯查询放行。
+for cmd in MULTI_QUERY_OK:
+    q, f = server._is_query_only(cmd), server._is_forbidden(cmd)
+    ok = q and not f
     if not ok:
-        fails.append(f"multi-unit-query:{cmd}")
-    print(f"  [{'PASS' if ok else 'FAIL'}] 拒 {cmd:32s} -> {r.get('error_type')}"
-          f"（拆成多次调用即可）", flush=True)
+        fails.append(f"multi-query:{cmd}")
+    r = json.loads(server.instr_query(RES, cmd))          # dummy：拦截在连接前
+    ok2 = r.get("error_type") != "forbidden"
+    if not ok2:
+        fails.append(f"multi-query-rejected:{cmd}")
+    rb = json.loads(server.instr_write(RES, "*IDN?", confirm=True, readback_cmd=cmd))
+    ok3 = rb.get("error_type") != "forbidden"             # readback_cmd 同样放行
+    if not ok3:
+        fails.append(f"readback-rejected:{cmd}")
+    print(f"  [{'PASS' if ok and ok2 and ok3 else 'FAIL'}] 放 {cmd:46s} "
+          f"query={r.get('error_type')} readback={rb.get('error_type')}", flush=True)
 
 print("\n=== §6 带参数的查询必须放行（SCPI 允许 `<header>? <param>`）===", flush=True)
 # 2026-09-15 用户报障：护栏曾按"整段以 ? 结尾"判查询，把 `:MEASure:ITEM? VPP,CHANnel1`
-# 这类**标准写法**一起拒了（两个 RIGOL 手册的实例都是这个形态）。现判据：单条命令单元
-# + 命令头以 `?` 结尾（`_QUERY_MSG_RE`）；下面这组就是当时的漏网盲区。
+# 这类**标准写法**一起拒了（两个 RIGOL 手册的实例都是这个形态）。现判据：每个 `;` 分段
+# 都必须是查询单元（命令头以 `?` 结尾、问号后可带参数，`_QUERY_UNIT_RE`）；
+# 下面这组就是当时的漏网盲区。
 QUERY_WITH_PARAMS = (
     ":MEASure:ITEM? VPP,CHANnel1",          # RIGOL 手册实例形态
     ":MEASure:ITEM? OVERshoot,CHANnel2",
@@ -129,8 +150,8 @@ for cmd in QUERY_WITH_PARAMS:
     print(f"  [{'PASS' if ok2 else 'FAIL'}] instr_query 不拦 -> {r.get('error_type')}", flush=True)
 
 print("\n=== §7 参数里偷发命令仍须拦截（新增防御）===", flush=True)
-STILL_BLOCKED = (":MEASure:ITEM? VPP,*RST", ":OUTP1 ON;:OUTP1?", ':DISP:TEXT "why?"',
-                 ":OUTP1?;:OUTP2?", "*IDN?;*RST")
+STILL_BLOCKED = (":MEASure:ITEM? VPP,*RST", ":OUTP1 ON;:OUTP1?",
+                 ":CHANnel4:DISPlay?;:OUTP4 ON", ':DISP:TEXT "why?"', "*IDN?;*RST")
 for cmd in STILL_BLOCKED:
     ok = server._is_forbidden(cmd) or not server._is_query_only(cmd)
     if not ok:

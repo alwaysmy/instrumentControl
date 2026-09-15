@@ -538,30 +538,29 @@ def _classify_forbidden(cmd: str) -> str | None:
     return None
 
 
-# 查询消息的形状：**单条命令单元**，命令头以 `?` 结尾，问号后可跟参数。
+# 单条命令单元的形状：命令头以 `?` 结尾，问号后**允许**带参数。
 #
-# `?` 后允许带参数是标准 SCPI 写法（`:MEASure:ITEM? VPP,CHANnel2`、`SAMPle:COUNt? MAX`），
+# `?` 后带参数是标准 SCPI 写法（`:MEASure:ITEM? VPP,CHANnel2`、`SAMPle:COUNt? MAX`），
 # 故不能按"整段以 ? 结尾"判（2026-09-15 曾因此把带参数查询全拒了，用户报障后修正）。
-#
-# 为什么**禁止 `;`**（即只允许一条命令单元）：
-#   ① SCPI 里 `;` 分隔的是同一条消息内的多个命令单元，设备会逐个执行——
-#      实测 DG832：`:SOUR1:PHAS?;:SOUR1:PHAS 123` 的应答是 0，随后读 PHAS 得 123，
-#      即**写单元真的执行了**（Keysight 手册也有明文：`TRIG:SOUR EXT;COUNT 10` 等价于两条命令）。
-#      所以"查询口"若放行 `;`，就等于开了一条夹带写的通道。
-#   ② 多单元查询的应答是合并成一行返回的（同一实测：`"DC,…";"SQU,…"`），
-#      对调用方本来就不友好；本仓库所有库代码**从未**发过多单元消息（全仓零 `;` 串联）。
-#   ③ 一条正则就能表达该规则，不必逐段解析助记符——少一半护栏代码，少一类边界情况。
-_QUERY_MSG_RE = re.compile(r"^[:*]?[A-Za-z][A-Za-z0-9:<>{}_.]*\?(?:\s[\s\S]*)?$")
+_QUERY_UNIT_RE = re.compile(r"^[:*]?[A-Za-z][A-Za-z0-9:<>{}_.]*\?(?:\s[\s\S]*)?$")
 
 
 def _is_query_only(cmd: str) -> bool:
-    """整条消息是否为**单条查询命令**（判据见 `_QUERY_MSG_RE` 上方注释）。
+    """整条消息是否**纯查询**：每个 `;` 分段都必须是查询单元（问号后允许带参数）。
 
-    覆盖：`*IDN?` / `:SYSTem:ERRor?` / `:MEASure:ITEM? VPP,CHANnel1` / `SAMPle:COUNt? MAX`；
-    拦截：写命令（头里无 `?`）、多单元消息（含 `;`，如 `*IDN?;*RST`）、
-    参数里带引号含 `?` 的写命令（`:DISP:TEXT "why?"`）。
+    为什么按"分段"而不是"整条"判：SCPI 里 `;` 分隔的是**同一条消息内的多个命令单元**，
+    设备会逐个执行——实测 DG832 `:SOUR1:PHAS?;:SOUR1:PHAS 123` 的写单元真的生效
+    （Keysight 手册明文：`TRIG:SOUR EXT;COUNT 10` 等价于两条命令）。只查首尾会让写命令
+    从查询口溜进去；只允许单条单元又会把**多段回读**（`:CHANnel4:DISPlay?;:CHANnel4:SCALe?`）
+    一起拒掉——那是合法且常用的用法（2026-09-15 曾这样过度收紧，用户报障后修回）。
+
+    逐段判用同一条正则（一条命令单元 = `_QUERY_UNIT_RE`），不解析助记符：
+    写命令（头里无 `?`）、混合消息（`:OUTP1 ON;:OUTP1?`）、复位/锁定类一律拦。
     """
-    return bool(_QUERY_MSG_RE.match((cmd or "").strip()))
+    units = [u for u in (p.strip() for p in (cmd or "").split(";"))]
+    if not units or any(not u for u in units):
+        return False
+    return all(_QUERY_UNIT_RE.match(u) for u in units)
 
 
 def _is_forbidden(cmd: str) -> bool:

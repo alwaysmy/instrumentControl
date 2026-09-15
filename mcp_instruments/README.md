@@ -19,7 +19,7 @@ MCP 注册（opencode/cursor 等）：command 用 python 全路径，args 为本
 | 工具 | 说明 | 安全 |
 |---|---|---|
 | `instr_discover(cidr?)` | 全网段+VISA 发现所有仪器；结果按 `*IDN?` 回写地址缓存（`recognised_now`），探测到 DH1766 会补发 `SYST:LOC` 归还面板 | 只读（+DH1766 一次 `SYST:LOC`） |
-| `instr_query(resource, cmd, timeout_ms?)` | 通用 SCPI 查询（新设备零接入；cmd 必须含 `?`，且**只允许单条命令单元**——判据＝命令头以 `?` 结尾、问号后可带参数（如 `:MEASure:ITEM? VPP,CHANnel1`）；**含 `;` 的多单元消息一律拒**（每次一条命令；要发多条请用 `instr_write`）） | 只读 |
+| `instr_query(resource, cmd, timeout_ms?)` | 通用 SCPI 查询（新设备零接入；cmd 必须含 `?`，且**每个 `;` 分段都必须是查询单元**——判据＝段内命令头以 `?` 结尾、问号后可带参数（如 `:MEASure:ITEM? VPP,CHANnel1`）；**多段纯查询放行**（`:CHANnel4:DISPlay?;:CHANnel4:SCALe?` 多段回读），夹带写/复位/锁定即整条拒） | 只读 |
 | `instr_write(resource, cmd, readback_cmd?, confirm, timeout_ms?)` | 通用 SCPI 写：黑名单拦截/drain+SYST:ERR?/自动回读/审计落盘/看门狗 | **confirm=True**；`*RST` 等一律 forbidden |
 | `sds_status` | SDS 快照（采集/时基/触发/通道） | 只读 |
 | `sds_auto_scale(ch, use_autoset?)` | 自动定标；use_autoset 破坏性需理解语义 | 改配置 |

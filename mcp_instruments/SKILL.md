@@ -90,10 +90,10 @@ DG832 信号源（RIGOL DG800 系列）：
 
 | 工具 | 用法要点 |
 |---|---|
-| `instr_query(resource, cmd, timeout_ms?)` | cmd 必须含 `?`；**问号后允许带参数**（`:MEASure:ITEM? VPP,CHANnel1`）；**一次只发一条命令单元**（含 `;` 会被拒，拆分调用）；只读不留痕 |
+| `instr_query(resource, cmd, timeout_ms?)` | cmd 必须含 `?`；**问号后允许带参数**（`:MEASure:ITEM? VPP,CHANnel1`）；**可用 `;` 串联多段纯查询**（如 `:CHANnel4:DISPlay?;:CHANnel4:SCALe?`），但夹带写/复位/锁定会被拒；只读不留痕 |
 | `instr_write(resource, cmd, readback_cmd?, confirm, timeout_ms?)` | **必须 confirm=True**；写前 drain、写后 SYST:ERR?、readback_cmd 给定即自动回读（铁律2/3）；每次调用含拒绝均落盘 `TEST_DATA/common/mcp_scpi_audit_*.jsonl` |
 
-护栏语义：查询判据＝**单条命令单元 + 命令头以 `?` 结尾**（`;` 分隔的多单元消息会拒，因为 SCPI 里 `;` 是同消息内的命令单元分隔符、设备会逐个执行，实测写单元会生效）；原写法偶有歧义（不是"整条以 ? 结尾"——SCPI 允许问号后带参数）；复位/存储覆写类（`*RST`/`*SAV`/`*RCL`/`:SYST:RES|FACT|PRES`，长短形式均拦）
+护栏语义：查询判据＝**逐段检查每段都是查询单元**（命令头以 `?` 结尾、问号后可带参数）——多段纯查询放行，夹带写命令即拒（SCPI 里 `;` 是同消息内的命令单元分隔符、设备逐个执行，实测写单元会生效）；原写法偶有歧义（不是"整条以 ? 结尾"——SCPI 允许问号后带参数）；复位/存储覆写类（`*RST`/`*SAV`/`*RCL`/`:SYST:RES|FACT|PRES`，长短形式均拦）
 一律 `forbidden` 拒绝，confirm 也不放行（复位需显式授权场景走测试脚本）；
 设备无响应有硬超时看门狗（≥30s），离线资源不会冻结 MCP；
 串口(ASRL)按 9600 波特。

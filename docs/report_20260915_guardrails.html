@@ -50,12 +50,12 @@
 
   <h1>instrumentControl — 护栏与交付功能汇报</h1>
   <div class="sub">
-    2026-09-15 · 基线 commit <code>f4b5619</code> → 当前 <code>288763d</code>（已推送 origin/main）<br>
+    2026-09-15 · 基线 commit <code>f4b5619</code> → 当前 <code>bf1916c</code>（已推送 origin/main）<br>
     本页为静态自包含文档（无外部依赖），所有数字取自仓库内脚本的真实运行结果，可用页面末尾命令复算。
   </div>
 
   <div class="cards">
-    <div class="card ok"><div class="n">64 / 64</div><div class="l">护栏回归用例全 PASS（离线）</div></div>
+    <div class="card ok"><div class="n">67 / 67</div><div class="l">护栏回归用例全 PASS（离线）</div></div>
     <div class="card acc"><div class="n">50</div><div class="l">MCP 工具（原 31）</div></div>
     <div class="card vio"><div class="n">9</div><div class="l">设备/家族库（原 6）</div></div>
     <div class="card"><div class="n">530 / 29</div><div class="l">命令审计 HIT / MISS</div></div>
@@ -105,6 +105,11 @@
             <td><span class="tag allow">放行</span></td>
             <td><b>问号后允许带参数</b>——两系列 RIGOL 手册的实例都是这个形态。早期误按"整段以 <code>?</code> 结尾"判，
                 把这类合法查询一并拒了（用户报障后修正）</td></tr>
+        <tr><td><code>*IDN?;:SYSTem:ERRor?</code><br><code>:OUTP1?;:OUTP2?</code></td>
+            <td><span class="tag block">拦截</span></td>
+            <td><b>多单元消息一律拒</b>（查询口一次只收一条命令，拆分调用即可）。依据：SCPI 里 <code>;</code> 分隔的是
+                <b>同一条消息内的多个命令单元</b>，设备逐个执行——Keysight 手册明文（<code>TRIG:SOUR EXT;COUNT 10</code>
+                等价于两条命令），DG832 实测 <code>:SOUR1:PHAS?;:SOUR1:PHAS 123</code> 的写单元真的生效</td></tr>
         <tr><td><code>*IDN?;*RST</code>、<code>:SYSTem:LOCKed ON;*IDN?</code></td>
             <td><span class="tag block">拦截</span></td><td>多段消息里夹带写命令</td></tr>
         <tr><td><code>:DISP:TEXT "why?"</code></td>
@@ -149,50 +154,51 @@
     </ul>
   </div>
 
-  <h2>二、护栏回归覆盖（64 用例，全 PASS）</h2>
+  <h2>二、护栏回归覆盖（67 用例，全 PASS）</h2>
   <div class="panel">
-    <svg viewBox="0 0 1060 240" width="100%" height="240" role="img" aria-label="护栏用例按节分布">
-      <!-- 轴 -->
-      <line x1="150" y1="10" x2="150" y2="215" stroke="#2b3542"/>
-      <line x1="150" y1="215" x2="1000" y2="215" stroke="#2b3542"/>
-      <!-- 网格：与条形同比例（1 用例 = 6.9px） -->
+    <svg viewBox="0 0 1060 268" width="100%" height="268" role="img" aria-label="护栏用例按节分布">
+      <!-- 条形与刻度同比例：1 用例 = 6.885px；竖线为 10/20/30 用例 -->
+      <line x1="150" y1="8" x2="150" y2="228" stroke="#2b3542"/>
       <g stroke="#20272f">
-        <line x1="219" y1="8" x2="219" y2="205"/><line x1="288" y1="8" x2="288" y2="205"/>
-        <line x1="357" y1="8" x2="357" y2="205"/>
+        <line x1="219" y1="8" x2="219" y2="228"/>
+        <line x1="288" y1="8" x2="288" y2="228"/>
+        <line x1="357" y1="8" x2="357" y2="228"/>
       </g>
-      <!-- 刻度锚在轴线上：0 / 10 / 20 / 30 用例 -->
       <g fill="#9aa7b4" font-size="11" text-anchor="middle">
-        <text x="150" y="228">0</text><text x="219" y="228">10</text>
-        <text x="288" y="228">20</text><text x="357" y="228">30</text>
+        <text x="150" y="254" text-anchor="middle">0</text>
+        <text x="219" y="254" text-anchor="middle">10</text>
+        <text x="288" y="254" text-anchor="middle">20</text>
+        <text x="357" y="254" text-anchor="middle">30</text>
       </g>
-      <!-- 条：26/14/6/1/14/3，比例 20px/10 用例 → 1 用例 = 6.83px（宽）用水平条 -->
       <g>
-        <rect x="150" y="26"  width="179" height="26" fill="#f85149" rx="3"/>
-        <text x="340" y="44" fill="#e6edf3" font-size="12.5">§1 黑名单拦截 26（复位/覆写/锁定/缩写）</text>
-        <rect x="150" y="62"  width="96"  height="26" fill="#3fb950" rx="3"/>
-        <text x="257" y="80" fill="#e6edf3" font-size="12.5">§2 放行不得误伤 14</text>
-        <rect x="150" y="98"  width="41"  height="26" fill="#d29922" rx="3"/>
-        <text x="202" y="116" fill="#e6edf3" font-size="12.5">§3 多命令走私 6</text>
-        <rect x="150" y="134" width="7"   height="26" fill="#39c5cf" rx="3"/>
-        <text x="168" y="152" fill="#e6edf3" font-size="12.5">§4 纯查询多段 1</text>
-        <rect x="150" y="170" width="96"  height="26" fill="#4aa3ff" rx="3"/>
-        <text x="257" y="188" fill="#e6edf3" font-size="12.5">§6 带参数查询放行 14（本次修正的盲区）</text>
+        <rect x="150" y="22" width="179" height="26" fill="#f85149" rx="3"/>
+        <text x="341" y="39" fill="#e6edf3" font-size="12.5">§1 黑名单拦截 26（复位/覆写/锁定/缩写）</text>
+        <rect x="150" y="58" width="96" height="26" fill="#3fb950" rx="3"/>
+        <text x="258" y="75" fill="#e6edf3" font-size="12.5">§2 放行不得误伤 14</text>
+        <rect x="150" y="94" width="55" height="26" fill="#d29922" rx="3"/>
+        <text x="217" y="111" fill="#e6edf3" font-size="12.5">§3 多命令走私（含纯查询串联）8</text>
+        <rect x="150" y="130" width="14" height="26" fill="#39c5cf" rx="3"/>
+        <text x="176" y="147" fill="#e6edf3" font-size="12.5">§4 多单元查询须拒 2</text>
+        <rect x="150" y="166" width="83" height="26" fill="#4aa3ff" rx="3"/>
+        <text x="245" y="183" fill="#e6edf3" font-size="12.5">§6 带参数查询放行 12（问号后可带参数）</text>
+        <rect x="150" y="202" width="34" height="26" fill="#a371f7" rx="3"/>
+        <text x="196" y="219" fill="#e6edf3" font-size="12.5">§7 参数里偷发命令须拦 5</text>
       </g>
     </svg>
     <div class="legend">
-      <span class="tag">§7</span> 参数里偷发命令仍拦 3（<code>:MEASure:ITEM? VPP,*RST</code> 等）——
-      条太短未画；比例：1 用例 ≈ 6.9px。
+      <span class="tag">读法</span> 1 用例 = 6.9px；§3 现含"纯查询串联也拒"（<code>:OUTP1?;:OUTP2?</code>），
+      §4 为多单元消息用例，§7 为参数位置偷发命令的纵深防御用例。
     </div>
     <table>
       <thead><tr><th>节</th><th>覆盖的护栏行为</th><th>用例数</th><th>结果</th></tr></thead>
       <tbody>
         <tr><td>§1</td><td>复位/存储覆写/远程锁定（含中间缩写与粘连写法）必须拦</td><td>26</td><td><span class="tag allow">PASS</span></td></tr>
         <tr><td>§2</td><td>正常命令不得误伤（<code>:SYSTem:BEEPer OFF</code>、写 <code>VOLT 1</code> 等）</td><td>14</td><td><span class="tag allow">PASS</span></td></tr>
-        <tr><td>§3</td><td><code>instr_query</code> / <code>readback_cmd</code> 的分号走私</td><td>6</td><td><span class="tag allow">PASS</span></td></tr>
-        <tr><td>§4</td><td>纯查询多段消息不得误伤</td><td>1</td><td><span class="tag allow">PASS</span></td></tr>
-        <tr><td>§6</td><td><b>带参数查询必须放行</b>（本次用户报障修正的盲区）</td><td>14</td><td><span class="tag allow">PASS</span></td></tr>
-        <tr><td>§7</td><td>参数位置偷发命令仍须拦截（新增纵深防御）</td><td>3</td><td><span class="tag allow">PASS</span></td></tr>
-        <tr><td>合计</td><td>脚本 <code>TEST_SCRIPTS/common/verify_remote_lock_block.py</code></td><td><b>64</b></td><td><span class="tag allow">全 PASS</span></td></tr>
+        <tr><td>§3</td><td><code>instr_query</code> / <code>readback_cmd</code> 的分号走私（含纯查询串联）</td><td>8</td><td><span class="tag allow">PASS</span></td></tr>
+        <tr><td>§4</td><td>纯查询的<b>多单元</b>消息也拒（查询口一次一条命令）</td><td>2</td><td><span class="tag allow">PASS</span></td></tr>
+        <tr><td>§6</td><td><b>带参数查询必须放行</b>（问号后可带参数）</td><td>12</td><td><span class="tag allow">PASS</span></td></tr>
+        <tr><td>§7</td><td>参数位置偷发命令仍须拦截（纵深防御）</td><td>5</td><td><span class="tag allow">PASS</span></td></tr>
+        <tr><td>合计</td><td>脚本 <code>TEST_SCRIPTS/common/verify_remote_lock_block.py</code></td><td><b>67</b></td><td><span class="tag allow">全 PASS</span></td></tr>
       </tbody>
     </table>
   </div>
@@ -245,8 +251,10 @@
             <td>全仓 A–F 六类缺陷清单；DH1766 专项审计（safe_mode 旁路等 9 项 + 真机 T1–T8 清单）</td>
             <td>高severity项逐条复核</td></tr>
         <tr><td>6</td><td><b>安全加固</b></td>
-            <td>堵走私通道、补中间缩写、修正查询判据（本次）；黑名单改为逐段+助记符前缀判定</td>
-            <td>64 护栏用例</td></tr>
+            <td>堵走私通道（<code>instr_query</code>/<code>readback_cmd</code>）、补中间缩写、查询判据两轮修正：
+                先"问号后可带参数"（修误拦），再简化为<b>单条命令单元</b>（一条正则替掉逐段解析）；
+                <b>分号实证</b>：规范依据 + DG832 真机（<code>:SOUR1:PHAS?;:SOUR1:PHAS 123</code> 写单元生效）</td>
+            <td>67 护栏用例</td></tr>
         <tr><td>7</td><td><b>USB-TMC 故障兜底</b><br><span class="muted">common/usb_reset.py</span></td>
             <td>重启仪器 USB 的 PnP 设备（不用上下电/拔插）；VISA 资源串反解 VID/PID/SN；UAC 提权；MCP 工具 <code>usb_reset</code></td>
             <td>真机 <b>2.4s</b> 恢复、设定 100% 保留</td></tr>
@@ -324,7 +332,7 @@
     <table>
       <thead><tr><th>脚本 / 文件</th><th>作用</th><th>断言/规模</th><th>最新结果</th></tr></thead>
       <tbody>
-        <tr><td><code>TEST_SCRIPTS/common/verify_remote_lock_block.py</code></td><td>护栏回归（离线，本次新增 §6/§7）</td><td>64 用例</td><td><span class="tag allow">全 PASS</span></td></tr>
+        <tr><td><code>TEST_SCRIPTS/common/verify_remote_lock_block.py</code></td><td>护栏回归（离线；含 §6 带参数查询、§7 偷发防御）</td><td>67 用例</td><td><span class="tag allow">全 PASS</span></td></tr>
         <tr><td><code>TEST_SCRIPTS/common/verify_audit_extractor.py</code></td><td>审计器闭环自测（提取/归一/全仓 MISS 基线）</td><td>85 断言</td><td><span class="tag allow">全 PASS</span></td></tr>
         <tr><td><code>TEST_SCRIPTS/common/audit_all_commands.py</code></td><td>六套库+脚本 vs 手册命令审计</td><td>10 组 / 559 命令</td><td>530 HIT · 29 MISS</td></tr>
         <tr><td><code>TEST_SCRIPTS/common/verify_rigol_scope_shared.py</code></td><td>DHO/MHO 共享内核离线闭环（假传输回放）</td><td>63 断言</td><td><span class="tag allow">全 PASS</span></td></tr>
@@ -344,7 +352,7 @@
     <code>python TEST_SCRIPTS/common/verify_audit_extractor.py</code> ·
     <code>python TEST_SCRIPTS/common/audit_all_commands.py</code> ·
     <code>python TEST_SCRIPTS/common/verify_rigol_scope_shared.py</code><br>
-    仓库：<code>D:\WorkDesigns\3_WorkTools\instrumentControl</code>（origin/main <code>288763d</code>）·
+    仓库：<code>D:\WorkDesigns\3_WorkTools\instrumentControl</code>（origin/main <code>bf1916c</code>）·
     本页所有数字取自上述脚本的真实输出；安全红线与操作规程见 <code>AGENTS.md</code>。
   </footer>
 </div>

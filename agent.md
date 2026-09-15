@@ -35,7 +35,8 @@ common/            VISA 客户端 + 统一发现 + 地址解析（所有设备�
   discovery.py       find_device 四层查找链、identify/identify_lan、CIDR 扫描
   resolver.py        resolve(kind)：显式 > env > devices.json > 缓存 > 自动发现；DEVICE_KINDS 表
 mcp_instruments/
-  server.py          MCP 服务器：31 工具 + 安全护栏（黑名单/confirm/看门狗/审计落盘）
+  server.py          MCP 服务器：50 工具 + 安全护栏（黑名单/confirm/看门狗/审计落盘）
+                     含 1 个故障兜底 usb_reset（USB-TMC 卡死→重启该仪器 USB 节点）
   config_cli.py      本机地址配置 CLI（show/init/set/autofill/clear）
   SKILL.md           AI 使用指引（工具决策树/参数语义/安全门）
 <device>_control/    各设备库：commands.py(命令常量) + <name>.py(封装) + docs/(手册提取版)

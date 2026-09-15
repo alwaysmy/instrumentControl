@@ -55,7 +55,7 @@ AI/Agent 操作仪器必须遵守以下规范。
     ① `*IDN?` 超时 / `VI_ERROR_TMO` / `VI_ERROR_SYSTEM_ERROR` 先**重连一次**
        ——多数情况重连即恢复（DG832 实测遇过一次 `VI_ERROR_SYSTEM_ERROR`，重连后正常）；
     ② 重连仍不行 → **重启该 USB 的 PnP 设备**（不是给仪器上下电）：
-       `python TEST_SCRIPTS/common/usb_pnp_reset.py --kind dg --allow-reset --verify-idn`
+       `python common/usb_reset.py --kind dg --allow-reset --verify-idn`
        ——实测 **2.4 秒**恢复，**仪器固件不重启、通道设定/输出/保护 100% 保留**；
     ③ 该操作改设备节点需要**管理员权限**（会弹 UAC）：管理员进程可直接跑，否则加
        `--escalate` 自动弹 UAC；先 `--dry-run` 可只打印将要执行的
@@ -150,8 +150,8 @@ AI/Agent 操作仪器必须遵守以下规范。
 - 操作手册：`docs/AI_OPERATION_GUIDE.md`（API/固件特性/闭环范例）
 - **实测记录**：`docs/TEST_RECORDS.md`（历轮实测时间线；README 只放项目定位与用法）
 - 设备经验：`dh1766_control/docs/EXPERIENCE.md`（时序/固件差异/上电过渡态）
-- MCP 服务器：`mcp_instruments/server.py`（49 工具 = 46 专用 + 3 通用护栏
-  instr_discover/instr_query/instr_write——新设备零代码接入；zcode 用户级 config 已注册
+- MCP 服务器：`mcp_instruments/server.py`（50 工具 = 46 专用 + 3 通用护栏 + 1 故障兜底
+  instr_discover/instr_query/instr_write/usb_reset——新设备零代码接入；zcode 用户级 config 已注册
   `instruments`；工具选择/参数语义/安全门见 skill `instrument-mcp`）
 
 ## 四、当前设备与地址解析

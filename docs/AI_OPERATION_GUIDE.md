@@ -34,8 +34,8 @@ USB 仪器偶发"设备在但会话卡死"（`*IDN?` 超时 / `VI_ERROR_TMO` / `
 2. 仍不行 → **重启该 USB 的 PnP 设备**（USB 重新枚举，仪器固件不重启、**设定不丢**）：
 
    ```bash
-   python TEST_SCRIPTS/common/usb_pnp_reset.py --kind dg --dry-run          # 免权限：只看要做什么
-   python TEST_SCRIPTS/common/usb_pnp_reset.py --kind dg --allow-reset --verify-idn
+   python common/usb_reset.py --kind dg --dry-run          # 免权限：只看要做什么
+   python common/usb_reset.py --kind dg --allow-reset --verify-idn
    ```
 
    实测 **2.4 秒**恢复，CH1/CH2 的波形/频率/幅度/偏移/输出/保护 100% 保留

@@ -149,8 +149,11 @@ MISS_BASELINE: dict[str, list[str]] = {
     # 探测脚本**故意**发无出处/待验证命令（探针语义），MISS 属预期。
     # *VID = 探测器里的 PowerShell 通配符（'*VID_1AB1*'），被提取器当成 IEEE-488 公共命令
     # 的形状了；非 SCPI，属已知提取假阳性。
-    "scripts": ["*VID", "ATTN", "CHDR", "CPLE", "READ", "SANU", "SYST:FIRM", "TRDL",
+    "scripts": ["ATTN", "CHDR", "CPLE", "READ", "SANU", "SYST:FIRM", "TRDL",
                 "VDIV", "WVTP"],
+    # 跨设备基础设施（common/usb_reset.py）：唯一 MISS 是 PowerShell 通配符 '*VID_..'，
+    # 被提取器当成 IEEE-488 公共命令形状，非 SCPI。
+    "common-infra": ["*VID"],
 }
 
 # 必须命中的代表命令（每套库抽最有代表性的几条，覆盖长/短形式与选择器剥离）
@@ -174,8 +177,7 @@ indexes = {t: A.build_index((ROOT / m).read_text(encoding="utf-8")) for t, _d, m
 multi_files = [ROOT / p for p in (
     "TEST_SCRIPTS/common/probe_new_instruments.py", "TEST_SCRIPTS/common/probe_all.py",
     "TEST_SCRIPTS/common/probe_siglent.py", "TEST_SCRIPTS/common/verify_all_devices.py",
-    "TEST_SCRIPTS/common/verify_resolver.py",
-    "TEST_SCRIPTS/common/usb_pnp_reset.py")]
+    "TEST_SCRIPTS/common/verify_resolver.py")]
 EXTRA_FILES = {
     "dg832": ["TEST_SCRIPTS/dg832/verify_dg832.py",
               "TEST_SCRIPTS/dg832/test_dg832_write_matrix.py",
@@ -199,6 +201,9 @@ groups: list[tuple[str, list[Path], set]] = [
     (tag, group_files(tag, code_dir), indexes[tag]) for tag, code_dir, _m in A.TARGETS]
 groups.append(("scripts", multi_files, set().union(*indexes.values())))
 # 共享内核按 dho ∪ mho 判（与 auditor 的 rigol_scope 组同口径）
+# 故障维护基础设施 common/usb_reset.py：跨设备，按全手册并集判
+groups.append(("common-infra", [ROOT / "common/usb_reset.py"],
+               set().union(*indexes.values())))
 groups.append(("rigol_scope",
                sorted((ROOT / "rigol_scope").rglob("*.py"))
                + [ROOT / "TEST_SCRIPTS/common/rigol_scope_reset.py"],

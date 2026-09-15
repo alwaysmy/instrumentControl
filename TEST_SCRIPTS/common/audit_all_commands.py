@@ -328,8 +328,7 @@ def main() -> int:
              ROOT / "TEST_SCRIPTS/common/probe_all.py",
              ROOT / "TEST_SCRIPTS/common/probe_siglent.py",
              ROOT / "TEST_SCRIPTS/common/verify_all_devices.py",
-             ROOT / "TEST_SCRIPTS/common/verify_resolver.py",
-             ROOT / "TEST_SCRIPTS/common/usb_pnp_reset.py"]
+             ROOT / "TEST_SCRIPTS/common/verify_resolver.py"]
     extra = {
         "dg832": ["TEST_SCRIPTS/dg832/verify_dg832.py",
                   "TEST_SCRIPTS/dg832/test_dg832_write_matrix.py",
@@ -352,6 +351,9 @@ def main() -> int:
     #  命中其一即可。逐家族的拼写仍由 dho/mho 各自的 TARGETS 按各自手册核对。）
     rigol_files = sorted((ROOT / "rigol_scope").rglob("*.py")) + [
         ROOT / "TEST_SCRIPTS/common/rigol_scope_reset.py"]
+    # 跨设备基础设施（故障维护兜底）：按"全部手册并集"判
+    total_miss += _audit_group("common(跨设备基础设施，按全部手册并集判)",
+                               [ROOT / "common/usb_reset.py"], union, report)
     total_miss += _audit_group("rigol_scope(共享内核，按两系列并集判)",
                                rigol_files, indexes["dho"] | indexes["mho"], report)
 

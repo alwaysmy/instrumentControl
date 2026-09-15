@@ -13,7 +13,8 @@ MCP 注册（opencode/cursor 等）：command 用 python 全路径，args 为本
 
 ## 工具清单
 
-共 **49 个** = 46 个设备专用 + 3 个通用护栏（`instr_discover` / `instr_query` / `instr_write`）。
+共 **50 个** = 46 个设备专用 + 3 个通用护栏（`instr_discover` / `instr_query` / `instr_write`）
++ 1 个**故障维护兜底**（`usb_reset`：USB-TMC 卡死时重启该仪器的 USB PnP 设备节点）。
 
 | 工具 | 说明 | 安全 |
 |---|---|---|

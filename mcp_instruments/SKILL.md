@@ -5,7 +5,7 @@ description: instrument MCP 服务器使用指引 — 七台仪器（SDS 示波�
 
 # instrument MCP 使用指引
 
-MCP server：`mcp_instruments/server.py`（49 工具 = 46 专用 + 3 通用护栏，七台设备）。
+MCP server：`mcp_instruments/server.py`（50 工具 = 46 专用 + 3 通用护栏 + 1 故障兜底，七台设备）。
 本文是 AI 选择工具/参数时的决策依据。DG832 的详细 SOP/踩坑见 skill `dg832-control`。
 
 ## 一、工具选择决策树
@@ -207,6 +207,14 @@ DH1766 与 SDS 不同：**任何远程会话都会把电源置为 `REM`**——�
 - 看得到：波形形态/有无信号/削顶/居中/面板菜单/光标读数/底部测量栏
 - 与 SCPI 配合：截图看形态，SCPI 读精确数值
 - 无视觉能力时用库 `analyze_screen()` 像素分析兜底（轨迹 Y 分布/削顶判定）
+
+## 四.五、USB-TMC 卡死（故障兜底 `usb_reset`）
+
+`*IDN?` 超时 / `VI_ERROR_TMO` / `VI_ERROR_SYSTEM_ERROR` 时：**先重连一次**（多数即恢复）；
+仍不行 → `usb_reset(kind="dg", confirm=True, verify_idn=True)`（**重启该仪器的 USB
+PnP 设备节点**：USB 重新枚举，**固件不重启、通道设定/输出/保护全部保留**，实测 2.4s；
+无管理员权限时加 `escalate=True` 会弹 UAC）。**不要**让人去拔插 USB，更不要给仪器断电
+（那是最后手段）。LAN 设备卡死不属此场景（重连或换协议 inst0 ↔ raw socket）。
 
 ## 五、错误处理
 

@@ -168,7 +168,7 @@ def main() -> int:
                         ok = False
                         if attempt == 2:
                             hint = ("；若是 USB-TMC 卡死：先重连，仍不行跑 "
-                                    "python TEST_SCRIPTS/common/usb_pnp_reset.py --kind dg "
+                                    "python common/usb_reset.py --kind dg "
                                     "--allow-reset --verify-idn（约 2 秒恢复、设定不丢）"
                                     if ("VISA" in type(e).__name__ or "TMO" in str(e)) else "")
                             rec(f"[恢复失败] {label}", False,

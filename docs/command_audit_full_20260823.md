@@ -298,7 +298,7 @@
 - [HIT ] `CURR:AC` @ keysight_3446x\dmm.py:142
 - [DYN ] `CONF:{base}` @ keysight_3446x\dmm.py:151（运行时拼接，静态不可核）
 
-## scripts(multi-device，按全部手册并集判)（19 HIT / 10 MISS / 1 DYN）
+## scripts(multi-device，按全部手册并集判)（19 HIT / 9 MISS / 1 DYN）
 
 - [HIT ] `*IDN?` @ TEST_SCRIPTS\common\probe_new_instruments.py:36
 - [HIT ] `*OPT?` @ TEST_SCRIPTS\common\probe_new_instruments.py:36
@@ -328,8 +328,12 @@
 - [HIT ] `TRIG:MODE?` @ TEST_SCRIPTS\common\probe_siglent.py:83
 - [HIT ] `TRIG:SOURCE?` @ TEST_SCRIPTS\common\probe_siglent.py:84
 - [HIT ] `ACQ:MDEP?` @ TEST_SCRIPTS\common\probe_siglent.py:85
-- [**MISS**] `*VID` @ TEST_SCRIPTS\common\usb_pnp_reset.py:71
 - [DYN ] `resolve:{kind}` @ TEST_SCRIPTS\common\verify_all_devices.py:77（运行时拼接，静态不可核）
+
+## common(跨设备基础设施，按全部手册并集判)（1 HIT / 1 MISS / 0 DYN）
+
+- [HIT ] `*IDN?` @ common\usb_reset.py:166
+- [**MISS**] `*VID` @ common\usb_reset.py:83
 
 ## rigol_scope(共享内核，按两系列并集判)（39 HIT / 1 MISS / 1 DYN）
 

@@ -1,5 +1,9 @@
 """USB-TMC 卡死恢复：对指定仪器**重启其 USB PnP 设备**（不用给仪器上下电）。
 
+定位：**故障维护兜底能力**（与 `discovery`/`resolver` 同级的基础设施，在 `common/` 里），
+不是某个设备的专属脚本——凡走 USB-TMC 的仪器（DG832/DH1766/USB 示波器…）都适用。
+MCP 侧对应工具 `usb_reset`（需 confirm=True）。
+
 背景（真机经验，见 skill `dg832-control` 排障段）：USB-TMC 仪器偶发"设备在但会话卡死"——
 `*IDN?` 超时 / `VI_ERROR_TMO` / `VI_ERROR_SYSTEM_ERROR`，拔插 USB 能恢复，但拔插需要人到现场。
 **等价且更省事的办法：重启该 USB 设备节点（PnP restart）**——USB 重新枚举，设备固件不重启、
@@ -9,18 +13,24 @@
 ⚠ **需要管理员权限**：会弹 UAC（Windows 的既定要求，无法绕过）。默认**只打印将要执行的命令**，
 要真执行必须加 `--allow-reset`；提权再单加 `--escalate`（否则提示你手动以管理员运行）。
 
-用法：
+用法（CLI）：
     # ① 看会做什么（不需要权限，安全）
-    python TEST_SCRIPTS/common/usb_pnp_reset.py --resource "USB0::0x1AB1::0x0643::DG8A265103205::INSTR" --dry-run
+    python common/usb_reset.py --resource "USB0::0x1AB1::0x0643::<SN>::INSTR" --dry-run
 
-    # ② 真做（弹 UAC 提权）
-    python TEST_SCRIPTS/common/usb_pnp_reset.py --resource "<同上>" --allow-reset --escalate --verify-idn
+    # ② 真做（非管理员环境会弹 UAC 提权）
+    python common/usb_reset.py --resource "<同上>" --allow-reset --escalate --verify-idn
 
     # ③ 不知道资源串？按 kind 解析（走解析层，不写死地址）
-    python TEST_SCRIPTS/common/usb_pnp_reset.py --kind dg --dry-run
+    python common/usb_reset.py --kind dg --dry-run          # kind ∈ sds/sdg/dmm/dho/mho/dg/psu
 
     # ④ 手动指定 VID/PID（设备已被系统认成别的名字时）
-    python TEST_SCRIPTS/common/usb_pnp_reset.py --vid 0x1AB1 --pid 0x0643 --serial DG8A265103205 --allow-reset
+    python common/usb_reset.py --vid 0x1AB1 --pid 0x0643 --serial <SN> --allow-reset
+
+用法（Python）：
+    from common.usb_reset import reset_device, find_instance, parse_usb_resource
+    ok, out = reset_device(find_instance("1AB1", "0643", "<SN>"))
+
+MCP：工具 `usb_reset(resource|kind, confirm=True, verify_idn=True)`（故障兜底，见 AGENTS.md 铁律#14）。
 
 可选参数：--timeout-s 等待设备回来的秒数（默认 20）；--keep /tmp；--list 只列 USB 仪器设备。
 """
@@ -35,7 +45,7 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 
@@ -144,7 +154,8 @@ def escalate_and_run(args_list: list[str], result_file: Path) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="USB-TMC 卡死恢复：重启仪器的 USB PnP 设备（需管理员/UAC）")
+    ap = argparse.ArgumentParser(
+        description="USB-TMC 卡死恢复：重启仪器的 USB PnP 设备（需管理员权限；非管理员加 --escalate 弹 UAC）")
     ap.add_argument("--resource", help="完整 VISA 资源串（USB0::0xVVVV::0xPPPP::SN::INSTR）")
     ap.add_argument("--kind", help="或给解析层的设备类（如 dg/dho/mho/psu），自动 resolve 出资源串")
     ap.add_argument("--vid"), ap.add_argument("--pid"), ap.add_argument("--serial")

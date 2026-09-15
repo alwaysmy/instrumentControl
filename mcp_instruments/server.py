@@ -421,6 +421,58 @@ def instr_discover(cidr: str | None = None) -> str:
     return _call("discovery", lambda: None, fn, close_fn=lambda _: None)
 
 
+# ============ 故障维护兜底：USB-TMC 卡死恢复 ============
+#
+# 与 instr_discover 同级的"环境维护"工具，不属于任何设备类。
+# 恢复顺序见 AGENTS.md 铁律#14：先重连 → 不行再重启该 USB 的 PnP 设备
+# （USB 重新枚举，**仪器固件不重启、设定不丢**；DG832 实测 2.4s 恢复）→ 最后才拔插/断电。
+
+@mcp.tool()
+def usb_reset(kind: str | None = None, resource: str | None = None,
+              confirm: bool = False, escalate: bool = False,
+              verify_idn: bool = True, timeout_s: int = 20) -> str:
+    """⚠ 故障兜底：重启某台仪器所占用的 **USB PnP 设备节点**（USB-TMC 卡死时用）。
+
+    用在哪：`*IDN?` 超时 / `VI_ERROR_TMO` / `VI_ERROR_SYSTEM_ERROR`，且**先重连一次仍不恢复**时。
+    效果：USB 重新枚举——**仪器固件不重启、通道设定/输出/保护全部保留**（DG832 实测 2.4s 恢复）；
+    比"拔插 USB"省事，**不要**直接给仪器断电（那是最后手段）。
+
+    参数：kind（解析层设备类 sds/sdg/dmm/dho/mho/dg/psu，地址走解析层）或 resource（USB 资源串）
+    二选一；confirm=True 必填（该仪器所有会话会中断 2~3 秒）；escalate=True 时若进程无管理员
+    权限会**弹 UAC** 提权；verify_idn=True 复位后轮询 *IDN? 确认设备回来。
+    仅支持 USB 资源——LAN 卡死请先重连/换协议（inst0 ↔ raw socket），不属本工具场景。"""
+    if not confirm:
+        return _err("confirm_required",
+                    "usb_reset 会重启该仪器的 USB 设备节点（会话中断约 2~3 秒），需 confirm=True",
+                    "USB")
+    if not kind and not resource:
+        return _err("param_validation", "需要 kind 或 resource 之一", "USB")
+
+    def fn(_):
+        from common.resolver import resolve as _res
+        from common.usb_reset import (find_instance, is_admin, parse_usb_resource,
+                                      restart_device, wait_back)
+        res = resource or _res(kind)
+        parsed = parse_usb_resource(res)
+        if not parsed:
+            raise ValueError(f"不是 USB-TMC 资源串（本工具只处理 USB）：{res}")
+        vid, pid, serial = parsed
+        inst = find_instance(vid, pid, serial)
+        if not inst:
+            raise RuntimeError(f"未找到 VID=0x{vid} PID=0x{pid} 的 PnP 设备（设备可能已掉线，需拔插）")
+        if not is_admin() and not escalate:
+            raise RuntimeError("改动设备节点需要管理员权限：加 escalate=True（弹 UAC），"
+                               f'或在管理员终端执行 pnputil /restart-device "{inst}"')
+        ok, out = restart_device(inst)
+        verified = None
+        if ok and verify_idn:
+            verified, _note = wait_back(res, timeout_s)
+        return {"resource": res, "instance": inst, "restart_ok": ok,
+                "output": out[:200], "verified_idn": verified}
+
+    return _call("USB", lambda: None, fn, close_fn=lambda _: None)
+
+
 # ============ 通用护栏 SCPI（新设备零代码接入） ============
 #
 # 设计取舍：不做多设备接口统一——各库专用工具承载人工筛选的语义与安全门；

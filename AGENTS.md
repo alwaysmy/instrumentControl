@@ -1,8 +1,8 @@
 # instrumentControl — Agent 工作规范
 
 仪器控制集合项目：VISA/SCPI 统一发现层（common/）+ 按设备分库
-（dh1766_control / dho_control / sds_control / sdg_control / keysight_3446x /
-emoe_control / dg832-control）+ MCP 统一暴露（mcp_instruments/）。
+（dh1766_control / dho_control / mho_control / sds_control / sdg_control /
+keysight_3446x / dg832_control / emoe_control）+ MCP 统一暴露（mcp_instruments/）。
 AI/Agent 操作仪器必须遵守以下规范。
 
 ## 一、SCPI 客户端铁律（实测教训，违反必踩坑）
@@ -19,7 +19,14 @@ AI/Agent 操作仪器必须遵守以下规范。
 7. **设值后必须回读验证**（§7.2）：仪器可舍入参数（如 12.1 → 12.099998，
    比较必须用容差，禁止 `==`）。
 8. **耦合参数同一消息连续发送**（§编程提示#3），分开发送产生非预期中间态。
-9. **响应形态因厂而异**，客户端必须兼容：
+9. **读数精度看格式：`BYTE` 波形是 8bit，只用于看形态；量值一律读 `WORD`。**
+   实测（MHO984D，2V/div）：`BYTE` 的 `YINCrement` 是 `WORD` 的 **256 倍**
+   （0.0683 V/code vs 0.000267 V/code），0.25V 的小信号只占 **3 个码值**——
+   此时 ±1 码量化误差就是 ±30%，拿 BYTE 读数去比设备测量值会得到"差 20%"的假告警。
+   （真机留痕：`TEST_DATA/mho/verify_mho_*.json` 的"冻结态 WORD/ASCii 一致 <2%"与
+   "BYTE 按量化容差"两条断言。）
+
+16. **响应形态因厂而异**，客户端必须兼容：
    - 回显头：SDS 查询响应带命令头（`C1:VDIV 5.00E+00V`）
    - 单位后缀：`2.00E-03S` / `5.00E+00V` / `VDC`
    - 短格式：`CHAN1` / `NORM` / `SINC`
@@ -33,6 +40,15 @@ AI/Agent 操作仪器必须遵守以下规范。
     后续测量全 `****`。`sds_control.auto_scale` 自动切 `:TRIGger:MODE AUTO`。
 13. **同厂商不同系列命令集不同**：DHO 的 `:ACQuire:TYPE` 无 HRESolution（SDS 才有）；
     未开启的 RIGOL 通道写 SCALe 被拒（-200），需先 `:CHANnel<n>:DISPlay ON`。
+    **DHO800/900 与 MHO900 命令集 97% 重合、已合并到共享内核 `rigol_scope/`**
+    （2026-09-15，证据 `docs/rigol_scope_compare_20260915.md`）。真差异只有少数几条，
+    一律走 `rigol_scope/families.py` 的 Family 表：清测量 DHO `:MEASure:CLEar` /
+    MHO `:MEASure:DELete`；采集第四态 DHO `ULTRa` / MHO `HRESolution`；
+    `:ACQuire:BITS` 与 `:CHANnel<n>:Impedance` **仅 MHO**；`*OPT?` 两者都不要用
+    （MHO 实测查询超时）。边沿第三态**两系列都是 `RFALl`**——`RFail` 曾是
+    `dho.py` 的 docstring 笔误，已被文档互相抄写固化，2026-09-15 按手册原文更正。
+    MHO 波形 ASCII 格式**不带 TMC 头**（二进制才带；DHO 未实测——**待办**：
+    DHO 真机复验交接单 `docs/dho_live_verification_handoff.md`，6 项检查 + 不符时改哪个字段）。
 14. **USB TMC 一律走 VISA**：禁止 pyusb/libusb 直连（Windows 无驱动时
     NotImplementedError）。LAN raw socket 会话必须配 `\n` 终止符。
 15. **示波器"无波形/测量全 `****`"标准排查流程**（先读后写，截图辅助）：
@@ -67,7 +83,9 @@ AI/Agent 操作仪器必须遵守以下规范。
 - **禁止远程锁定命令**：`SYSTem:REMote ON`（SDS：禁用触摸屏/面板按键，界面显示 Remote）、
   DH1766 的 `SYST:RWL`（面板 Lock 键不可切回本地，需 `SYST:LOC` 恢复）及
   `SYST:REM`/`SYST:LOCK`/`:SYST:COMM:RLST <state>` 类——妨碍现场人工操作。
-  MCP `instr_write` 黑名单已全拦（2026-09-13 补 `SYST:RWL` / `:SYST:COMM:RLST` 缺口）；
+  MCP `instr_write` 黑名单已全拦（2026-09-13 补 `SYST:RWL` / `:SYST:COMM:RLST` 缺口；
+  2026-09-15 补 `instr_query` / `readback_cmd` 两条走私通道与 `SYST:RESE` 类**中间缩写**，
+  并把 MHO 的 `:SYSTem:LOCKed`（屏幕/键盘锁定）纳入同族）；
   **纯查询形式放行**（`SYST:REM?`/`SYST:COMM:RLST?`）——用于诊断面板是否被锁，
   且纯查询不改变锁定状态。
 - **DH1766"一连就进远程模式"是设备行为**（2026-09-13 实测，V0.1.4.3）：
@@ -101,12 +119,17 @@ AI/Agent 操作仪器必须遵守以下规范。
   （发现→解析→身份校验→快照/测量，全程零状态变更；真机跑一遍约 1 分钟，留痕到
   `TEST_DATA/common/verify_all_devices_*.json`）
 - 命令审计器：`TEST_SCRIPTS/common/audit_all_commands.py`（新增命令后必跑，
-  防猜测命令回归）
-- 审计报告：`docs/command_audit_20260823.md`（零猜测命令结论）
+  防猜测命令回归；判据=段键元组+段内长短形式兼容+后缀路径命中，见文件头 docstring）
+- **审计器自测（离线闭环）**：`TEST_SCRIPTS/common/verify_audit_extractor.py`
+  —— 提取/归一化/全仓 MISS 基线三层断言，改审计器后必跑（无仪器也能跑）
+- 审计报告：`docs/command_audit_full_20260823.md`（脚本自动生成，重跑即覆盖；
+  **MISS 需人工甄别**——历史甄别口径见 `docs/command_audit_20260823.md`）
+- **DH1766 专项审计**：`docs/dh1766_audit_20260915.md`（safe_mode 旁路等 9 项，
+  含离线补丁与"仪器回来后"的真机回归清单）
 - 操作手册：`docs/AI_OPERATION_GUIDE.md`（API/固件特性/闭环范例）
 - **实测记录**：`docs/TEST_RECORDS.md`（历轮实测时间线；README 只放项目定位与用法）
 - 设备经验：`dh1766_control/docs/EXPERIENCE.md`（时序/固件差异/上电过渡态）
-- MCP 服务器：`mcp_instruments/server.py`（31 工具 = 28 专用 + 3 通用护栏
+- MCP 服务器：`mcp_instruments/server.py`（49 工具 = 46 专用 + 3 通用护栏
   instr_discover/instr_query/instr_write——新设备零代码接入；zcode 用户级 config 已注册
   `instruments`；工具选择/参数语义/安全门见 skill `instrument-mcp`）
 
@@ -121,6 +144,8 @@ AI/Agent 操作仪器必须遵守以下规范。
 |---|---|---|
 | DH1766A-1 电源 | dh1766_control | `find_dh1766()` · `resolve("psu")` · `psu_*` |
 | RIGOL DHO924S 示波器 | dho_control | `find_dho()` · `resolve("dho")` · `dho_*` |
+| RIGOL MHO984D 示波器 | mho_control | `find_mho()` · `resolve("mho")` · `mho_*` |
+| RIGOL DG832 信号源 | dg832_control | `DG832()`（自动发现）· `resolve("dg")` · `dg_*` |
 | Siglent SDS824X HD | sds_control | `find_sds()` · `resolve("sds")` · `sds_*` |
 | Siglent SDG2122X 信号源 | sdg_control | `find_sdg()` · `resolve("sdg")` · `sdg_*` |
 | Keysight 34465A 万用表 | keysight_3446x | `find_dmm()` · `resolve("dmm")` · `dmm_*` |
@@ -177,5 +202,8 @@ CH2 的 −11.99V 是跟踪跟随，不是故障；同时任何远程会话都�
   新增 `sds_get_waveform(ch, points=50000, save_csv)`——返回摘要 + 可选 CSV 路径
   （不返回完整数组防上下文爆炸），FFT 交叉验证时间轴可信。
 - waveform_matrix 遗留：带偏置信号（OFST≠0）的细调精度（居中残差×细调交互）
-- dg832-control skill/scripts 双副本需人工同步
-- 主项目 git 已建立；dg832-control 为嵌套独立仓库，改动前单独 commit
+- ~~dg832-control skill/scripts 双副本需人工同步~~ **已解决（2026-09-15）**：
+  DG832 并入本仓——库/手册/笔记在 `dg832_control/`（驱动迁入时逐字节未改，md5 `d1e33622…`）、
+  MCP 并入统一服务器（`dg_*` 12 工具）、skill 只留 playbook（脚本副本已删，见
+  `~/.agents/skills/dg832-control/scripts/RETIRED.md`）；旧位置 `D:\ChatWorkspace\DG832使用\`
+  已置退役说明。**不再有嵌套独立仓库**，本仓一把 git 管到底。

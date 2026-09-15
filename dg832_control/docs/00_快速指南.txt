@@ -1,0 +1,924 @@
+
+===== 第1页 =====
+ 
+-1- 
+
+===== 第2页 =====
+ 
+1 
+保证和声明 
+ 
+版权 
+©2018 苏州普源精电科技有限公司 
+ 
+商标信息 
+RIGOL 是苏州普源精电科技有限公司的注册商标。 
+ 
+文档编号 
+QGB11000-1110 
+ 
+声明 
+ 本公司产品受中国及其它国家和地区的专利（包括已取得的和正在申请的专利）保护。 
+ 本公司保留改变规格及价格的权利。 
+ 本手册提供的信息取代以往出版的所有资料。 
+ 本手册提供的信息如有变更，恕不另行通知。 
+ 对于本手册可能包含的错误，或因手册所提供的信息及演绎的功能以及因使用本手册而导致的
+任何偶然或继发的损失，RIGOL 概不负责。 
+ 未经RIGOL 事先书面许可，不得影印、复制或改编本手册的任何部分。 
+ 
+产品认证 
+RIGOL 认证本产品符合中国国家产品标准和行业产品标准及ISO9001:2015 标准和
+ISO14001:2015 标准，并进一步认证本产品符合其它国际标准组织成员的相关标准。 
+ 
+联系我们 
+如您在使用此产品或本手册的过程中有任何问题或需求，可与RIGOL 联系： 
+电子邮箱：service@rigol.com 
+网址：www.rigol.com 
+ 
+一般安全概要 
+ 
+1. 请使用所在国家认可的本产品专用电源线。
+2. 请确保产品可靠接地。 
+3. 查看所有终端额定值。 
+4. 请使用合适的过压保护。 
+5. 请勿开盖操作。 
+6. 请勿将异物插入排风口。 
+7. 请使用合适的保险丝。 
+8. 避免电路外露。 
+9. 怀疑产品出故障时，请勿进行操作。 
+10. 请保持适当的通风。 
+11. 请勿在潮湿环境下操作。 
+12. 请勿在易燃易爆的环境下操作。 
+13. 请保持产品表面的清洁和干燥。 
+14. 请注意防静电保护。 
+15. 请注意搬运安全。 
+16. 请正确使用前面板BNC 输出连接器，仅允许
+信号输出。 
+ 
+安全术语和符号 
+ 
+本手册中的安全术语： 
+ 
+ 
+警告 
+警告性声明指出可能会造成人身伤害或危及生命安全的情况或操作。 
+ 
+ 
+注意    
+注意性声明指出可能导致本产品损坏或数据丢失的情况或操作。 
+ 
+ 
+ 
+
+===== 第3页 =====
+ 
+2 
+产品上的安全术语： 
+ 
+DANGER 
+表示您如果不进行此操作，可能会立即对您造成危害。 
+WARNING 
+表示您如果不进行此操作，可能会对您造成潜在的危害。 
+CAUTION 
+表示您如果不进行此操作，可能会对本产品或连接到本产品的其他设备造成
+损坏。 
+ 
+产品上的安全符号： 
+ 
+ 
+ 
+ 
+ 
+高电压 
+安全警告 
+保护性接地端 
+壳体接地端 
+测量接地端 
+ 
+保养与清洁 
+ 
+保养 
+请勿将仪器放置在长时间受到日照的地方。 
+ 
+清洁 
+请根据使用情况定期对仪器进行清洁。方法如下： 
+1. 断开电源。 
+2. 用柔和的清洁剂或清水浸湿软布擦拭仪器外部，请注意不要将水或其他异物通过散热孔进入机
+箱内。清洁带有液晶显示屏的仪器时，请注意不要划伤LCD 显示屏。 
+ 
+ 
+注意    
+请勿使任何腐蚀性的液体沾到仪器上，以免损坏仪器。 
+ 
+ 
+警告 
+重新通电之前，请确认仪器已经干透，避免因水分造成电气短路甚至人身伤害。 
+ 
+文档概述 
+ 
+本文档介绍初次使用DG800系列函数/任意波形发生器时需要了解的信息，包括产品简介、连接电
+源、开机检查以及远程控制等。 
+ 
+提示 
+本手册的最新版本可登陆RIGOL 网址（www.rigol.com）进行下载。 
+ 
+文档格式的约定 
+ 
+1. 按键： 
+本手册中通常用“文本框+文字（加粗）”表示前面板上的一个按键，如Utility。 
+ 
+2. 菜单标签： 
+本手册通常用“字符底纹+文字（加粗）”表示一个菜单标签，如系统设置。 
+ 
+3. 连接器： 
+本手册中通常用“方括号+文字（加粗）”表示前面板或后面板上的一个连接器。例如：
+[Counter]。 
+ 
+
+===== 第4页 =====
+ 
+3 
+4. 操作步骤： 
+本手册中通常用箭头“”表示下一步操作。例如：Utility系统设置表示按下前面板上的
+Utility 功能键后再触摸点击 系统设置菜单标签。 
+ 
+文档内容的约定 
+ 
+DG800系列函数/任意波形发生器包含以下型号。如无特殊说明，本手册以DG832为例介绍其使用
+方法。 
+ 
+型号 
+通道数 
+最大输出频率 
+DG812 
+2 
+10MHz 
+DG811 
+1 
+10MHz 
+DG822 
+2 
+25MHz 
+DG821 
+1 
+25MHz 
+DG832 
+2 
+35MHz 
+DG831 
+1 
+35MHz 
+ 
+一般性检查 
+ 
+1. 检查运输包装 
+如运输包装已损坏，请保留被损坏的包装或防震材料，直到货物经过完全检查且仪器通过电性
+和机械测试。 
+因运输造成仪器损坏，由发货方和承运方联系赔偿事宜。RIGOL 公司恕不进行免费维修或更
+换。 
+ 
+2. 检查整机 
+若存在机械损坏或缺失，或者仪器未通过电性和机械测试，请联系您的RIGOL 经销商。 
+ 
+3. 检查随机附件 
+请根据装箱单检查随机附件，如有损坏或缺失，请联系您的RIGOL 经销商。 
+ 
+产品简介 
+ 
+DG800 系列函数/任意波形发生器是一款集函数发生器、任意波形发生器、噪声发生器、脉冲发
+生器、谐波发生器、模拟/数字调制器、频率计等功能于一身的多功能信号发生器。多功能、高性
+能、高性价比、便携式、触摸屏操作等特点为教育、研发、生产、测试等行业提供了新的选择。 
+前面板、后面板和用户界面（显示屏）的简要介绍请分别参考图1、图2 和图3。 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
+===== 第5页 =====
+ 
+4 
+ 
+ 
+ 
+图1 前面板 
+表 1 前面板说明 
+编号 
+说明 
+编号 
+说明 
+1 
+电源键 
+8 
+方向键 
+2 
+同相位键 
+9 
+旋钮 
+3 
+CH1 输出连接器 
+10 
+Menu 键 
+4 
+通道控制区 
+11 
+Home 键 
+5 
+CH2 输出连接器 
+12 
+功能键 
+6 
+Counter 测量信号输入连接器 
+13 
+LCD 触摸显示屏 
+7 
+频率计 
+—— 
+—— 
+ 
+ 
+ 
+图2 后面板 
+表 2 后面板说明 
+编号 
+说明 
+编号 
+说明 
+1 
+10MHz 输入/输出连接器 
+4 
+USB HOST 
+2 
+CH1 同步/外调制/触发连接器 
+5 
+USB DEVICE 
+3 
+CH2 同步/外调制/触发连接器 
+6 
+AC 电源插口 
+ 
+ 
+ 
+ 
+1                                           2       3   4   5      6    7 
+13             12   11      10           9        8 
+1         2        3         4      5             6  
+
+===== 第6页 =====
+ 
+5 
+ 
+ 
+ 
+ 
+ 
+图3 用户界面 
+表 3 用户界面标识 
+编号 
+名称 
+说明 
+1 
+通道输出配置
+状态栏 
+显示各通道当前的输出配置。 
+2 
+上下滑动条 
+提示用户可上下滑动屏幕，查看或设置参数。 
+3 
+信息设置 
+：打开Store 界面。 
+：打开Utility 界面。 
+：执行通道复制功能。 
+：执行屏幕打印操作。 
+4 
+右箭头 
+提示用户可向右滑动屏幕，切换至波形选择界面。 
+5 
+状态栏 
+：表示前面板按键和屏幕被锁定。 
+：表示关闭蜂鸣器。 
+：表示仪器处于程控模式。 
+：表示使用网线成功将仪器连接至局域网。 
+：表示成功连接U 盘。 
+6 
+波形 
+显示各通道当前选择的波形。 
+7 
+界面标签 
+显示当前界面的标签。 
+8 
+频率 
+显示各通道当前波形的频率。 
+9 
+幅度 
+显示各通道当前波形的幅度。 
+10 
+偏移 
+显示各通道当前波形的直流偏移。 
+11 
+相位 
+显示各通道当前波形的相位。 
+ 
+使用前准备 
+ 
+连接电源 
+ 
+请使用附件提供的电源线将信号发生器连接至AC 电源中，如下图所示。本信号发生器支持
+100-127V，45-440Hz 或100-240V，45-65Hz 规格的交流电源，最大输入功率不超过30W。当通
+过该连接器将信号发生器连接到交流电源时，仪器自动调节至正确的电压范围，无需手动选择电
+压范围。 
+8 
+ 
+ 
+9 
+  
+10    
+11 
+1                                       2              3 
+7            6                  5     4 
+
+===== 第7页 =====
+ 
+6 
+ 
+ 
+注意 
+为避免电击，请确保仪器正确接地。 
+ 
+开机检查 
+ 
+正确连接电源后，按下前面板的电源键   打开信号发生器。开机过程中仪器执行初始化过程和自
+检过程。结束后，屏幕进入默认界面。 
+ 
+设置系统语言 
+ 
+DG800 支持多种语言菜单。您可以按Utility系统设置，然后触摸点击Language 标签右侧的
+参数选择框，选择所需的语言类型。 
+ 
+使用内置帮助系统 
+ 
+DG800 对于前面板上的每个功能按键以及当前显示界面都提供了帮助信息。用户可在操作仪器的
+过程中随时查看各项帮助信息。 
+ 
+1. 获取前面板按键帮助 
+按下Help/Local 键，然后再按下你所需要获得帮助的前面板按键，仪器界面显示该键的帮
+助信息。 
+2. 获取常用帮助主题 
+按下前面板Help/Local 键，弹出如下图所示的界面，触摸点击屏幕中“帮助”，进入帮助列
+表界面。此时，您可通过上下滑动屏幕或旋转旋钮滚动列表，然后触摸点击选中相应的帮助项，
+仪器界面显示该项的帮助信息。 
+ 
+3. 获取界面数据说明 
+按下前面板Help/Local 键，弹出界面如上图所示。然后触摸点击屏幕“中间”，可显示对当
+前界面中间部分数据的解释说明；触摸点击“顶部”，可显示对当前界面上部分数据的解释说
+明；触摸点击“底部”，可显示对当前界面下部分数据的解释说明；触摸点击“向导”，可进入
+
+===== 第8页 =====
+ 
+7 
+向导界面提示您进行操作。 
+4. 帮助的翻页操作 
+当帮助信息为多页显示时，您可通过手指上下滑动屏幕以滚动帮助信息页面。 
+5. 关闭当前的帮助信息 
+当仪器界面显示帮助信息时，用户按下前面板Help/Local 键，将关闭当前显示的帮助信息。 
+ 
+实例：输出正弦波 
+ 
+本节主要介绍如何从[CH1] 连接器输出一个正弦波（频率为20kHz，幅度为2.5Vpp，偏移量为
+500mVdc，起始相位为90°）。 
+ 
+1. 选择输出通道：按下前面板Output1 键（或通过触摸点击通道输出配置状态栏 
+ ）
+选中CH1 通道。此时通道界面以红色显示。 
+2. 选择正弦波：按下前面板Menu 键，在弹出的波形选择界面触摸点击Continuous“Sine”
+图标，仪器自动跳转至正弦波参数设置界面。 
+3. 设置频率：触摸点击频率标签右侧的参数输入框，通过弹出的数字键盘输入20，选择单位
+“kHz”，点击“Ok”。 
+4. 设置幅度：触摸点击幅度标签右侧的参数输入框，通过弹出的数字键盘输入2.5，选择单位
+“Vpp”，点击“Ok”。 
+5. 设置偏移电压：触摸点击偏移标签右侧的参数输入框，通过弹出的数字键盘输入500，选择单
+位“mVdc”，点击“Ok”。 
+6. 设置起始相位：触摸点击相位标签右侧的参数输入框，通过弹出的数字键盘输入90，选择单
+位“°”，点击“Ok”。 
+7. 启用通道输出：按Output1 键（或通过触摸点击通道输出配置状态栏 
+，在通道设
+置界面打开通道输出），Output1 键背灯点亮并且通道状态条呈高亮状态（即 
+），
+[CH1]连接器以当前配置输出正弦波信号。 
+8. 观察输出波形：使用BNC 连接线将DG800 的[CH1]与示波器相连接，由示波器观察输出波形。 
+ 
+远程控制 
+ 
+DG800 系列函数/任意波形发生器可以通过USB 或GPIB（配合RIGOL 的USB-GPIB 转接模块）
+接口与计算机进行通信从而实现远程控制。远程控制基于SCPI（Standard Commands for 
+Programmable Instruments）命令集实现。DG800 支持两种远程控制方式：用户自定义编程和使
+用PC 软件（如RIGOL Ultra Sigma）。 
+ 
+当仪器处于远程控制状态时，前面板按键以及触摸屏被锁定（电源开关键   和Help/Local 键
+除外）。此时，您可以按Help/Local 退出远程模式。 
+ 
+更多产品信息 
+ 
+1. 获取设备信息 
+按Utility系统信息，您可获取设备信息，包括设备型号、设备序列号以及软件版本号。 
+2. 查看选件安装状态 
+按Utility选件，您可查看所有选件的安装状态。 
+ 
+欲了解本产品更多信息，请查阅相关手册（您可登录RIGOL网站www.rigol.com下载）。 
+《DG800用户手册》：提供本产品的功能介绍及操作方法、远程控制方法、在使用过程中可能出
+现的故障及处理方法以及订货信息； 
+《DG800编程手册》：提供本产品的SCPI命令集以及编程实例； 
+《DG800数据手册》：提供本产品的主要特色和技术指标。 
+
+===== 第9页 =====
+1 
+Guaranty and Declaration 
+ 
+Copyright 
+© 2018 RIGOL (SUZHOU) TECHNOLOGIES INC. All Rights Reserved. 
+ 
+TrademarkInformation 
+RIGOL is a registered trademark of RIGOL (SUZHOU) TECHNOLOGIES INC. 
+ 
+PublicationNumber 
+QGB11100-1110 
+ 
+Notices 
+ RIGOL products are covered by P.R.C. and foreign patents, issued and pending. 
+ RIGOL reserves the right to modify or change parts of or all the specifications and pricing 
+policies at the company’s sole decision. 
+ Information in this publication replaces all previously released materials. 
+ Information in this publication is subject to change without notice. 
+ RIGOL shall not be liable for either incidental or consequential losses in connection with the 
+furnishing, use, or performance of this manual, as well as any information contained. 
+ Any part of this document is forbidden to be copied, photocopied, or rearranged without prior 
+written approval of RIGOL. 
+ 
+ProductCertification 
+RIGOL guarantees that this product conforms to the national and industrial standards in China 
+as well as the ISO9001:2015 standard and the ISO14001:2015 standard. Other international 
+standard conformance certifications are in progress. 
+ 
+ContactUs 
+If you have any problem or requirement when using our products or this manual, please contact 
+RIGOL. 
+E-mail: service@rigol.com 
+Website: www.rigol.com 
+ 
+General Safety Summary 
+ 
+1. Only the exclusive power cord designed for
+the instrument and authorized for use 
+within the local country could be used. 
+2. Ensure that the instrument is safely 
+grounded. 
+3. Observe all terminal ratings. 
+4. Use proper overvoltage protection. 
+5. Do not operate without covers. 
+6. Do not insert objects into the air outlet. 
+7. Use the proper fuse. 
+8. Avoid circuit or wire exposure. 
+9. Do not operate the instrument with 
+suspected failures. 
+10. Provide adequate ventilation. 
+11. Do not operate in wet conditions. 
+12. Do not operate in an explosive 
+atmosphere. 
+13. Keep instrument surfaces clean and dry. 
+14. Prevent electrostatic impact. 
+15. Handle with caution. 
+16. Please use the front-panel BNC output 
+connector correctly. It is only allowed to 
+output signal. 
+Safety Notices and Symbols 
+ 
+Safety Notices in this Manual: 
+ 
+ 
+WARNING 
+Indicates a potentially hazardous situation or practice which, if not avoided, will 
+result in serious injury or death. 
+
+===== 第10页 =====
+2 
+ 
+CAUTION    
+Indicates a potentially hazardous situation or practice which, if not avoided, 
+could result in damage to the product or loss of important data. 
+ 
+SafetyTerms on the Product: 
+ 
+DANGER 
+It calls attention to an operation, if not correctly performed, could result in 
+injury or hazard immediately. 
+WARNING 
+It calls attention to an operation, if not correctly performed, could result in 
+potential injury or hazard. 
+CAUTION 
+It calls attention to an operation, if not correctly performed, could result in 
+damage to the product or other devices connected to the product. 
+ 
+Safety Symbols on the Product: 
+ 
+ 
+ 
+ 
+ 
+ 
+Hazardous 
+Voltage 
+Safety 
+Warning 
+Protective Earth 
+Terminal 
+Chassis Ground 
+Test Ground 
+ 
+Care and Cleaning 
+ 
+Care 
+Do not store or leave the instrument where it may be exposed to direct sunlight for long periods 
+of time. 
+ 
+Cleaning 
+Clean the instrument regularly according to its operating conditions. 
+1. Disconnect the instrument from all power sources. 
+2. Clean the external surfaces of the instrument with a soft cloth dampened with mild detergent 
+or water. Avoid having any water or other objects into the chassis via the heat dissipation 
+hole.When cleaning the LCD, take care to avoid scarifying it. 
+ 
+ 
+CAUTION    
+To avoid damage to the instrument, do not expose it to caustic liquids. 
+ 
+ 
+WARNING 
+To avoid short-circuit resulting from moisture or personal injuries, ensure that 
+the instrument is completely dry before connecting it to the power supply. 
+ 
+Document Overview 
+ 
+This manual introduces some basic information that you should know when you use the DG800 
+series function/arbitrary waveform generator for the first time. It contains the following contents: 
+product overview, how to connect the instrument to the AC power, turn-on checkout, and 
+remote control. 
+ 
+Tip 
+For the latest version of this manual, download it from the official website of RIGOL 
+(www.rigol.com). 
+ 
+ 
+
+===== 第11页 =====
+3 
+Format Conventions in this Manual 
+ 
+1. Keys: 
+The keys on the front panel are usually denoted by the format of "Key Name (Bold) + Text 
+Box". For example, Utility. 
+ 
+2. Menu Labels: 
+The menu labels are usually denoted by the format of "Menu Word (Bold) + Character 
+Shading". For example, System Setting. 
+ 
+3. Connectors: 
+The connectors on the front or rear panel are usually denoted by the format of "Connector 
+Name (Bold) + Square Brackets (Bold)". For example, [Counter]. 
+ 
+4. Operation Procedures: 
+"" represents the next step of operation. For example, UtilitySystem Setting indicates 
+pressing Utility on the front panel and then pressing the menu label System Setting. 
+ 
+Content Conventions in this Manual 
+ 
+DG800 series function/arbitrary waveform generator includes the following models. Unless 
+otherwise specified, this manual takes DG832 as an example to illustrate the operation methods 
+of the DG800 series. 
+Model 
+No. of Channels 
+Max. Output Frequency 
+DG812 
+2 
+10 MHz 
+DG811 
+1 
+10 MHz 
+DG822 
+2 
+25 MHz 
+DG821 
+1 
+25 MHz 
+DG832 
+2 
+35 MHz 
+DG831 
+1 
+35 MHz 
+ 
+General Inspection 
+ 
+1. Inspect the packaging 
+If the packaging has been damaged, do not dispose the damaged packaging or cushioning 
+materials until the shipment has been checked for completeness and has passed both 
+electrical and mechanical tests. 
+The consigner or carrier shall be liable for the damage to the instrument resulting from 
+shipment. RIGOL would not be responsible for free maintenance/rework or replacement of 
+the instrument. 
+ 
+2. Inspect the instrument 
+In case of any mechanical damage, missing parts, or failure in passing the electrical and 
+mechanical tests, contact your RIGOL sales representative. 
+ 
+3. Check the accessories 
+Pleasecheck the accessories according to the packing lists. If the accessories are damaged or 
+incomplete, please contact your RIGOL sales representative. 
+ 
+ 
+ 
+ 
+
+===== 第12页 =====
+4 
+Product Overview 
+ 
+As a multi-functional signal generator, DG800 series function/arbitrary waveform generator 
+integrates many instruments into 1, such as function generator, arbitrary waveform generator, 
+noise generator, pulse generator, harmonic generator, analog/digital modulator, and frequency 
+counter. As a multi-functional and portable instrument, it offers you a new choice in education, 
+R&D, production, measurement, and other industries with its user-friendly touch screen and 
+high performance at an unprecedented price point. 
+For descriptions of the front panel, refer to Figure 1; for descriptions of the rear panel, refer to 
+Figure 2; and for descriptions of the user interface (LCD), refer to Figure 3. 
+ 
+ 
+ 
+Figure 1 Front Panel 
+Table 1 Front Panel Description 
+No. 
+Description 
+No. 
+Description 
+1 
+Power Key 
+8 
+Arrow Keys 
+2 
+Align Phase Key 
+9 
+Knob 
+3 
+CH1 Output Connector 
+10 
+Menu Key 
+4 
+Channel Control Area 
+11 
+Home Key 
+5 
+CH2 Output Connector 
+12 
+Function Keys 
+6 
+Counter Measurement Signal 
+Input Connector 
+13 
+LCD Touch Screen 
+7 
+Frequency Counter 
+—— 
+—— 
+ 
+ 
+Figure 2 Rear Panel 
+1                                           2       3   4   5      6    7 
+13             12   11      10           9        8 
+1         2        3         4      5             6  
+
+===== 第13页 =====
+5 
+Table 2 Rear Panel Description 
+No. 
+Description 
+No. 
+Description 
+1 
+10MHz In/Out Connector  
+4 
+USB HOST 
+2 
+CH1 Sync/Ext Mod/Trig/FSK Connector 
+5 
+USB DEVICE 
+3 
+CH2 Sync/Ext Mod/Trig/FSK Connector 
+6 
+AC Power Cord Connector 
+ 
+ 
+ 
+ 
+Figure 3 User Interface 
+Table 3 User Interface Icons 
+No. 
+Name 
+Description 
+1 
+Channel Output 
+Configuration 
+Status Bar 
+Displays the current output configuration of the channel. 
+2 
+Up and Down 
+Scroll Bar 
+Prompts you to move up and down with your fingers on 
+the screen to view and set parameters. 
+3 
+Information 
+Setting 
+: opens the Store interface. 
+: opens the Utility interface. 
+: performs the channel copy function. 
+: performs the screen print operation. 
+4 
+Right Arrow 
+Prompts you to slide right on the screen to switch to the 
+waveform selection interface. 
+5 
+Status Bar 
+: indicates that the front-panel keys and the screen are 
+locked. 
+: indicates that the beeper is disabled. 
+: indicates that the instrument is in 
+programming-controlled mode. 
+: indicates that the instrument has been successfully 
+connected to the local area network by using the network 
+cable. 
+: indicates that a USB storage device is found.  
+6 
+Waveform 
+Displays the currently selected waveform of each channel. 
+7 
+Interface Label 
+Displays the label of the current interface. 
+8 
+Frequency 
+Displays the frequency of the current waveform of each 
+channel. 
+9 
+Amplitude 
+Displays the amplitude of the current waveform of each 
+channel. 
+8 
+ 
+ 
+9 
+  
+10    
+11 
+1                                       2               3 
+7            6                  5    4 
+
+===== 第14页 =====
+6 
+10 
+Offset 
+Displays the DC offset of the current waveform of each 
+channel. 
+11 
+Phase 
+Displays the phase of the current waveform of each 
+channel. 
+ 
+To Prepare for Use 
+ 
+To Connect to AC Power 
+ 
+Please use the power cord provided in the accessories to connect the signal generator to the AC 
+power source, as shown in the figure below. The rated AC power source supported by the signal 
+generator is (100-127 V, 45-440Hz) or (100-240 V, 45-65Hz), and its maximum input power shall 
+not exceed 30 W. When the signal generator is connected to the AC power source via the power 
+cord, the instrument automatically adjusts itself to within the proper voltage range, and you do 
+not need to select the voltage range manually. 
+ 
+ 
+CAUTION 
+To avoid electric shock, ensure that the instrument is correctly grounded. 
+ 
+Turn-on Checkout 
+ 
+After connecting the instrument to the power source properly, press   on the front panel to 
+start the signal generator. During the start-up, the instrument will undergo the initialization and 
+self-check process. Then, it will enter a default interface. 
+ 
+To Set the System Language 
+ 
+DG800 arbitrary waveform generator supports multiple languages. You can press 
+UtilitySystem Setting, and then select a desired language from the Language drop-down 
+list. 
+ 
+To Use the Built-in Help System 
+ 
+DG800 series provides the help information for each front-panel function menu and the current 
+display interface. You can view the help information if you have any questions during the 
+operation process. 
+ 
+1. Obtain the help information of the front panel keys 
+To get the help information about the front-panel keys, press the Help/Local key first, and 
+then press the desired key for the help information. Then, the corresponding help information 
+is displayed. 
+
+===== 第15页 =====
+7 
+2. Obtain the common help topics 
+Press Help/Local on the front panel, and then the following interface is displayed below. 
+Tap "Help" to enter the help interface. At this time, you can tap on the touch screen to move 
+up and down the help items or rotate the knob to scroll up and down the list to select the 
+desired help item. Then, the help information for the item is displayed in the interface. 
+ 
+3. Obtain the descriptions of the data in the interface 
+Press Help/Local on the front panel to enter the interface, as shown above. Tap "Center" 
+to view the descriptions for the data in the center of the current interface. Tap "Top" to view 
+the descriptions for the data in the top part of the current interface. Tap "Bottom" to view 
+the descriptions for the data in the bottom part of the current interface. Tap "Guide" to enter 
+the guide interface. 
+ 
+4. Page up/down operation 
+When the help information is displayed in multiple pages, you can tap to move up and down 
+the touch screen to view the help information. 
+ 
+5. Close the current help information 
+When the help information is displayed in the interface, press Help/Local on the front panel 
+to close the help information currently displayed on the screen. 
+ 
+Example: To Output Sine 
+ 
+This section mainly introduces how to output Sine waveforms (frequency 20 kHz, amplitude 2.5 
+Vpp, offset 500 mVdc, start phase 90°) from the [CH1] connector. 
+ 
+1. Select the output channel: Press Output1on the front panel or tap the channel output 
+configuration status bar 
+ to select CH1. At this time, the channel is indicated in 
+red in the status bar. 
+ 
+2. Select Sine waveforms: Press Menu on the front panel, and then the waveform selection 
+interface is displayed. Tap Continuous and then select the "Sine"icon to go to the sine 
+waveform parameter setting interface automatically. 
+ 
+3. Set frequency: Tap the Freq parameter input field to input 20 with the pop-up numeric 
+keypad, and then select "kHz" as the unit. Tap "Ok". 
+ 
+4. Set amplitude: Tap the Ampl parameter input field to input 2.5 with the pop-up numeric 
+keypad, and then select "Vpp" as the unit. Tap "Ok". 
+ 
+5. Set offset voltage: Tap the Offset parameter input field to input 500 with the pop-up 
+numeric keypad, and then select "mVdc" as the unit. Tap "Ok". 
+
+===== 第16页 =====
+8 
+6. Set start phase: Tap the Phase parameter input field to input 90 with the pop-up numeric 
+keypad, and then select "°" as the unit. Tap "Ok". 
+ 
+7. Enable channel output: Press Output1 or tap the channel output configuration status 
+bar 
+ to enable the channel output. Then,the backlight of Output1 key is 
+illuminated and the channel status is highlighted (
+), and the Sine signal is output 
+from the [CH1] connector based on the current configurations. 
+ 
+8. Observe the output waveforms: Connect the [CH1] connector of the DG800 series to 
+the oscilloscope by using the BNC cable, and then you can view the output waveforms from 
+the oscilloscope. 
+ 
+Remote Control 
+ 
+DG800 series function/arbitrary waveform generator can be connected to the PC via the USBor 
+GPIB (working with RIGOL USB-GPIB interface converter) to realize remote control. The remote 
+control can be realized by using SCPI (Standard Commands for Programmable Instruments) 
+commands. DG800 series signal generator supports two ways of remote control: user-defined 
+programming and PC software (e.g. RIGOL Ultra Sigma). 
+ 
+When the instrument is in remote control, the front panel keys (except the Power key    and 
+Help/Local key) and the touch screen are locked. At this time, you can press Help/Local to 
+exit the remote mode. 
+ 
+More Product Information 
+ 
+1. Obtain the device information 
+Press UtilitySystem Info to obtain the information of the instrument, including the 
+device model, device serial number, as well as software version number. 
+ 
+2. Check the option installation 
+Press UtilityOption to view the installation status of all the options. 
+ 
+For more information about this instrument, refer to the relevant manuals by logging in to the 
+official website of RIGOL (www.rigol.com) to download them. 
+DG800 User's Guide: introduces the functions of the instrument and the operation methods, 
+remote control methods, possible failures and solutions in using the instrument, and order 
+information; 
+DG800 Programming Guide: provides detailed descriptions of SCPI commands and programming 
+instances of the instrument. 
+DG800 Datasheet: provides the main features and technical specifications of the instrument. 
+ 

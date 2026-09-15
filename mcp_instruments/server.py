@@ -57,7 +57,8 @@ _DEVICE_LOCK = threading.Lock()
 _PREWARM_DONE = threading.Event()  # VISA/设备库冷启动完成前置位（看门狗放宽依据）
 
 # 设备专用工具返回体里回填"本次实际用的地址"：模型名 → 解析层的 kind
-_MODEL_KIND = {"SDS": "sds", "SDG": "sdg", "DMM": "dmm", "DHO": "dho", "DH1766": "psu"}
+_MODEL_KIND = {"SDS": "sds", "SDG": "sdg", "DMM": "dmm", "DHO": "dho", "MHO": "mho",
+               "DG832": "dg", "DH1766": "psu"}
 _LAST_RESOLVED: dict[str, str] = {}  # kind -> 本次调用解析出的资源串（_DEVICE_LOCK 内更新）
 
 
@@ -201,6 +202,31 @@ def _dho(resource: str | None = None) -> DHO:
     _verify_idn("dho", res, h.idn())
     _remember("dho", res)
     return h
+
+
+def _mho(resource: str | None = None) -> MHO:
+    from mho_control import MHO
+
+    res = _resolve("mho", resource)
+    _LAST_RESOLVED["mho"] = res  # 供返回体回填本次实际地址
+    m = MHO(res)
+    m.connect()
+    _verify_idn("mho", res, m.idn())
+    _remember("mho", res)
+    return m
+
+
+def _dg(resource: str | None = None, model: str | None = None) -> DG832:
+    """DG832 连接（库自带 model 注册表；地址走解析层 kind=dg）。"""
+    from dg832_control import DG832
+
+    res = _resolve("dg", resource)
+    _LAST_RESOLVED["dg"] = res  # 供返回体回填本次实际地址
+    g = DG832(resource=res, **(dict(model=model) if model else {}))
+    g.connect()
+    _verify_idn("dg", res, g.idn())
+    _remember("dg", res)
+    return g
 
 
 def _psu_connect(resource: str | None = None) -> DH1766:
@@ -402,38 +428,86 @@ def instr_discover(cidr: str | None = None) -> str:
 
 # 复位/存储覆写类黑名单（AGENTS.md 安全红线）：confirm=True 也不放行——
 # 需显式授权的复位场景走测试脚本（如 dh1766 --allow-rst），不经 MCP。
-_FORBIDDEN_RE = re.compile(
-    r"\*(RST|SAV|RCL)"  # *RST / *SAV n / *RCL n（含带参写法）
-    r"|:?(SYST|SYSTEM):(RESET|RES|FACTORY|FACT|PRESET|PRES)(:|\?|$)"
-)
+_FORBIDDEN_COMMON_RE = re.compile(r"\*(RST|SAV|RCL)")  # *RST / *SAV n / *RCL n
 
-# 远程锁定类（**写**才拦，纯查询放行）：SDS :SYSTem:REMote ON 会禁用触摸屏/
-# 面板按键（界面显示 Remote），影响现场人工操作——自动化一律禁止。
-# 注意：_is_forbidden 先做空白归一（"SYST:REM ON"→"SYST:REMON"），故不能用
-# 结尾断言；REM 开头的 SYSTem 子命令也仅远程锁定类。
-# RWL 是 DH1766 的锁定命令（面板 Lock 键不可切回本地，2026-09-13 实测确认；
-# 原正则只覆盖 REM/REMOTE/LOCK，会把它漏放）；:SYST:COMM:RLST <state> 是标准
-# 远程/本地状态设置（RWL 值同样锁面板）。
-_LOCK_RE = re.compile(
-    r":?(SYST|SYSTEM):(REMOTE|REM|RWL|LOCK|LOCKED)"
-    r"|:?(SYST|SYSTEM):COMM(UNICATE)?:RLST"
-)
+# 子系统助记符表：(短形式, 长形式)。SCPI 允许短形式与长形式之间的**任意前缀**
+# （SCPI-99 §6.2.2 命令助记符），只比对两种写法会漏掉中间缩写
+# （实测漏网：`:SYST:RESE`、`:SYST:PRESE`、`:SYST:COMMU:RLST RWL`）。
+_RESET_NODES = (("RES", "RESET"), ("FACT", "FACTORY"), ("PRES", "PRESET"))
+_LOCK_NODES = (("REM", "REMOTE"), ("RWL", "RWL"), ("LOCK", "LOCKED"))
+_COMM_NODES = (("COMM", "COMMUNICATE"),)
+_RLST_NODES = (("RLS", "RLSTATE"),)
+
+
+def _mnemonic(token: str, short: str, long: str) -> bool:
+    """SCPI 助记符匹配（宽松，黑名单用「宁可误拦」的偏置）。
+
+    接受三类写法：① short..long 之间的任意前缀（SCPI-99 §6.2.2）；② 长形式本身；
+    ③ 短形式开头后粘连参数（如 `SYST:REMON` = `SYST:REM ON`，历史实现按正则前缀
+    搜索能拦下，行为必须保持）。
+    """
+    t, lo = token.upper(), long.upper()
+    return len(t) >= len(short) and (lo.startswith(t) or t.startswith(short))
+
+
+def _any_node(token: str, pairs: tuple[tuple[str, str], ...]) -> bool:
+    return any(_mnemonic(token, s, l) for s, l in pairs)
+
+
+def _classify_forbidden(cmd: str) -> str | None:
+    """逐条（`;` 分段）判定命令是否命中黑名单；命中返回类别，否则 None。
+
+    必须在**分段**上判定：`*RST;*IDN?` 这类多命令消息单看整串会漏判，
+    只看首段又会漏掉后续段（历史缺陷：instr_query 只查 `?` 不看黑名单，
+    `"*IDN?;:SYST:RESE"` 可直接复位仪器）。
+    """
+    for part in cmd.split(";"):
+        # 先切出命令头（空格前）再归一——否则 "SYST:REM ON" 归一成 "SYST:REMON"，
+        # 参数会粘连到助记符上导致漏判。
+        stripped = part.strip()
+        if not stripped:
+            continue
+        head = re.split(r"\s+", stripped)[0].upper().lstrip(":")
+        if not head:
+            continue
+        if _FORBIDDEN_COMMON_RE.match(head):
+            return "reset"
+        segs = [s for s in head.split(":") if s]
+        if not segs or not _mnemonic(segs[0], "SYST", "SYSTEM"):
+            continue
+        if len(segs) >= 2 and _any_node(segs[1], _RESET_NODES):
+            return "reset"
+        if len(segs) >= 2 and _any_node(segs[1], _LOCK_NODES):
+            return "lock"
+        if len(segs) >= 3 and _any_node(segs[1], _COMM_NODES) and _any_node(segs[2], _RLST_NODES):
+            return "lock"
+    return None
+
+
+def _is_query_only(cmd: str) -> bool:
+    """整条消息是否"纯查询"：每个 `;` 分段都以 `?` 结尾（SCPI 多命令消息）。
+
+    纯查询不改变仪器状态，故锁定类查询（`SYST:REM?`/`:SYSTem:LOCKed?`）放行，
+    用于诊断面板是否被锁。
+    """
+    parts = [re.sub(r"\s+", "", p) for p in cmd.split(";")]
+    parts = [p for p in parts if p]
+    return bool(parts) and all(p.endswith("?") for p in parts)
 
 
 def _is_forbidden(cmd: str) -> bool:
-    """空白归一后匹配黑名单（兼容 SCPI 长短形式与大小写）。
+    """黑名单判定（复位/存储覆写一律拦；远程锁定类**只拦写**）。
 
-    语义：复位/存储覆写类一律 forbidden；远程锁定类**只拦写**——纯查询
-    （整条以 `?` 结尾且无 `;` 多命令）不改变锁定状态，保留用于状态诊断
-    （`SYST:REM?`、`SYST:COMM:RLST?`），写入形式（`SYST:RWL`、`SYST:COMM:RLST RWL`）
-    一律拒绝。
+    语义：复位/存储覆写类一律 forbidden；远程锁定类只在**非纯查询**时拦——
+    `SYST:REM?`、`:SYSTem:LOCKed?` 这类纯查询不改变锁定状态，保留用于状态诊断。
+    判定按 `;` 分段做，且接受 SCPI 长短形式之间的任意前缀缩写。
     """
-    c = re.sub(r"\s+", "", cmd).upper()
-    if _FORBIDDEN_RE.search(c):
+    kind = _classify_forbidden(cmd)
+    if kind == "reset":
         return True
-    if c.endswith("?") and ";" not in c:
-        return False
-    return bool(_LOCK_RE.search(c))
+    if kind == "lock":
+        return not _is_query_only(cmd)
+    return False
 
 
 _ERR_CLEAN_RE = re.compile(r"^\+?0\s*,")
@@ -509,10 +583,19 @@ def instr_query(resource: str, cmd: str, timeout_ms: int = 5000) -> str:
     timeout_ms: IO 超时 500-30000，默认 5000。
     串口(ASRL)设备按默认 9600 波特（EmoeCalibrator 实测值），暂不支持改波特率。
     只读不留痕；写操作用 instr_write（有黑名单/confirm/审计三道护栏）。
-    设备无响应有硬超时看门狗（下限 30s，覆盖 VISA 冷启动），离线资源不会冻结 MCP。"""
+    设备无响应有硬超时看门狗（下限 30s，覆盖 VISA 冷启动），离线资源不会冻结 MCP。
+
+    护栏：`cmd` 及每条 `;` 分段**都必须以 '?' 结尾**（纯查询消息）——SCPI 允许在
+    一条消息里用 ';' 串联多条命令，只查首尾会让 `"*IDN?;*RST"` 之类的写命令从
+    查询口溜进去；命中的按 `forbidden` 拒绝。多命令消息要么全是查询，要么走 instr_write。"""
     if "?" not in cmd:
         return _err("param_validation", f"查询命令必须含 '?': {cmd!r}",
                     "instruments", resource)
+    if _is_forbidden(cmd) or not _is_query_only(cmd):
+        _audit_scpi("instr_query", resource, cmd, refused="multi_or_forbidden")
+        return _err("forbidden",
+                    f"instr_query 只接受纯查询消息（每个 ';' 分段都以 '?' 结尾）"
+                    f"且不得含复位/锁定类命令: {cmd!r}", "instruments", resource)
 
     def fn(c):
         return {"response": c.query(cmd)}
@@ -525,11 +608,13 @@ def instr_write(resource: str, cmd: str, readback_cmd: str | None = None,
                 confirm: bool = False, timeout_ms: int = 5000) -> str:
     """通用 SCPI 写——新设备零代码接入。⚠ 必须 confirm=True（raw 写权限大）。
     内置护栏（对应 AGENTS.md 铁律2/3 与安全红线）：
-    1) 复位/存储覆写类（*RST/*SAV/*RCL/:SYST:RES|FACT|PRES，长短形式均拦）
+    1) 复位/存储覆写类（*RST/*SAV/*RCL/:SYST:RES|FACT|PRES，长短形式及中间缩写均拦）
        一律拒绝（error_type=forbidden，confirm 也不放行）；
     2) 写前 drain 错误队列、写后逐条排空 SYST:ERR?，返回 syst_errors；
     3) readback_cmd 给定时自动回读（铁律3），如写 'VOLT 1' 后传 'VOLT?'；
+       readback_cmd 同样受黑名单约束且必须是**纯查询消息**（防从回读口偷发写命令）；
     4) 每次调用（含被拒绝的）落盘 TEST_DATA/common/mcp_scpi_audit_*.jsonl；
+       看门狗超时记 executed="unknown"（命令可能已送达，须回读确认）；
     5) 离线/挂起资源硬超时看门狗，不会冻结 MCP。
     返回 result: {written, pre_errors, syst_errors, readback}。"""
     if _is_forbidden(cmd):
@@ -544,7 +629,14 @@ def instr_write(resource: str, cmd: str, readback_cmd: str | None = None,
         return _err("param_validation",
                     f"readback_cmd 是回读查询，必须含 '?': {readback_cmd!r}",
                     "instruments", resource)
-    _audit_scpi("instr_write", resource, cmd, refused=None)
+    # 回读命令走的是 query()（同样会真的下发）——必须与 cmd 同受黑名单/纯查询约束，
+    # 否则 "*RST;*IDN?" 可以从 readback_cmd 溜进去（历史缺陷）。
+    if readback_cmd and (_is_forbidden(readback_cmd) or not _is_query_only(readback_cmd)):
+        _audit_scpi("instr_write", resource, readback_cmd, refused="readback_multior_forbidden")
+        return _err("forbidden",
+                    f"readback_cmd 只接受纯查询消息且不得含复位/锁定类命令: {readback_cmd!r}",
+                    "instruments", resource)
+    _audit_scpi("instr_write", resource, cmd, refused=None, readback_cmd=readback_cmd)
 
     def fn(c):
         pre = _drain_errors(c)
@@ -557,8 +649,12 @@ def instr_write(resource: str, cmd: str, readback_cmd: str | None = None,
                 if readback_cmd else None}
 
     result = _guarded_call(resource, timeout_ms, fn)
-    _audit_scpi("instr_write", resource, cmd, executed=True,
-                outcome=json.loads(result))
+    outcome = json.loads(result)
+    # 看门狗超时只证明"没等到回包"，命令可能已送达并生效——审计必须记 unknown，
+    # 否则事后无法区分"没执行"与"执行了没读到"（回读确认是第一手段）。
+    _audit_scpi("instr_write", resource, cmd,
+                executed="unknown" if outcome.get("error_type") == "timeout" else True,
+                outcome=outcome)
     return result
 
 
@@ -994,6 +1090,280 @@ def dho_measure_item(item: str, ch: int = 1, resource: str | None = None) -> str
     return _call("DHO", lambda: _dho(resource), lambda s: s.measure_item(item, ch))
 
 
+# ============ MHO 示波器（RIGOL MHO900 系列，实测基准 MHO984D） ============
+
+@mcp.tool()
+def mho_status(resource: str | None = None) -> str:
+    """MHO 示波器只读快照：IDN/SCPI 版本/触发状态与类型/采集方式/存储深度/采样率/
+    时基/边沿触发源与电平/CH1-4 开关·耦合·档位·偏移·探头比。
+    注意本系列采样率随开启通道数下降（1~2ch 4GSa/s、3~4ch 1GSa/s）。"""
+    return _call("MHO", lambda: _mho(resource), lambda s: s.snapshot())
+
+
+@mcp.tool()
+def mho_measure_item(item: str, ch: int = 1, ch2: int | None = None,
+                     resource: str | None = None) -> str:
+    """MHO 单次测量查询（手册 3.17.2 参数表）。
+
+    单信源 item: VMAX/VMIN/VPP/VTOP/VBASe/VAMP/VAVG/VRMS/OVERshoot/PREShoot/
+    MARea/MPARea/PERiod/FREQuency/RTIMe/FTIMe/PWIDth/NWIDth/PDUTy/NDUTy/
+    TVMAX/TVMIN/PSLewrate/NSLewrate/VUPPer/VMID/VLOWer/PVRMs/PPULses/NPULses/
+    PEDGes/NEDGes/ACRMs；ch=1-4。
+    双信源 item（需同时给 ch2）: RRDelay/RFDelay/FRDelay/FFDelay（延迟）、
+    RRPHase/RFPHase/FRPHase/FFPHase（相位，四组合=先 A 后 B 的沿型）。
+    无有效读数（如无信号测周期）报 device_error/param_validation，文案含 9.9E37。
+    ⚠ 信号超屏时读数被钳制在屏界不可信——形态判断请用 mho_screenshot 看图。"""
+    return _call("MHO", lambda: _mho(resource),
+                 lambda s: {"item": item, "value": s.measure_item(item, ch, ch2)})
+
+
+@mcp.tool()
+def mho_screenshot(resource: str | None = None) -> str:
+    """MHO 截屏并保存 PNG，返回文件路径——**该 PNG 可直接用 Read 工具查看**
+    （波形形态/有无信号/削顶/居中/菜单/测量栏/网络配置）。
+
+    RIGOL 原生回 PNG 位图流（`:DISPlay:DATA? PNG`），无需像 SDS 那样解析 BMP。
+    设备测量值超屏时被钳制不可信，截图才是物理真相（AGENTS.md 铁律#9）。"""
+    def fn(s: MHO):
+        p = Path(ROOT) / "TEST_DATA" / "mho" / (
+            f"mcp_mho_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
+        saved = s.screenshot_png(p)
+        return {"png": str(saved), "hint": "直接 Read 该 PNG 即可看图"}
+    return _call("MHO", lambda: _mho(resource), fn)
+
+
+@mcp.tool()
+def mho_get_waveform(ch: int = 1, points: int = 1000, mode: str = "NORMal",
+                     fmt: str = "BYTE", save_csv: bool = False,
+                     resource: str | None = None) -> str:
+    """MHO 读取通道波形（电压 + 时间轴），返回**摘要** + 可选 CSV 路径。
+
+    mode: NORMal=屏幕波形（**1~1000 点**，手册 3.28.4）/ MAXimum / RAW=内存波形
+    （RAW 要求示波器处于 STOP 态，否则报 device_error 并提示先 mho_acquisition("stop")）；
+    fmt: BYTE(8bit)/WORD(16bit)/ASCii；points 受模式上限约束（超限报 param_validation）。
+    save_csv=True 存 CSV 到 TEST_DATA/mho/ 并返回路径（不返回完整数组防上下文爆炸）。
+    电压换算 (raw-YORigin-YREFerence)*YINCrement，时间轴 xorigin+i*xincrement，
+    与 :MEASure:ITEM? 交叉验证一致；分析频率请用 FFT（朴素过零对调幅信号会误判）。"""
+    def fn(s: MHO):
+        wf = s.get_waveform(ch, mode=mode, fmt=fmt, points=points)
+        vs = wf["v"]
+        out = {
+            "ch": ch, "mode": wf["mode"], "format": wf["format"],
+            "points": wf["points"], "xinc_s": wf["xinc"], "xorigin_s": wf["xorigin"],
+            "v_min": min(vs), "v_max": max(vs), "vpp": max(vs) - min(vs),
+            "t_start_s": wf["t"][0], "t_end_s": wf["t"][-1],
+        }
+        if save_csv:
+            p = Path(ROOT) / "TEST_DATA" / "mho" / (
+                f"mcp_mho_wave_ch{ch}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with open(p, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow(["time_s", "voltage_v"])
+                w.writerows(zip(wf["t"], wf["v"]))
+            out["csv"] = str(p)
+        return out
+    return _call("MHO", lambda: _mho(resource), fn)
+
+
+@mcp.tool()
+def mho_acquisition(action: str, resource: str | None = None) -> str:
+    """MHO 采集控制：action ∈ run（连续采集）/ stop（冻结，**RAW 读内存波形前必须**）/
+    single（单次触发）/ force（强制触发一次）。
+
+    ⚠ stop 会冻结当前采集——共享实验台上可能打断他人的观察；run/single/force 同理
+    会改变采集状态。仅改采集状态，不动通道档位/时基/触发配置。
+    返回 {"action", "trigger_status"}（设备回读）。"""
+    act = action.strip().lower()
+    if act not in ("run", "stop", "single", "force"):
+        return _err("param_validation",
+                    f"未知 action {action!r}（run|stop|single|force）", "MHO")
+
+    def fn(s: MHO):
+        {"run": s.run, "stop": s.stop,
+         "single": s.single, "force": s.force_trigger}[act]()
+        time.sleep(0.3)
+        return {"action": act, "trigger_status": s.trigger_status()}
+    return _call("MHO", lambda: _mho(resource), fn)
+
+
+@mcp.tool()
+def mho_autoset(confirm: bool = False, resource: str | None = None) -> str:
+    """MHO 一键自动设置 `:AUToset`（手册 3.2.1）。⚠ **全局破坏性**：会重新调整
+    **所有**通道的垂直档位、水平时基与触发配置——多信号实验台上会毁掉别人已调好的
+    通道。必须 confirm=True；且确认"信号简单周期性 + 无其他在用通道"再用。
+    无波形时的推荐顺序：先 mho_status / mho_screenshot 看真相，再决定是否 autoset。"""
+    if not confirm:
+        return _err("confirm_required",
+                    ":AUToset 会重置所有通道档位/时基/触发（全局破坏性），需 confirm=True",
+                    "MHO")
+
+    def fn(s: MHO):
+        s.autoset()
+        time.sleep(2.5)
+        return {"autoset": True, "trigger_status": s.trigger_status(),
+                "timebase_s_div": s.timebase_scale()}
+    return _call("MHO", lambda: _mho(resource), fn)
+
+
+# ============ DG832 信号源（RIGOL DG800 系列；2026-09-15 由独立 instrument 服务器并入） ============
+#
+# 库：dg832_control（唯一维护点）。该库自带两套**硬件保护**，并入时原样保留：
+#   ① protect 联锁：设幅度/偏移或开输出前必须已开启有效电压保护，否则 protect_required；
+#   ② DC 切换快照：set_dc_only 返回切换前配置，切回时要求显式传参（不做隐式恢复）。
+# 仓库侧新增的只有 dg_output 的 confirm 门（AGENTS.md 红线：开关输出需授权）。
+
+@mcp.tool()
+def dg_status(model: str | None = None, resource: str | None = None) -> str:
+    """DG832 快照：设备信息（型号/序列号/固件）+ CH1/CH2 当前波形配置（波形/频率/
+    幅度/偏移/相位）、输出开关、负载。**动这台之前先查它**。
+
+    model: 同族型号可选（DG811/812/821/822/831/832 同命令集，省略默认 DG832；
+    未登记型号返回 model_unsupported）。"""
+    return _call("DG832", lambda: _dg(resource, model), lambda g: g.status())
+
+
+@mcp.tool()
+def dg_protect(ch: int, high: float | None = None, low: float | None = None,
+               state: bool | None = None, model: str | None = None,
+               resource: str | None = None) -> str:
+    """DG832 输出电压保护（防超压）：设上限/下限（V）与开关。
+
+    ⚠ **强制流程**：设置幅度/偏移（`dg_set_wave`/`dg_set_param` 的 amp/offset）或打开输出
+    （`dg_output` on）之前，必须先用本工具开启有效保护（`state=True` 且 `high>low`），
+    否则返回 `protect_required` 被拒；保护开启后越界设置返回 `protect_range`，
+    不会静默超压。省略的参数保持当前值；全省略 = 仅查询。
+    """
+    return _call("DG832", lambda: _dg(resource, model),
+                 lambda g: g.set_voltage_limit(ch, high=high, low=low, state=state))
+
+
+@mcp.tool()
+def dg_get_protect(ch: int, model: str | None = None,
+                   resource: str | None = None) -> str:
+    """DG832 查询指定通道的电压保护配置（开关/上限/下限）。"""
+    return _call("DG832", lambda: _dg(resource, model),
+                 lambda g: g.get_voltage_limit(ch))
+
+
+@mcp.tool()
+def dg_set_wave(ch: int, shape: str, freq: float | None = None, amp: float | None = None,
+                offset: float | None = None, phase: float | None = None,
+                sample_rate: float | None = None, model: str | None = None,
+                resource: str | None = None) -> str:
+    """DG832 快速设置波形（多参数一条 `:APPL` 命令）。ch=1-2。
+
+    shape: sine/square/ramp/pulse/dc/noise/prbs/user(任意波)/harmonic/dualtone/rs232/sequence；
+    freq(Hz) / amp(Vpp) / offset(Vdc) / phase(°0-360)；sequence 波首个参数是采样率 sample_rate。
+    省略的参数**保持当前值**（先读当前配置填充，不会重置为默认）。
+    ⚠ 设 amp/offset 前需已开保护（见 dg_protect），否则 protect_required。
+    本工具**不改变输出开关状态**。"""
+    return _call("DG832", lambda: _dg(resource, model),
+                 lambda g: g.set_wave(ch, shape, freq, amp, offset, phase, sample_rate))
+
+
+@mcp.tool()
+def dg_set_param(ch: int, param: str, value: str, model: str | None = None,
+                 resource: str | None = None) -> str:
+    """DG832 单参数设置并读回。param: freq(Hz)/amp(Vpp)/offset(Vdc)/phase(°)/load(Ω，inf=高阻)。
+    amp/offset 会做电压保护范围校验（需先开保护）。设备静默钳制时返回体 note 会提示。"""
+    def fn(g):
+        p = param.strip().lower()
+        if p == "freq":
+            return g.set_freq(ch, float(value))
+        if p == "amp":
+            return g.set_amp(ch, float(value))
+        if p == "offset":
+            return g.set_offset(ch, float(value))
+        if p == "phase":
+            return g.set_phase(ch, float(value))
+        if p == "load":
+            return g.set_load(ch, value if value.strip().lower() == "inf" else float(value))
+        raise ValueError("param 必须是 freq/amp/offset/phase/load")
+    return _call("DG832", lambda: _dg(resource, model), fn)
+
+
+@mcp.tool()
+def dg_set_dc(ch: int, level: float, model: str | None = None,
+              resource: str | None = None) -> str:
+    """DG832 DC 专用切换：设直流电平（V）并返回切换前配置快照（restore: shape/freq/amp/
+    offset/phase）。已在 DC 时只改电平、restore 为 None。
+    切回非 DC 时请用 restore 值**显式**传参（库不做隐式恢复，避免非预期写入）。"""
+    return _call("DG832", lambda: _dg(resource, model),
+                 lambda g: g.set_dc_only(ch, level))
+
+
+@mcp.tool()
+def dg_sweep(ch: int, start: float | None = None, stop: float | None = None,
+             time: float | None = None, spacing: str | None = None,
+             step: int | None = None, htime_start: float | None = None,
+             htime_stop: float | None = None, rtime: float | None = None,
+             trig_source: str | None = None, state: bool | None = None,
+             model: str | None = None, resource: str | None = None) -> str:
+    """DG832 频率扫频配置/开关/查询。全省略且 state=None = 仅查询当前配置。
+
+    start/stop(Hz，双向皆可，须在当前波形频率上限内)；time(s，1ms~500s)；
+    spacing: lin/log/step；step(2~1024，仅 step 间隔)；
+    htime_start/htime_stop/rtime(s)；trig_source: int/ext/man；
+    state: True=开启（设备会自动关闭调制/脉冲串）/False=关闭/None=不改。
+    仅 sine/square/ramp/user 支持扫频。"""
+    return _call("DG832", lambda: _dg(resource, model),
+                 lambda g: g.set_sweep(ch, start, stop, time, spacing, step,
+                                       htime_start, htime_stop, rtime, trig_source, state))
+
+
+@mcp.tool()
+def dg_sweep_trigger(ch: int, model: str | None = None,
+                     resource: str | None = None) -> str:
+    """DG832 手动触发一次扫频（需触发源为 manual 且该通道输出已打开）。"""
+    return _call("DG832", lambda: _dg(resource, model), lambda g: g.sweep_trigger(ch))
+
+
+@mcp.tool()
+def dg_output(ch: int, on: bool, confirm: bool = False, model: str | None = None,
+              resource: str | None = None) -> str:
+    """DG832 开关通道 ch(1-2) 输出。⚠ **开/关都需 confirm=True**——关断同样可能打断
+    正在进行的测试或他人实验（授权语义与 `sdg_output`/`psu_output` 一致）。
+
+    打开前需已开启有效电压保护（见 `dg_protect`），否则被拒（库内联锁）。
+    建议先 `dg_status` 查当前输出状态与负载。"""
+    if not confirm:
+        return _err("confirm_required",
+                    f"输出开关（{'ON' if on else 'OFF'}）需 confirm=True——"
+                    f"关闭同样可能打断正在进行的测试/实验", "DG832")
+    return _call("DG832", lambda: _dg(resource, model), lambda g: g.output(ch, on))
+
+
+@mcp.tool()
+def dg_counter(model: str | None = None, resource: str | None = None) -> str:
+    """DG832 内置频率计测量（面板 [Counter] 输入口信号），返回频率等读数。"""
+    def fn(g):
+        g.counter_on(True)
+        return g.counter_measure(timeout=2.0)
+    return _call("DG832", lambda: _dg(resource, model), fn)
+
+
+@mcp.tool()
+def dg_query(scpi: str, model: str | None = None, resource: str | None = None) -> str:
+    """DG832 只读 SCPI 查询（须以 `?` 结尾且不含 `;`，如 `:SOUR1:APPL?`、`:OUTP1?`）。
+    整条为纯查询——多命令串联或写命令一律拒绝（与 instr_query 同口径）。"""
+    cmd = scpi.strip()
+    if not cmd.endswith("?") or not _is_query_only(cmd) or _is_forbidden(cmd):
+        return _err("param_validation" if "?" not in cmd else "forbidden",
+                    f"dg_query 只接受纯查询消息（每条以 ? 结尾、不得含复位/锁定类命令）: {scpi!r}",
+                    "DG832")
+    return _call("DG832", lambda: _dg(resource, model), lambda g: g.query(cmd))
+
+
+@mcp.tool()
+def dg_check_error(model: str | None = None, resource: str | None = None) -> str:
+    """DG832 查询并清空设备错误队列（空列表 = 正常）。命令疑似被拒后用它诊断。"""
+    def fn(g):
+        errs = g.check_error()
+        return errs or []
+    return _call("DG832", lambda: _dg(resource, model), fn)
+
+
 # ============ DH1766 电源 ============
 
 @mcp.tool()
@@ -1114,6 +1484,8 @@ import sds_control  # noqa: E402,F401
 import sdg_control  # noqa: E402,F401
 import keysight_3446x  # noqa: E402,F401
 import dho_control  # noqa: E402,F401
+import mho_control  # noqa: E402,F401
+import dg832_control  # noqa: E402,F401
 
 threading.Thread(target=_prewarm_visa_rm, daemon=True).start()
 

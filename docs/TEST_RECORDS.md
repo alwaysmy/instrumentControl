@@ -81,3 +81,90 @@
   ④ `.gitignore` 收口 MCP 运行期产物（波形 CSV 332MB / 截屏 PNG / 审计 jsonl / 旧 BMP）；
   ⑤ README 瘦身（实测时间线移入本文件）+ 文档漂移专项审计
   （报告：`docs/doc_drift_audit_20260913.md`，修正 8 份文档）。
+- 2026-09-15：**新增 RIGOL MHO900（MHO984D）示波器接入**（本机只挂这一台，其余五台不在
+  本实验台可达范围内——`instr_discover` 只识别到 `192.168.1.55` 的 MHO984D，
+  `recognised_now={"mho": …}`，其余 kind 报"未确定资源地址"属环境事实）。
+  - 手册提取：`mho_control/docs/MHO900编程手册_output/`（480 页，654 条命令 + 索引 + 说明）
+    与 `docs/MHO900用户手册_摘录.md`（279 页摘录：本系列 4 通道 12bit、1~2ch 800MHz/4GSa/s、
+    3~4ch 400MHz/1GSa/s、100Mpts 标准深度）。
+  - 库：`mho_control/`（commands.py 47 条命令 + mho.py）；解析 kind `mho`；MCP 6 个 `mho_*` 工具
+    （服务器 31→37 工具）。
+  - 实测（`TEST_SCRIPTS/mho/verify_mho.py`，留痕 `TEST_DATA/mho/verify_mho_20260915_*.json`，
+    **45/45 PASS**）：快照/测量（单+双信源）/三格式波形/写回读恢复/截屏 PNG/RAW 50000 点
+    （STOP→读→恢复 RUN）/MCP 工具层。关键交叉验证：**冻结态 BYTE vs WORD Vpp 差 0.196%**
+    → WORD 低字节在前成立（手册未记载字节序）；RAW `xinc=5e-10s` 与 2GSa/s 采样率自洽。
+  - 命令审计：`audit_all_commands.py` 新增 mho TARGETS，47 HIT / 4 MISS，4 条 MISS 逐条核对
+    手册为**审计器归一化假阳性**（`:CLEar` 3.1.1 / `:SINGle` 3.1.4 / `:TFORce` 3.1.5 /
+    `:AUToset` 3.2.1，单段根命令未入索引），代码中无猜测命令。
+  - 安全加固（真机前发现的绕过，已修并回归 `verify_remote_lock_block.py` 47 用例全 PASS）：
+    ① `instr_query` 原只查 `?` 不查黑名单 → `"*RST;*IDN?"` 可从只读口复位仪器；
+    ② `instr_write.readback_cmd` 同样未查黑名单；③ 黑名单只比对长短形式，`SYST:RESE`/
+    `SYST:PRESE`/`SYST:COMMU:RLST` 等中间缩写漏网。另把 MHO 的 `:SYSTem:LOCKed` 纳入同族拦截。
+  - 审阅（缺陷与设计问题，含真机前验证的 repo 既有缺陷）：`docs/review_20260915.md`。
+- 2026-09-15（同日，工具链轮）：**命令审计器重构 + 离线闭环自测 + DH1766 专项审计**。
+  - 审计器两处结构性缺陷修复：① 旧版只扫"以 `:`/`*` 开头"的字符串字面量，
+    `{ch}:OUTP?`/`C{n}:VDIV?`/`TDIV?`/`PRIN? BMP` 这类常量**全在盲区**
+    （sdg_control/commands.py 旧版只能抽出 2 条，实际 9 条）；② 旧归一化逐段截前 4 字符，
+    造成 ~30 条稳定假阳性（Keysight 短形式、`:CLEar`/`:AUToset` 类单段根命令全判 MISS）。
+    新判据：AST 提取（排除 docstring、还原 f-string 被插值切断的命令）+ 段键元组归一
+    （逐段取 SCPI 短形式、剥通道选择器）+ 段内长短形式兼容 + 后缀路径命中 + f-string
+    拼接的命令名归 DYN 不计 MISS；手册索引补"无前导冒号冒号链"（Keysight 体例）。
+  - 效果：全仓 MISS 从 35（旧口径，含 ~30 假阳性）收敛到 **27 条且条条可解释**：
+    dh1766 8（STAT 组，出处=原版手册，真机已验证）/ sds 6（旧短形式别名 + `SYST:ERR?`）
+    / sdg 3 / k3446x 1（`READ?`）/ 探针脚本 9（**故意**发待验证命令）/ dho·mho 0。
+  - **离线闭环自测**：`TEST_SCRIPTS/common/verify_audit_extractor.py`（60+ 断言：
+    提取层 18 + 归一化 14 + 全仓 MISS 基线 7 组 + 必须命中 27 条）**全 PASS**，
+    无仪器可跑；"多/少一条 MISS"的失败场景已验证会 FAIL。
+  - **DH1766 专项审计**：`docs/dh1766_audit_20260915.md`（本机无该电源，纯静态审计）：
+    H1 `safe_mode` 可被 `apply_voltage()/apply_current()` 旁路（唯一写保护失效，已复核
+    守卫调用点仅 186/210/255/276 四处）；H2 `rst()` 裸暴露 `*RST`；M1 `remote()/rwlock()`
+    库层可直呼且 `test_dh1766_full.py:218` 已直呼；M2 `set_output` 写后不回读；
+    M3 `power_cycle` 无 try/finally；M4 8 条 `STAT:*` 仓内无完整出处。含离线补丁与
+    真机回归清单 T1~T8，等仪器回来执行。
+- 2026-09-15（同日，DG832 合并轮）：**DG832 信号源并入 instrumentControl + MCP 安装到 zcode**。
+  - **合并**：库/笔记/手册文本进仓（`dg832_control/`，驱动 `dg832.py` **逐字节未改**，
+    md5 `d1e33622d2a865a1fa6661f0b3c0bd4c`）；`resolve("dg")` 新 kind（IDN 匹配 `DG8`）；
+    MCP 12 个 `dg_*` 工具并入统一服务器（37→**49 工具 = 46 专用 + 3 通用**；
+    原独立 `instrument` 服务器的 13 个 `instrument_*` 工具退役，`instrument_discover` 由
+    仓库既有 `instr_discover` 覆盖）。并入时为 `dg_output` 补上仓库红线要求的
+    **开/关都需 confirm=True**（其余保护联锁/DC 快照/扫频语义原样保留）。
+  - **旧副本处置**：同一份驱动此前三处并存（工作区、skill、仓库）。skill 内 `scripts/`
+    两份副本已删（删除前 md5 与仓库一致）并留 `RETIRED.md` 指向新位置；skill 的
+    SKILL.md 全量改指仓库 + `dg_*` 工具名（**playbook 内容原样保留**：SOP/踩坑/排障）；
+    `D:\ChatWorkspace\DG832使用\mcp_dg832\` 留 `RETIRED.md` 说明（未删用户文件）。
+    `AGENTS.md` 待办"skill/scripts 双副本需人工同步"关闭。
+  - **真机验收（只读）**：`TEST_SCRIPTS/dg832/verify_dg832.py` → **15/15 PASS**
+    （留痕 `TEST_DATA/dg832/verify_dg832_20260915_105953.json`）。实测：`resolve("dg")`
+    经 VISA 列表层自动发现 `USB0::0x1AB1::0x0643::DG8A265103205::INSTR`（无需写死地址）；
+    CH1 SIN 1kHz 输出 OFF、CH1 保护 ON（high 4V/low −2.5V）、CH2 SQU 50kHz 输出 OFF；
+    多命令走私 `dg_query("*IDN?;*RST")` 被拒；`dg_output` 无 confirm 被拒。
+    **写路径（改频率→回读→恢复）在 `--allow-write` 下可用，本轮未跑**（现场输出状态未知，
+    未获改动授权）；`dg_output` 真机开/关同样待授权。
+  - **命令审计**：审计器新增 dg832 目标（参照物 `dg832_control/docs/02_编程手册.txt`）→
+    **32 HIT / 0 MISS**（驱动命令全部可回溯手册）；闭环自测
+    `verify_audit_extractor.py` 增加 dg832 基线（0 MISS + 8 条必须命中）全 PASS；
+    全仓 MISS 总数仍为 27。
+  - **MCP 安装到本机 zcode**：`~/.zcode/cli/config.json` 注册 `instruments`
+    （python 全路径 + 仓库 server.py，配置已备份 `config.json.bak-20260915`）；
+    **stdio 握手实测通过**：`initialize` → serverInfo `instruments` v1.29.0，
+    `tools/list` → 49 工具（sds 13 / dg 12 / mho 6 / psu 5 / sdg 4 / dmm 4 / dho 2 / instr 3）。
+- 2026-09-15（同日，MHO/DHO 合并轮）：**确认两系列命令集一致并完成功能合并**。
+  - 比对结论（`docs/rigol_scope_compare_20260915.md`）：DHO800/900 手册 908 个命令键、
+    MHO900 1051 个，**共有 881 = DHO 的 97%**；驱动视角更直接——**DHO 驱动用到的 40 条命令
+    100% 存在于 MHO 手册**，MHO 驱动 45 条中仅 2 条为 MHO 专有（`:ACQuire:BITS`、
+    `:CHANnel<n>:Impedance`）。真差异只有：清测量（DHO `:MEASure:CLEar` / MHO `:MEASure:DELete`）、
+    采集第四态（`ULTRa` / `HRESolution`）、两条 MHO 专有命令。
+  - **更正一处既有笔误**：边沿第三态**两系列手册都写 `RFALl`**（DHO `RFALl`×12、`RFail`×0），
+    `RFail` 出自 `dho.py` docstring，此前被当作"系列差异"写进 AGENTS.md——已按手册原文更正。
+    教训：文档互相抄写会把笔误固化，**以手册原文为准**（已写入该文档）。
+  - **合并实施**：新增共享内核 `rigol_scope/`（`scope.py` 通用实现 + `families.py` 家族差异表），
+    `dho_control.DHO`/`mho_control.MHO` 变薄封装（公开 API 不变）；DHO 由此补齐双信源测量、
+    波形分片、points/RAW 校验、原生 PNG 截图，并修掉 ASCII 死分支、删除 `reset()`
+    （`:SYSTem:RESet` 属禁发命令）。
+  - **验证**：离线 `verify_rigol_scope_shared.py` 74 断言全 PASS（假传输回放两家族响应）；
+    真机 `verify_mho.py --allow-stop` **45/45 PASS**；审计器新增 rigol_scope 组
+    （并集判）37 HIT/1 MISS（MISS 是否定性说明文字，非命令）。
+  - **实测教训（已升为 AGENTS 铁律#9）**：`BYTE` 波形 2V/div 下 0.0683 V/code（WORD 的 256 倍），
+    小信号仅占 3 码 → 与设备测量比会差 20%+；**量值用 WORD**（WORD/ASCii 实测差 0.00%）。
+  - **待办**：DHO 真机复验（本实验台无 DHO，LAN 扫描只有 MHO）——清单见
+    `verify_rigol_scope_shared.py` 头部 6 条。

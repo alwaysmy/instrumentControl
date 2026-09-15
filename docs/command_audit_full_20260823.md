@@ -1,7 +1,17 @@
 # SCPI 全量审计（代码 vs 手册）
 
-## dh1766
+判据：命令键（逐段取 SCPI 短形式、剥掉通道选择器）命中手册索引 = HIT；
+命中含「后缀命中」（手册只单列子节点、或代码用 SCPI 尾部路径缩写的情况）。
+**MISS 不等于猜测命令**——需逐条核对手册后归档（历史甄别见
+`docs/command_audit_20260823.md` 与本轮 `docs/review_20260915.md`）。
 
+<!-- 由 TEST_SCRIPTS/common/audit_all_commands.py 生成，勿手改；重跑即覆盖。MISS 需人工甄别（判别口径见 docs/review_20260915.md §四）。 -->
+
+## dh1766（38 HIT / 8 MISS / 2 DYN）
+
+- [HIT ] `SYST:COMM:RLST:STAT?` @ TEST_SCRIPTS\dh1766\psu_remote_lock_probe.py:39
+- [HIT ] `SYST:RLST:STAT?` @ TEST_SCRIPTS\dh1766\psu_remote_lock_probe.py:41
+- [HIT ] `SYST:RLST?` @ TEST_SCRIPTS\dh1766\psu_remote_lock_probe.py:42
 - [HIT ] `*CLS` @ dh1766_control\src\dh1766_control\commands.py:17
 - [HIT ] `*ESE` @ dh1766_control\src\dh1766_control\commands.py:18
 - [HIT ] `*ESR?` @ dh1766_control\src\dh1766_control\commands.py:19
@@ -12,110 +22,342 @@
 - [HIT ] `*SRE` @ dh1766_control\src\dh1766_control\commands.py:24
 - [HIT ] `*STB?` @ dh1766_control\src\dh1766_control\commands.py:25
 - [HIT ] `*TRG` @ dh1766_control\src\dh1766_control\commands.py:26
-- [HIT ] `:ALL?` @ dh1766_control\src\dh1766_control\dh1766.py:351
+- [HIT ] `SYST:ERR?` @ dh1766_control\src\dh1766_control\commands.py:29
+- [HIT ] `SYST:VERS?` @ dh1766_control\src\dh1766_control\commands.py:30
+- [HIT ] `SYST:BEEP` @ dh1766_control\src\dh1766_control\commands.py:31
+- [HIT ] `SYST:LOC` @ dh1766_control\src\dh1766_control\commands.py:32
+- [HIT ] `SYST:REM` @ dh1766_control\src\dh1766_control\commands.py:33
+- [HIT ] `SYST:RWL` @ dh1766_control\src\dh1766_control\commands.py:34
+- [HIT ] `SYST:COMM:RLST?` @ dh1766_control\src\dh1766_control\commands.py:38
+- [**MISS**] `STAT:PRES` @ dh1766_control\src\dh1766_control\commands.py:41
+- [**MISS**] `STAT:QUES:ENAB` @ dh1766_control\src\dh1766_control\commands.py:42
+- [**MISS**] `STAT:QUES?` @ dh1766_control\src\dh1766_control\commands.py:43
+- [**MISS**] `STAT:QUES:COND?` @ dh1766_control\src\dh1766_control\commands.py:44
+- [**MISS**] `STAT:OPER:ENAB` @ dh1766_control\src\dh1766_control\commands.py:45
+- [**MISS**] `STAT:OPER?` @ dh1766_control\src\dh1766_control\commands.py:46
+- [**MISS**] `STAT:OPER:COND?` @ dh1766_control\src\dh1766_control\commands.py:47
+- [**MISS**] `STAT:QUES:INST:ISUM{n}:{node}?` @ dh1766_control\src\dh1766_control\commands.py:48
+- [HIT ] `INST:NSEL` @ dh1766_control\src\dh1766_control\commands.py:52
+- [HIT ] `INST:COUP:TRIG` @ dh1766_control\src\dh1766_control\commands.py:53
+- [HIT ] `VOLT:MODE` @ dh1766_control\src\dh1766_control\commands.py:57
+- [HIT ] `VOLT:PROT` @ dh1766_control\src\dh1766_control\commands.py:58
+- [HIT ] `INIT:DEL` @ dh1766_control\src\dh1766_control\commands.py:62
+- [HIT ] `INIT:SOUR` @ dh1766_control\src\dh1766_control\commands.py:63
+- [HIT ] `CURR:MODE` @ dh1766_control\src\dh1766_control\commands.py:67
+- [HIT ] `CURR:PROT` @ dh1766_control\src\dh1766_control\commands.py:68
+- [HIT ] `OUTP:TRAC` @ dh1766_control\src\dh1766_control\commands.py:72
+- [HIT ] `OUTP:SERI` @ dh1766_control\src\dh1766_control\commands.py:73
+- [HIT ] `OUTP:PARA` @ dh1766_control\src\dh1766_control\commands.py:74
+- [HIT ] `OUTP:TIM:DATA` @ dh1766_control\src\dh1766_control\commands.py:75
+- [HIT ] `MEAS:VOLT` @ dh1766_control\src\dh1766_control\commands.py:78
+- [HIT ] `MEAS:CURR` @ dh1766_control\src\dh1766_control\commands.py:79
+- [HIT ] `MEAS:POW` @ dh1766_control\src\dh1766_control\commands.py:80
+- [HIT ] `APPL:VOLT` @ dh1766_control\src\dh1766_control\commands.py:83
+- [HIT ] `APPL:CURR` @ dh1766_control\src\dh1766_control\commands.py:84
+- [HIT ] `APPL:OUTP` @ dh1766_control\src\dh1766_control\commands.py:85
+- [DYN ] `state:{cmd}` @ TEST_SCRIPTS\dh1766\psu_remote_lock_probe.py:133（运行时拼接，静态不可核）
+- [DYN ] `OUTP:{mode}` @ TEST_SCRIPTS\dh1766\test_dh1766_full.py:177（运行时拼接，静态不可核）
 
-## dho
+## dg832（32 HIT / 0 MISS / 1 DYN）
 
-- [**MISS**] `:CLEar` @ dho_control\commands.py:15
-- [HIT ] `:RUN` @ dho_control\commands.py:16
-- [HIT ] `:STOP` @ dho_control\commands.py:17
-- [**MISS**] `:SINGle` @ dho_control\commands.py:18
-- [**MISS**] `:TFORce` @ dho_control\commands.py:19
-- [HIT ] `:AUToset` @ dho_control\commands.py:20
-- [HIT ] `:TRIGger:MODE` @ dho_control\commands.py:23
-- [HIT ] `:TRIGger:STATus?` @ dho_control\commands.py:24
-- [HIT ] `:TRIGger:SWEep` @ dho_control\commands.py:25
-- [HIT ] `:TRIGger:COUPling` @ dho_control\commands.py:26
-- [HIT ] `:TRIGger:EDGE:SOURce` @ dho_control\commands.py:27
-- [HIT ] `:TRIGger:EDGE:SLOPe` @ dho_control\commands.py:28
-- [HIT ] `:TRIGger:EDGE:LEVel` @ dho_control\commands.py:29
-- [HIT ] `:ACQuire:MDEPth` @ dho_control\commands.py:32
-- [HIT ] `:ACQuire:TYPE` @ dho_control\commands.py:33
-- [HIT ] `:ACQuire:SRATe?` @ dho_control\commands.py:34
-- [HIT ] `:CHANnel{n}:DISPlay` @ dho_control\commands.py:37
-- [HIT ] `:CHANnel{n}:COUPling` @ dho_control\commands.py:38
-- [HIT ] `:CHANnel{n}:VERNier` @ dho_control\commands.py:39
-- [HIT ] `:CHANnel{n}:INVert` @ dho_control\commands.py:40
-- [HIT ] `:CHANnel{n}:BWLimit` @ dho_control\commands.py:41
-- [HIT ] `:CHANnel{n}:SCALe` @ dho_control\commands.py:42
-- [HIT ] `:CHANnel{n}:OFFSet` @ dho_control\commands.py:43
-- [HIT ] `:CHANnel{n}:PROBe` @ dho_control\commands.py:44
-- [HIT ] `:CHANnel{n}:UNITs` @ dho_control\commands.py:45
-- [HIT ] `:TIMebase:MAIN:SCALe` @ dho_control\commands.py:48
-- [HIT ] `:TIMebase:MAIN:OFFSet` @ dho_control\commands.py:49
-- [HIT ] `:MEASure:ITEM` @ dho_control\commands.py:52
-- [HIT ] `:MEASure:CLEar` @ dho_control\commands.py:53
-- [HIT ] `:WAVeform:SOURce` @ dho_control\commands.py:56
-- [HIT ] `:WAVeform:MODE` @ dho_control\commands.py:57
-- [HIT ] `:WAVeform:FORMat` @ dho_control\commands.py:58
-- [HIT ] `:WAVeform:POINts` @ dho_control\commands.py:59
-- [HIT ] `:WAVeform:STARt` @ dho_control\commands.py:60
-- [HIT ] `:WAVeform:STOP` @ dho_control\commands.py:61
-- [HIT ] `:WAVeform:DATA?` @ dho_control\commands.py:62
-- [HIT ] `:WAVeform:XINCrement?` @ dho_control\commands.py:63
-- [HIT ] `:WAVeform:XORigin?` @ dho_control\commands.py:64
-- [HIT ] `:WAVeform:YINCrement?` @ dho_control\commands.py:65
-- [HIT ] `:WAVeform:YORigin?` @ dho_control\commands.py:66
-- [HIT ] `:WAVeform:YREFerence?` @ dho_control\commands.py:67
-- [HIT ] `:SYSTem:ERRor?` @ dho_control\commands.py:70
-- [HIT ] `:SYSTem:VERSion?` @ dho_control\commands.py:71
-- [HIT ] `:SYSTem:RESet` @ dho_control\commands.py:72
-- [HIT ] `:SYSTem:BEEPer` @ dho_control\commands.py:73
-- [HIT ] `*IDN?` @ dho_control\dho.py:108
+- [HIT ] `SOUR1:FREQ?` @ TEST_SCRIPTS\dg832\verify_dg832.py:113
+- [HIT ] `OUTP1?` @ TEST_SCRIPTS\dg832\verify_dg832.py:68
+- [HIT ] `SYST:ERR?` @ dg832_control\dg832.py:301
+- [HIT ] `*IDN?` @ dg832_control\dg832.py:309
+- [HIT ] `SOUR{ch}:APPL?` @ dg832_control\dg832.py:464
+- [HIT ] `SOUR{ch}:VOLT:OFFS?` @ dg832_control\dg832.py:492
+- [HIT ] `SOUR{ch}:FUNC` @ dg832_control\dg832.py:506
+- [HIT ] `SOUR{ch}:FREQ` @ dg832_control\dg832.py:526
+- [HIT ] `SOUR{ch}:VOLT` @ dg832_control\dg832.py:568
+- [HIT ] `SOUR{ch}:APPL:DC` @ dg832_control\dg832.py:593
+- [HIT ] `SOUR{ch}:PHAS` @ dg832_control\dg832.py:619
+- [HIT ] `OUTP{ch}:VOLL:STAT?` @ dg832_control\dg832.py:641
+- [HIT ] `OUTP{ch}:VOLL:HIGH?` @ dg832_control\dg832.py:642
+- [HIT ] `OUTP{ch}:VOLL:LOW?` @ dg832_control\dg832.py:643
+- [HIT ] `OUTP{ch}:LOAD` @ dg832_control\dg832.py:697
+- [HIT ] `SYST:CSC` @ dg832_control\dg832.py:712
+- [HIT ] `SOUR{ch}:SWE:STAT?` @ dg832_control\dg832.py:719
+- [HIT ] `SOUR{ch}:FREQ:STAR?` @ dg832_control\dg832.py:720
+- [HIT ] `SOUR{ch}:FREQ:STOP?` @ dg832_control\dg832.py:721
+- [HIT ] `SOUR{ch}:SWE:TIME?` @ dg832_control\dg832.py:722
+- [HIT ] `SOUR{ch}:SWE:SPAC?` @ dg832_control\dg832.py:723
+- [HIT ] `SOUR{ch}:SWE:STEP?` @ dg832_control\dg832.py:724
+- [HIT ] `SOUR{ch}:SWE:HTIM:STAR?` @ dg832_control\dg832.py:725
+- [HIT ] `SOUR{ch}:SWE:HTIM:STOP?` @ dg832_control\dg832.py:726
+- [HIT ] `SOUR{ch}:SWE:RTIM?` @ dg832_control\dg832.py:727
+- [HIT ] `SOUR{ch}:SWE:TRIG:SOUR?` @ dg832_control\dg832.py:728
+- [HIT ] `SOUR{ch}:SWE:TRIG:SLOP?` @ dg832_control\dg832.py:729
+- [HIT ] `SOUR{ch}:FREQ:CENT` @ dg832_control\dg832.py:790
+- [HIT ] `SOUR{ch}:FREQ:SPAN` @ dg832_control\dg832.py:792
+- [HIT ] `SOUR{ch}:SWE:TRIG:IMM` @ dg832_control\dg832.py:829
+- [HIT ] `COUN:MEAS?` @ dg832_control\dg832.py:841
+- [HIT ] `*RST` @ dg832_control\dg832.py:852
+- [DYN ] `SOUR{ch}:APPL:{x}` @ dg832_control\dg832.py:457（运行时拼接，静态不可核）
 
-## sds
+## dho（39 HIT / 0 MISS / 0 DYN）
 
-- [HIT ] `:MEASure:SIMPle:SOURce C4` @ TEST_SCRIPTS\common\sds_simple_meas.py:37
-- [**MISS**] `:SYST:ERR?` @ TEST_SCRIPTS\common\sds_simple_meas.py:43
-- [HIT ] `:RUN` @ sds_control\commands.py:14
-- [HIT ] `:STOP` @ sds_control\commands.py:15
-- [**MISS**] `:AUTOSET` @ sds_control\commands.py:16
-- [HIT ] `:TRIGger:STATus?` @ sds_control\commands.py:34
-- [HIT ] `:MEASure:ADVanced:CLEar` @ sds_control\commands.py:42
-- [HIT ] `:MEASure:ADVanced:P{n}:TYPE?` @ sds_control\commands.py:43
-- [HIT ] `:MEASure:ADVanced:P{n}:VALue?` @ sds_control\commands.py:45
-- [HIT ] `:WAVeform:SOURce` @ sds_control\commands.py:47
-- [HIT ] `:WAVeform:PREamble?` @ sds_control\commands.py:48
-- [HIT ] `:WAVeform:MAXPoint?` @ sds_control\commands.py:49
-- [HIT ] `:WAVeform:STARt` @ sds_control\commands.py:50
-- [HIT ] `:WAVeform:POINt` @ sds_control\commands.py:51
-- [HIT ] `:WAVeform:WIDTh` @ sds_control\commands.py:52
+- [HIT ] `TRIGger:MODE` @ dho_control\commands.py:23
+- [HIT ] `TRIGger:STATus?` @ dho_control\commands.py:24
+- [HIT ] `TRIGger:SWEep` @ dho_control\commands.py:25
+- [HIT ] `TRIGger:COUPling` @ dho_control\commands.py:26
+- [HIT ] `TRIGger:EDGE:SOURce` @ dho_control\commands.py:27
+- [HIT ] `TRIGger:EDGE:SLOPe` @ dho_control\commands.py:28
+- [HIT ] `TRIGger:EDGE:LEVel` @ dho_control\commands.py:29
+- [HIT ] `ACQuire:MDEPth` @ dho_control\commands.py:32
+- [HIT ] `ACQuire:TYPE` @ dho_control\commands.py:33
+- [HIT ] `ACQuire:SRATe?` @ dho_control\commands.py:34
+- [HIT ] `CHANnel{n}:DISPlay` @ dho_control\commands.py:37
+- [HIT ] `CHANnel{n}:COUPling` @ dho_control\commands.py:38
+- [HIT ] `CHANnel{n}:VERNier` @ dho_control\commands.py:39
+- [HIT ] `CHANnel{n}:INVert` @ dho_control\commands.py:40
+- [HIT ] `CHANnel{n}:BWLimit` @ dho_control\commands.py:41
+- [HIT ] `CHANnel{n}:SCALe` @ dho_control\commands.py:42
+- [HIT ] `CHANnel{n}:OFFSet` @ dho_control\commands.py:43
+- [HIT ] `CHANnel{n}:PROBe` @ dho_control\commands.py:44
+- [HIT ] `CHANnel{n}:UNITs` @ dho_control\commands.py:45
+- [HIT ] `TIMebase:MAIN:SCALe` @ dho_control\commands.py:48
+- [HIT ] `TIMebase:MAIN:OFFSet` @ dho_control\commands.py:49
+- [HIT ] `MEASure:ITEM` @ dho_control\commands.py:52
+- [HIT ] `MEASure:CLEar` @ dho_control\commands.py:53
+- [HIT ] `WAVeform:SOURce` @ dho_control\commands.py:56
+- [HIT ] `WAVeform:MODE` @ dho_control\commands.py:57
+- [HIT ] `WAVeform:FORMat` @ dho_control\commands.py:58
+- [HIT ] `WAVeform:POINts` @ dho_control\commands.py:59
+- [HIT ] `WAVeform:STARt` @ dho_control\commands.py:60
+- [HIT ] `WAVeform:STOP` @ dho_control\commands.py:61
+- [HIT ] `WAVeform:DATA?` @ dho_control\commands.py:62
+- [HIT ] `WAVeform:XINCrement?` @ dho_control\commands.py:63
+- [HIT ] `WAVeform:XORigin?` @ dho_control\commands.py:64
+- [HIT ] `WAVeform:YINCrement?` @ dho_control\commands.py:65
+- [HIT ] `WAVeform:YORigin?` @ dho_control\commands.py:66
+- [HIT ] `WAVeform:YREFerence?` @ dho_control\commands.py:67
+- [HIT ] `SYSTem:ERRor?` @ dho_control\commands.py:70
+- [HIT ] `SYSTem:VERSion?` @ dho_control\commands.py:71
+- [HIT ] `SYSTem:RESet` @ dho_control\commands.py:72
+- [HIT ] `SYSTem:BEEPer` @ dho_control\commands.py:73
+
+## mho（44 HIT / 0 MISS / 0 DYN）
+
+- [HIT ] `ACQuire:MDEPth` @ mho_control\commands.py:31
+- [HIT ] `ACQuire:TYPE` @ mho_control\commands.py:32
+- [HIT ] `ACQuire:BITS` @ mho_control\commands.py:33
+- [HIT ] `ACQuire:SRATe?` @ mho_control\commands.py:34
+- [HIT ] `CHANnel{n}:DISPlay` @ mho_control\commands.py:37
+- [HIT ] `CHANnel{n}:COUPling` @ mho_control\commands.py:38
+- [HIT ] `CHANnel{n}:SCALe` @ mho_control\commands.py:39
+- [HIT ] `CHANnel{n}:OFFSet` @ mho_control\commands.py:40
+- [HIT ] `CHANnel{n}:PROBe` @ mho_control\commands.py:41
+- [HIT ] `CHANnel{n}:BWLimit` @ mho_control\commands.py:42
+- [HIT ] `CHANnel{n}:IMPedance` @ mho_control\commands.py:43
+- [HIT ] `CHANnel{n}:UNITs` @ mho_control\commands.py:44
+- [HIT ] `CHANnel{n}:INVert` @ mho_control\commands.py:45
+- [HIT ] `CHANnel{n}:VERNier` @ mho_control\commands.py:46
+- [HIT ] `DISPlay:CLEar` @ mho_control\commands.py:49
+- [HIT ] `DISPlay:DATA?` @ mho_control\commands.py:50
+- [HIT ] `MEASure:SOURce` @ mho_control\commands.py:53
+- [HIT ] `MEASure:ITEM` @ mho_control\commands.py:54
+- [HIT ] `MEASure:DELete` @ mho_control\commands.py:55
+- [HIT ] `TIMebase:MAIN:SCALe` @ mho_control\commands.py:58
+- [HIT ] `TIMebase:MAIN:OFFSet` @ mho_control\commands.py:59
+- [HIT ] `TRIGger:MODE` @ mho_control\commands.py:62
+- [HIT ] `TRIGger:STATus?` @ mho_control\commands.py:63
+- [HIT ] `TRIGger:SWEep` @ mho_control\commands.py:64
+- [HIT ] `TRIGger:COUPling` @ mho_control\commands.py:65
+- [HIT ] `TRIGger:EDGE:SOURce` @ mho_control\commands.py:66
+- [HIT ] `TRIGger:EDGE:SLOPe` @ mho_control\commands.py:67
+- [HIT ] `TRIGger:EDGE:LEVel` @ mho_control\commands.py:68
+- [HIT ] `WAVeform:SOURce` @ mho_control\commands.py:71
+- [HIT ] `WAVeform:MODE` @ mho_control\commands.py:72
+- [HIT ] `WAVeform:FORMat` @ mho_control\commands.py:73
+- [HIT ] `WAVeform:POINts` @ mho_control\commands.py:74
+- [HIT ] `WAVeform:STARt` @ mho_control\commands.py:75
+- [HIT ] `WAVeform:STOP` @ mho_control\commands.py:76
+- [HIT ] `WAVeform:DATA?` @ mho_control\commands.py:77
+- [HIT ] `WAVeform:PREamble?` @ mho_control\commands.py:78
+- [HIT ] `WAVeform:XINCrement?` @ mho_control\commands.py:79
+- [HIT ] `WAVeform:XORigin?` @ mho_control\commands.py:80
+- [HIT ] `WAVeform:YINCrement?` @ mho_control\commands.py:81
+- [HIT ] `WAVeform:YORigin?` @ mho_control\commands.py:82
+- [HIT ] `WAVeform:YREFerence?` @ mho_control\commands.py:83
+- [HIT ] `SYSTem:ERRor?` @ mho_control\commands.py:86
+- [HIT ] `SYSTem:VERSion?` @ mho_control\commands.py:87
+- [HIT ] `SYSTem:BEEPer` @ mho_control\commands.py:88
+
+## sds（52 HIT / 6 MISS / 0 DYN）
+
+- [HIT ] `WAVeform:STARt` @ sds_control\commands.py:100
+- [HIT ] `WAVeform:POINt` @ sds_control\commands.py:101
+- [HIT ] `WAVeform:WIDTh` @ sds_control\commands.py:102
+- [HIT ] `WAV:DATA?` @ sds_control\commands.py:103
+- [HIT ] `PRIN?` @ sds_control\commands.py:105
+- [**MISS**] `SYST:ERR?` @ sds_control\commands.py:107
+- [HIT ] `ACQ:MDEP?` @ sds_control\commands.py:19
+- [HIT ] `ACQ:TYPE?` @ sds_control\commands.py:20
+- [HIT ] `ACQ:SRAT?` @ sds_control\commands.py:21
+- [HIT ] `C{n}:TRA?` @ sds_control\commands.py:23
+- [**MISS**] `C{n}:VDIV?` @ sds_control\commands.py:24
+- [**MISS**] `C{n}:OFST?` @ sds_control\commands.py:26
+- [**MISS**] `C{n}:ATTN?` @ sds_control\commands.py:28
+- [HIT ] `C{n}:COUPLING?` @ sds_control\commands.py:29
+- [**MISS**] `TDIV?` @ sds_control\commands.py:31
+- [**MISS**] `TRDL?` @ sds_control\commands.py:32
+- [HIT ] `TRIG:MODE?` @ sds_control\commands.py:33
+- [HIT ] `TRIGger:STATus?` @ sds_control\commands.py:34
+- [HIT ] `TRIG:EDGE:SOUR?` @ sds_control\commands.py:35
+- [HIT ] `TRIG:EDGE:LEV?` @ sds_control\commands.py:37
+- [HIT ] `TRIG:EDGE:SLOP?` @ sds_control\commands.py:39
+- [HIT ] `MEAS?` @ sds_control\commands.py:41
+- [HIT ] `MEASure:MODE` @ sds_control\commands.py:42
+- [HIT ] `MEASure:ADVanced:CLEar` @ sds_control\commands.py:43
+- [HIT ] `MEASure:ADVanced:P{n}` @ sds_control\commands.py:44
+- [HIT ] `MEASure:ADVanced:P{n}:TYPE?` @ sds_control\commands.py:45
+- [HIT ] `MEASure:ADVanced:P{n}:SOURce1` @ sds_control\commands.py:47
+- [HIT ] `MEASure:ADVanced:P{n}:VALue?` @ sds_control\commands.py:49
+- [HIT ] `MEASure:THReshold:SOURce` @ sds_control\commands.py:69
+- [HIT ] `MEASure:THReshold:TYPE` @ sds_control\commands.py:70
+- [HIT ] `MEASure:THReshold:ABSolute` @ sds_control\commands.py:71
+- [HIT ] `MEASure:THReshold:PERCent` @ sds_control\commands.py:72
+- [HIT ] `MEASure:GATE` @ sds_control\commands.py:73
+- [HIT ] `MEASure:GATE:GA` @ sds_control\commands.py:74
+- [HIT ] `MEASure:GATE:GB` @ sds_control\commands.py:75
+- [HIT ] `MEASure:RDISplay` @ sds_control\commands.py:76
+- [HIT ] `MEASure:ADVanced:STATistics` @ sds_control\commands.py:77
+- [HIT ] `MEASure:ADVanced:STATistics:AIMLimit` @ sds_control\commands.py:78
+- [HIT ] `MEASure:ADVanced:STATistics:HISTOGram` @ sds_control\commands.py:79
+- [HIT ] `MEASure:ADVanced:STATistics:MAXCount` @ sds_control\commands.py:80
+- [HIT ] `MEASure:ADVanced:STATistics:RESet` @ sds_control\commands.py:81
+- [HIT ] `MEASure:ADVanced:P{n}:STATistics?` @ sds_control\commands.py:82
+- [HIT ] `MEASure:ADVanced:P{n}:SHIStory?` @ sds_control\commands.py:83
+- [HIT ] `MEASure:ADVanced:LINenumber` @ sds_control\commands.py:84
+- [HIT ] `MEASure:ADVanced:STYLe` @ sds_control\commands.py:85
+- [HIT ] `MEASure:ASTRategy` @ sds_control\commands.py:86
+- [HIT ] `MEASure:ASTRategy:BASE` @ sds_control\commands.py:87
+- [HIT ] `MEASure:ASTRategy:TOP` @ sds_control\commands.py:88
+- [HIT ] `MEASure:DTIMe{n}` @ sds_control\commands.py:89
+- [HIT ] `WAVeform:SOURce` @ sds_control\commands.py:97
+- [HIT ] `WAVeform:PREamble?` @ sds_control\commands.py:98
+- [HIT ] `WAVeform:MAXPoint?` @ sds_control\commands.py:99
 - [HIT ] `*IDN?` @ sds_control\sds.py:112
-- [HIT ] `:MEASure:MODE SIMPle` @ sds_control\sds.py:233
-- [HIT ] `:MEASure:SIMPle:ITEM {item},ON` @ sds_control\sds.py:240
+- [HIT ] `MEASure:SIMPle:SOURce` @ sds_control\sds.py:242
+- [HIT ] `MEASure:SIMPle:ITEM` @ sds_control\sds.py:247
+- [HIT ] `MEASure:SIMPle:VALue?` @ sds_control\sds.py:258
+- [HIT ] `SYSTem:SHUTdown` @ sds_control\sds.py:937
+- [HIT ] `SYSTem:REBoot` @ sds_control\sds.py:943
 
-## sdg
+## sdg（6 HIT / 3 MISS / 0 DYN）
 
-- [**MISS**] `:SYST:ERR?` @ sdg_control\commands.py:19
-- [**MISS**] `:SYST:VERS?` @ sdg_control\commands.py:20
-- [HIT ] `*IDN?` @ sdg_control\sdg.py:81
+- [HIT ] `{ch}:BSWV?` @ sdg_control\commands.py:12
+- [HIT ] `{ch}:MDWV?` @ sdg_control\commands.py:15
+- [HIT ] `{ch}:SWWV?` @ sdg_control\commands.py:16
+- [HIT ] `{ch}:ARWV?` @ sdg_control\commands.py:17
+- [**MISS**] `SYST:ERR?` @ sdg_control\commands.py:19
+- [**MISS**] `SYST:VERS?` @ sdg_control\commands.py:20
+- [HIT ] `{ch}:OUTP?` @ sdg_control\commands.py:9
+- [**MISS**] `FCNT?` @ sdg_control\sdg.py:171
+- [HIT ] `*IDN?` @ sdg_control\sdg.py:82
 
-## k3446x
+## k3446x（28 HIT / 1 MISS / 1 DYN）
 
-- [**MISS**] `:CONF?` @ TEST_SCRIPTS\common\probe_new_instruments.py:28
-- [**MISS**] `:MEAS:VOLT:DC?` @ TEST_SCRIPTS\common\probe_new_instruments.py:29
-- [**MISS**] `:SYST:ERR?` @ TEST_SCRIPTS\common\probe_new_instruments.py:38
-- [HIT ] `*OPC?` @ TEST_SCRIPTS\common\probe_new_instruments.py:38
-- [**MISS**] `:MEAS:VOLT:AC?` @ keysight_3446x\commands.py:16
-- [**MISS**] `:MEAS:CURR:DC?` @ keysight_3446x\commands.py:17
-- [**MISS**] `:MEAS:CURR:AC?` @ keysight_3446x\commands.py:18
-- [**MISS**] `:MEAS:RES?` @ keysight_3446x\commands.py:19
-- [**MISS**] `:MEAS:FRES?` @ keysight_3446x\commands.py:20
-- [**MISS**] `:MEAS:CONT?` @ keysight_3446x\commands.py:21
-- [**MISS**] `:MEAS:CAP?` @ keysight_3446x\commands.py:22
-- [**MISS**] `:MEAS:DIOD?` @ keysight_3446x\commands.py:23
-- [**MISS**] `:MEAS:FREQ?` @ keysight_3446x\commands.py:24
-- [HIT ] `:READ?` @ keysight_3446x\commands.py:25
-- [**MISS**] `:CONF:VOLT:DC` @ keysight_3446x\commands.py:28
-- [**MISS**] `:CONF:VOLT:AC` @ keysight_3446x\commands.py:29
-- [**MISS**] `:CONF:RES` @ keysight_3446x\commands.py:30
-- [**MISS**] `:CONF:FREQ` @ keysight_3446x\commands.py:31
-- [**MISS**] `:SENS:VOLT:DC:NPLC` @ keysight_3446x\commands.py:33
-- [**MISS**] `:SENS:VOLT:DC:APER` @ keysight_3446x\commands.py:34
-- [**MISS**] `:SENS:COUN` @ keysight_3446x\commands.py:35
-- [**MISS**] `:TRIG:SOUR` @ keysight_3446x\commands.py:36
-- [**MISS**] `:DATA:LAST?` @ keysight_3446x\commands.py:38
-- [**MISS**] `:STAT:PRES` @ keysight_3446x\commands.py:39
+- [HIT ] `SYST:ERR?` @ keysight_3446x\commands.py:11
+- [HIT ] `CONF?` @ keysight_3446x\commands.py:12
+- [HIT ] `MEAS:VOLT:DC?` @ keysight_3446x\commands.py:15
+- [HIT ] `MEAS:VOLT:AC?` @ keysight_3446x\commands.py:16
+- [HIT ] `MEAS:CURR:DC?` @ keysight_3446x\commands.py:17
+- [HIT ] `MEAS:CURR:AC?` @ keysight_3446x\commands.py:18
+- [HIT ] `MEAS:RES?` @ keysight_3446x\commands.py:19
+- [HIT ] `MEAS:FRES?` @ keysight_3446x\commands.py:20
+- [HIT ] `MEAS:CONT?` @ keysight_3446x\commands.py:21
+- [HIT ] `MEAS:CAP?` @ keysight_3446x\commands.py:22
+- [HIT ] `MEAS:DIOD?` @ keysight_3446x\commands.py:23
+- [HIT ] `MEAS:FREQ?` @ keysight_3446x\commands.py:24
+- [**MISS**] `READ?` @ keysight_3446x\commands.py:25
+- [HIT ] `CONF:VOLT:DC` @ keysight_3446x\commands.py:28
+- [HIT ] `CONF:VOLT:AC` @ keysight_3446x\commands.py:29
+- [HIT ] `CONF:RES` @ keysight_3446x\commands.py:30
+- [HIT ] `CONF:FREQ` @ keysight_3446x\commands.py:31
+- [HIT ] `SENS:VOLT:DC:NPLC` @ keysight_3446x\commands.py:33
+- [HIT ] `SENS:VOLT:DC:APER` @ keysight_3446x\commands.py:34
+- [HIT ] `SENS:COUN` @ keysight_3446x\commands.py:35
+- [HIT ] `TRIG:SOUR` @ keysight_3446x\commands.py:36
+- [HIT ] `DATA:LAST?` @ keysight_3446x\commands.py:38
+- [HIT ] `STAT:PRES` @ keysight_3446x\commands.py:39
 - [HIT ] `*IDN?` @ keysight_3446x\commands.py:8
 - [HIT ] `*OPT?` @ keysight_3446x\commands.py:9
-- [**MISS**] `:CONF:X` @ keysight_3446x\dmm.py:151
+- [HIT ] `VOLT:DC` @ keysight_3446x\dmm.py:141
+- [HIT ] `VOLT:AC` @ keysight_3446x\dmm.py:141
+- [HIT ] `CURR:DC` @ keysight_3446x\dmm.py:142
+- [HIT ] `CURR:AC` @ keysight_3446x\dmm.py:142
+- [DYN ] `CONF:{base}` @ keysight_3446x\dmm.py:151（运行时拼接，静态不可核）
+
+## scripts(multi-device，按全部手册并集判)（19 HIT / 9 MISS / 1 DYN）
+
+- [HIT ] `*IDN?` @ TEST_SCRIPTS\common\probe_new_instruments.py:36
+- [HIT ] `*OPT?` @ TEST_SCRIPTS\common\probe_new_instruments.py:36
+- [HIT ] `SYST:ERR?` @ TEST_SCRIPTS\common\probe_new_instruments.py:36
+- [HIT ] `CONF?` @ TEST_SCRIPTS\common\probe_new_instruments.py:36
+- [HIT ] `MEAS:VOLT:DC?` @ TEST_SCRIPTS\common\probe_new_instruments.py:37
+- [**MISS**] `READ?` @ TEST_SCRIPTS\common\probe_new_instruments.py:37
+- [HIT ] `C1:OUTP?` @ TEST_SCRIPTS\common\probe_new_instruments.py:41
+- [HIT ] `C1:BSWV` @ TEST_SCRIPTS\common\probe_new_instruments.py:42
+- [**MISS**] `WVTP?` @ TEST_SCRIPTS\common\probe_new_instruments.py:42
+- [HIT ] `*OPC?` @ TEST_SCRIPTS\common\probe_new_instruments.py:46
+- [**MISS**] `C1:CPLE?` @ TEST_SCRIPTS\common\probe_new_instruments.py:47
+- [**MISS**] `C1:ATTN?` @ TEST_SCRIPTS\common\probe_new_instruments.py:47
+- [**MISS**] `C1:VDIV?` @ TEST_SCRIPTS\common\probe_new_instruments.py:47
+- [**MISS**] `TRDL?` @ TEST_SCRIPTS\common\probe_new_instruments.py:48
+- [**MISS**] `CHDR?` @ TEST_SCRIPTS\common\probe_new_instruments.py:48
+- [HIT ] `C1:OUTWV?` @ TEST_SCRIPTS\common\probe_siglent.py:63
+- [HIT ] `C1:MDWV?` @ TEST_SCRIPTS\common\probe_siglent.py:64
+- [HIT ] `SYST:VERS?` @ TEST_SCRIPTS\common\probe_siglent.py:65
+- [**MISS**] `SYST:FIRM?` @ TEST_SCRIPTS\common\probe_siglent.py:66
+- [HIT ] `C1:SWEEPWV?` @ TEST_SCRIPTS\common\probe_siglent.py:67
+- [HIT ] `C1:COUPLING?` @ TEST_SCRIPTS\common\probe_siglent.py:77
+- [HIT ] `C1:OFF?` @ TEST_SCRIPTS\common\probe_siglent.py:79
+- [HIT ] `C1:SKEW?` @ TEST_SCRIPTS\common\probe_siglent.py:80
+- [**MISS**] `SANU?` @ TEST_SCRIPTS\common\probe_siglent.py:81
+- [HIT ] `HORI:SCAL?` @ TEST_SCRIPTS\common\probe_siglent.py:82
+- [HIT ] `TRIG:MODE?` @ TEST_SCRIPTS\common\probe_siglent.py:83
+- [HIT ] `TRIG:SOURCE?` @ TEST_SCRIPTS\common\probe_siglent.py:84
+- [HIT ] `ACQ:MDEP?` @ TEST_SCRIPTS\common\probe_siglent.py:85
+- [DYN ] `resolve:{kind}` @ TEST_SCRIPTS\common\verify_all_devices.py:77（运行时拼接，静态不可核）
+
+## rigol_scope(共享内核，按两系列并集判)（37 HIT / 1 MISS / 0 DYN）
+
+- [**MISS**] `*OPT?` @ rigol_scope\families.py:126
+- [HIT ] `MEASure:CLEar` @ rigol_scope\families.py:55
+- [HIT ] `ACQuire:BITS` @ rigol_scope\families.py:87
+- [HIT ] `CHANnel<n>:Impedance` @ rigol_scope\families.py:87
+- [HIT ] `MEASure:DELete` @ rigol_scope\families.py:96
+- [HIT ] `*IDN?` @ rigol_scope\scope.py:102
+- [HIT ] `SYSTem:VERSion?` @ rigol_scope\scope.py:106
+- [HIT ] `SYSTem:ERRor?` @ rigol_scope\scope.py:110
+- [HIT ] `SYSTem:BEEPer` @ rigol_scope\scope.py:128
+- [HIT ] `TRIGger:STATus?` @ rigol_scope\scope.py:155
+- [HIT ] `ACQuire:MDEPth` @ rigol_scope\scope.py:165
+- [HIT ] `ACQuire:TYPE` @ rigol_scope\scope.py:175
+- [HIT ] `ACQuire:SRATe?` @ rigol_scope\scope.py:192
+- [HIT ] `CHANnel{n}:DISPlay` @ rigol_scope\scope.py:206
+- [HIT ] `CHANnel{n}:SCALe` @ rigol_scope\scope.py:217
+- [HIT ] `CHANnel{n}:OFFSet` @ rigol_scope\scope.py:225
+- [HIT ] `CHANnel{n}:COUPling` @ rigol_scope\scope.py:234
+- [HIT ] `CHANnel{n}:PROBe` @ rigol_scope\scope.py:242
+- [HIT ] `CHANnel{n}:BWLimit` @ rigol_scope\scope.py:250
+- [HIT ] `CHANnel{n}:IMPedance` @ rigol_scope\scope.py:262
+- [HIT ] `TIMebase:MAIN:SCALe` @ rigol_scope\scope.py:270
+- [HIT ] `TIMebase:MAIN:OFFSet` @ rigol_scope\scope.py:277
+- [HIT ] `TRIGger:MODE` @ rigol_scope\scope.py:286
+- [HIT ] `TRIGger:SWEep` @ rigol_scope\scope.py:294
+- [HIT ] `TRIGger:EDGE:SOURce` @ rigol_scope\scope.py:301
+- [HIT ] `TRIGger:EDGE:SLOPe` @ rigol_scope\scope.py:303
+- [HIT ] `TRIGger:EDGE:LEVel` @ rigol_scope\scope.py:317
+- [HIT ] `MEASure:SOURce` @ rigol_scope\scope.py:324
+- [HIT ] `MEASure:ITEM` @ rigol_scope\scope.py:351
+- [HIT ] `WAVeform:PREamble?` @ rigol_scope\scope.py:392
+- [HIT ] `WAVeform:SOURce` @ rigol_scope\scope.py:431
+- [HIT ] `WAVeform:MODE` @ rigol_scope\scope.py:432
+- [HIT ] `WAVeform:FORMat` @ rigol_scope\scope.py:433
+- [HIT ] `WAVeform:POINts` @ rigol_scope\scope.py:436
+- [HIT ] `WAVeform:STARt` @ rigol_scope\scope.py:467
+- [HIT ] `WAVeform:STOP` @ rigol_scope\scope.py:468
+- [HIT ] `WAVeform:DATA?` @ rigol_scope\scope.py:469
+- [HIT ] `DISPlay:DATA?` @ rigol_scope\scope.py:485

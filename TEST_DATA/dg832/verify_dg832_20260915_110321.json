@@ -1,0 +1,84 @@
+{
+  "timestamp": "2026-09-15T11:03:21",
+  "resource": "USB0::0x1AB1::0x0643::DG8A265103205::INSTR",
+  "allow_write": false,
+  "allow_output": false,
+  "mode": "只读（§5 仅在 --allow-write 时改频率并恢复）",
+  "rows": [
+    {
+      "step": "VISA 发现 DG832",
+      "ok": true,
+      "detail": "{'resource': 'USB0::0x1AB1::0x0643::DG8A265103205::INSTR', 'kind': 'usb', 'online': True, 'idn': 'Rigol Technologies,DG832,DG8A265103205,00.02.06.00.01', 'error': None}"
+    },
+    {
+      "step": "idn",
+      "ok": true,
+      "detail": "Rigol Technologies,DG832,DG8A265103205,00.02.06.00.01"
+    },
+    {
+      "step": "模型注册表",
+      "ok": true,
+      "detail": "model=DG832"
+    },
+    {
+      "step": "status",
+      "ok": true,
+      "detail": "ch1=SIN@1.000000E+03 out=OFF load=9.900000E+37"
+    },
+    {
+      "step": "ch2 快照",
+      "ok": true,
+      "detail": "ch2=SQU@5.000000E+04 out=OFF"
+    },
+    {
+      "step": "电压保护查询",
+      "ok": true,
+      "detail": "CH1 state=ON high=4.000000E+00 low=-2.500000E+00"
+    },
+    {
+      "step": "只读 SCPI 查询",
+      "ok": true,
+      "detail": "OFF"
+    },
+    {
+      "step": "错误队列",
+      "ok": true,
+      "detail": "空"
+    },
+    {
+      "step": "保护联锁（跳过：CH1 保护已开）",
+      "ok": true,
+      "detail": "现场已开保护，不做'未开保护'路径验证以免改状态"
+    },
+    {
+      "step": "dg_status",
+      "ok": true,
+      "detail": "resource=USB0::0x1AB1::0x0643::DG8A265103205::INSTR {'model': 'DG832', 'idn': 'Rigol Technologies,DG832,DG8A265103205,00.02.06.00.01', 'ch1': {'ch': 1, 'shape': '"
+    },
+    {
+      "step": "dg_get_protect(CH1)",
+      "ok": true,
+      "detail": "resource=USB0::0x1AB1::0x0643::DG8A265103205::INSTR {'state': 'ON', 'high': '4.000000E+00', 'low': '-2.500000E+00'}"
+    },
+    {
+      "step": "dg_query(:OUTP1?)",
+      "ok": true,
+      "detail": "resource=USB0::0x1AB1::0x0643::DG8A265103205::INSTR OFF"
+    },
+    {
+      "step": "dg_query(多命令走私被拒)",
+      "ok": true,
+      "detail": "resource=None dg_query 只接受纯查询消息（每条以 ? 结尾、不得含复位/锁定类命令）: '*IDN?;*RST'"
+    },
+    {
+      "step": "dg_check_error",
+      "ok": true,
+      "detail": "resource=USB0::0x1AB1::0x0643::DG8A265103205::INSTR None"
+    },
+    {
+      "step": "dg_output(无 confirm 被拒)",
+      "ok": true,
+      "detail": "resource=None 输出开关（ON）需 confirm=True——关闭同样可能打断正在进行的测试/实验"
+    }
+  ]
+}

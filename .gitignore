@@ -1,8 +1,8 @@
 __pycache__/
 *.pyc
 
-# dg832-control 是独立 git 仓库，由它自身版本控制
-dg832-control/
+# 注：DG832 于 2026-09-15 并入本仓（dg832_control/，原 dg832-control 嵌套仓库已退役）
+#     —— 库/手册/笔记进本仓，MCP 并入统一服务器，skill 只留 playbook。
 
 # 运行期缓存：现写在用户级缓存目录 %LOCALAPPDATA%\instrumentControl\
 # （旧位置在包目录内，仅兼容读一次后删除；此规则保留作兜底）
@@ -19,6 +19,14 @@ TEST_DATA/**/mcp_scpi_audit_*.jsonl
 TEST_DATA/**/mcp_sds_*.png
 # MCP 波形 CSV（sds_get_waveform(save_csv=True) 产物，单文件 3-4MB）
 TEST_DATA/**/mcp_sds_wave_*.csv
+# MHO 同类产物（mho_screenshot / mho_get_waveform；RAW CSV 单文件 1MB+）
+TEST_DATA/**/mcp_mho_*.png
+TEST_DATA/**/mcp_mho_wave_*.csv
+TEST_DATA/**/mho_raw_ch1_*.csv
+# MHO 验收脚本的截屏/波形产物（留痕 JSON 仍入库）
+TEST_DATA/**/mho_verify_*.png
+TEST_DATA/**/mho_wave_ch1_*.csv
+TEST_DATA/**/smoke_shot.png
 # 历史遗留的原始截屏 BMP（单文件 ≈2.3MB）
 TEST_DATA/**/*.bmp
 

@@ -2,13 +2,15 @@
 
 覆盖：
   ① instr_discover：LAN + VISA 发现，检查是否 5 台齐全、缓存回写、DH1766 面板归还；
-  ② 各设备专用工具（只读类）：sds_status/sdg_status/dmm_status/dho_status/psu_status；
+  ② 各设备专用工具（只读类）：sds_status/sdg_status/dmm_status/dho_status/mho_status/psu_status；
   ③ 只读附加探针：sds_diagnose、sds_get_waveform（摘要）、sds_screenshot（存 PNG）、
-     dmm_measure(volt_dc)、dmm_nplc（查询）、sdg_counter（查询）、dho_measure_item(VPP)；
+     dmm_measure(volt_dc)、dmm_nplc（查询）、sdg_counter（查询）、dho_measure_item(VPP)、
+     mho_measure_item(VPP)、mho_get_waveform、mho_screenshot；
   ④ 解析层：resolve() 来源（config/cache/discovery）、返回体 resource 回填。
 
 **安全**：不调用任何状态变更命令——不开关输出、不改模式/档位/触发、不复位、不关机；
-电源仅在 psu_status 收尾由 server 自动补 SYST:LOC（归还面板，不动输出）。
+mho_* 探针亦为只读（不 STOP、不 autoset）；电源仅在 psu_status 收尾由 server 自动补
+SYST:LOC（归还面板，不动输出）。
 留痕：TEST_DATA/common/verify_all_devices_<stamp>.json
 """
 from __future__ import annotations
@@ -69,7 +71,7 @@ def main() -> int:
         rows[-1]["resolved"] = r.get("resolved")
 
     print("\n=== ② 地址解析来源（config/cache/…）===", flush=True)
-    for kind in ("sds", "sdg", "dmm", "dho", "psu"):
+    for kind in ("sds", "sdg", "dmm", "dho", "mho", "psu"):
         e = explain(kind)
         print(f"  {kind:4s} {str(e['source']):8s} {e['resource']}", flush=True)
         rows.append({"step": f"resolve:{kind}", "ok": bool(e["resource"]),
@@ -78,7 +80,7 @@ def main() -> int:
     print("\n=== ③ 各设备只读快照 ===", flush=True)
     for name, fn in (("sds_status", server.sds_status), ("sdg_status", server.sdg_status),
                      ("dmm_status", server.dmm_status), ("dho_status", server.dho_status),
-                     ("psu_status", server.psu_status)):
+                     ("mho_status", server.mho_status), ("psu_status", server.psu_status)):
         rec(name, fn())
 
     print("\n=== ④ 只读附加探针 ===", flush=True)
@@ -89,6 +91,9 @@ def main() -> int:
     rec("dmm_nplc(query)", server.dmm_nplc())
     rec("sdg_counter(query)", server.sdg_counter())
     rec("dho_measure_item", server.dho_measure_item("VPP", 1))
+    rec("mho_measure_item", server.mho_measure_item("VPP", 1))
+    rec("mho_get_waveform", server.mho_get_waveform(ch=1, points=1000))
+    rec("mho_screenshot", server.mho_screenshot())
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     OUT_DIR.mkdir(parents=True, exist_ok=True)

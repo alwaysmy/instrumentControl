@@ -1,0 +1,198 @@
+{
+  "timestamp": "2026-09-15T10:55:36",
+  "resource": "TCPIP0::192.168.1.55::inst0::INSTR",
+  "allow_stop": false,
+  "mode": "只读（§4 写入即恢复；§6 仅在 --allow-stop 时 STOP/恢复）",
+  "rows": [
+    {
+      "step": "idn",
+      "ok": true,
+      "detail": "RIGOL TECHNOLOGIES,MHO984D,MHO9B282003181,00.01.00"
+    },
+    {
+      "step": "snapshot",
+      "ok": true,
+      "detail": "status=RUN sweep=AUTO sr=2e+09Sa/s depth=1.0000E+06"
+    },
+    {
+      "step": "drain_errors",
+      "ok": true,
+      "detail": "队列干净"
+    },
+    {
+      "step": "measure VPP CH1",
+      "ok": true,
+      "detail": "0.27867"
+    },
+    {
+      "step": "measure VMAX CH1",
+      "ok": true,
+      "detail": "0.11013"
+    },
+    {
+      "step": "measure VMIN CH1",
+      "ok": true,
+      "detail": "-0.148"
+    },
+    {
+      "step": "measure VAVG CH1",
+      "ok": true,
+      "detail": "-0.0184"
+    },
+    {
+      "step": "measure VRMS CH1",
+      "ok": true,
+      "detail": "0.033177"
+    },
+    {
+      "step": "measure VAMP CH1",
+      "ok": true,
+      "detail": "invalid/na: 测量项 VAMP@CHANnel1 无有效值（设备返回 9.9000E+37）——检查信号接入/触发/档位"
+    },
+    {
+      "step": "measure PERiod CH1",
+      "ok": true,
+      "detail": "invalid/na: 测量项 PERiod@CHANnel1 无有效值（设备返回 9.9000E+37）——检查信号接入/触发/档位"
+    },
+    {
+      "step": "measure FREQuency CH1",
+      "ok": true,
+      "detail": "invalid/na: 测量项 FREQuency@CHANnel1 无有效值（设备返回 9.9000E+37）——检查信号接入/触发/档位"
+    },
+    {
+      "step": "measure RRPHase CH1,CH2",
+      "ok": true,
+      "detail": "invalid/na: 测量项 RRPHase@CHANnel1/CHANnel2 无有效值（设备返回 9.9000E+37）——检查信号接入/触发/档位"
+    },
+    {
+      "step": "measure RRDelay CH1,CH2",
+      "ok": true,
+      "detail": "invalid/na: 测量项 RRDelay@CHANnel1/CHANnel2 无有效值（设备返回 9.9000E+37）——检查信号接入/触发/档位"
+    },
+    {
+      "step": "measure 未知项被拒",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "measure 双信源缺 src2 被拒",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "BYTE 长度/解析",
+      "ok": true,
+      "detail": "1000 点"
+    },
+    {
+      "step": "WORD 长度/解析",
+      "ok": true,
+      "detail": "1000 点"
+    },
+    {
+      "step": "ASCii 长度/解析",
+      "ok": true,
+      "detail": "1000 点"
+    },
+    {
+      "step": "时间轴单调递增",
+      "ok": true,
+      "detail": "xinc=2e-07s t=[-0.0001,9.98e-05]s"
+    },
+    {
+      "step": "三格式量级一致（宽松 <3×，RUN 态）",
+      "ok": true,
+      "detail": "BYTE=0.2048 WORD=0.2496 ASCii=0.2392 最大/最小=1.22"
+    },
+    {
+      "step": "波形 Vpp 与设备测量同量级",
+      "ok": true,
+      "detail": "wf=0.2048 meas=0.2288（差 10.5%）"
+    },
+    {
+      "step": "NORMal 超 1000 点被拒",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "非法模式被拒",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "波形 CSV 落盘",
+      "ok": true,
+      "detail": "mho_wave_ch1_20260915_105532.csv 15260B"
+    },
+    {
+      "step": "写 FORMat ASCii + 查错",
+      "ok": true,
+      "detail": "syst_err=None"
+    },
+    {
+      "step": "写 FORMat 回读比对",
+      "ok": true,
+      "detail": "回读 'ASC'（写 ASCii）"
+    },
+    {
+      "step": "写回 FORMat WORD",
+      "ok": true,
+      "detail": "回读 'WORD'"
+    },
+    {
+      "step": "恢复原波形读取参数",
+      "ok": true,
+      "detail": "('CHAN1', 'NORM', 'ASC', '1000') -> ('CHAN1', 'NORM', 'ASC', '1000')"
+    },
+    {
+      "step": "截屏 PNG 魔数",
+      "ok": true,
+      "detail": "b'\\x89PNG\\r\\n\\x1a\\n'"
+    },
+    {
+      "step": "截屏体积合理",
+      "ok": true,
+      "detail": "111730B -> mho_verify_20260915_105533.png"
+    },
+    {
+      "step": "非法截图格式被拒",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "非 STOP 时 RAW 被拒（护栏）",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "mho_status",
+      "ok": true,
+      "detail": "resource=TCPIP0::192.168.1.55::inst0::INSTR {'idn': 'RIGOL TECHNOLOGIES,MHO984D,MHO9B282003181,00.01.00', 'version': '3.0', 'trigger_s"
+    },
+    {
+      "step": "mho_measure_item(VPP)",
+      "ok": true,
+      "detail": "resource=TCPIP0::192.168.1.55::inst0::INSTR {'item': 'VPP', 'value': 0.22933}"
+    },
+    {
+      "step": "mho_measure_item(双信源)",
+      "ok": true,
+      "detail": "测量项 RRPHase@CHANnel1/CHANnel2 无有效值（设备返回 9.9000E+37）——检查信号接入/触发/档位"
+    },
+    {
+      "step": "mho_get_waveform",
+      "ok": true,
+      "detail": "resource=TCPIP0::192.168.1.55::inst0::INSTR {'ch': 1, 'mode': 'NORMAL', 'format': 'BYTE', 'points': 1000, 'xinc_s': 2e-07, 'xorigin_s'"
+    },
+    {
+      "step": "mho_screenshot",
+      "ok": true,
+      "detail": "resource=TCPIP0::192.168.1.55::inst0::INSTR {'png': 'D:\\\\WorkDesigns\\\\3_WorkTools\\\\instrumentControl\\\\TEST_DATA\\\\mho\\\\mcp_mho_20260915"
+    },
+    {
+      "step": "mho_autoset(无 confirm 被拒)",
+      "ok": true,
+      "detail": "confirm_required"
+    }
+  ]
+}

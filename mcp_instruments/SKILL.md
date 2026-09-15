@@ -1,12 +1,12 @@
 ---
 name: instrument-mcp
-description: instrument MCP 服务器使用指引 — 五台仪器（SDS 示波器/SDG 信号源/Keysight 34465A 万用表/DHO 示波器/DH1766 电源）的 MCP 工具选择、参数语义、安全门、典型工作流。触发条件：使用 instrument MCP 工具、sds_/sdg_/dmm_/dho_/psu_ 前缀工具、仪器测量/定标/截图/关机决策。
+description: instrument MCP 服务器使用指引 — 七台仪器（SDS 示波器/SDG 信号源/Keysight 34465A 万用表/DHO 示波器/MHO900 示波器/DG832 信号源/DH1766 电源）的 MCP 工具选择、参数语义、安全门、典型工作流。触发条件：使用 instrument MCP 工具、sds_/sdg_/dmm_/dho_/mho_/dg_/psu_ 前缀工具、仪器测量/定标/截图/关机决策。
 ---
 
 # instrument MCP 使用指引
 
-MCP server：`mcp_instruments/server.py`（31 工具 = 28 专用 + 3 通用护栏，五台设备）。
-本文是 AI 选择工具/参数时的决策依据。
+MCP server：`mcp_instruments/server.py`（49 工具 = 46 专用 + 3 通用护栏，七台设备）。
+本文是 AI 选择工具/参数时的决策依据。DG832 的详细 SOP/踩坑见 skill `dg832-control`。
 
 ## 一、工具选择决策树
 
@@ -38,6 +38,26 @@ MCP server：`mcp_instruments/server.py`（31 工具 = 28 专用 + 3 通用护�
   看配置 → dmm_status
 
 DHO 示波器 → dho_status / dho_measure_item
+
+MHO900 示波器（MHO984D 实测基准）：
+  全量状态 → mho_status（注意采样率随开启通道数下降：1~2ch 4GSa/s、3~4ch 1GSa/s）
+  读测量值 → mho_measure_item（单信源 VPP/VMAX/VAVG/VRMS/FREQuency…；
+    双信源延迟/相位 RRDelay/RFDelay/FRDelay/FFDelay、RRPHase/RFPHase/FRPHase/FFPHase 需 ch2）
+  判断削顶/居中/有无波形 → mho_screenshot（返回 PNG 路径，**直接 Read 看图**）
+  读波形 → mho_get_waveform（NORMal 1~1000 点最常用；RAW 内存波形需先 mho_acquisition("stop")）
+  无波形且确认"信号简单周期 + 无他人在用通道" → mho_autoset(confirm=True)（**全局破坏性**）
+
+DG832 信号源（RIGOL DG800 系列）：
+  **强制流程（顺序不可变）**：dg_status 查现状 → dg_protect 开电压保护（state=True 且 high>low）
+    → dg_set_wave/dg_set_param 设参数 → dg_output(on,confirm=True) 开输出 → dg_check_error
+  看现状 → dg_status（波形/频率/幅度/偏移/输出/负载）
+  设波形 → dg_set_wave（省略参数=保持当前值；amp/offset 需已开保护，否则 protect_required）
+  单参数 → dg_set_param（freq/amp/offset/phase/load；设备钳制时返回 note）
+  DC 电平 → dg_set_dc（返回切换前快照 restore，切回时**显式**传参）
+  扫频 → dg_sweep / dg_sweep_trigger（仅 sine/square/ramp/user）
+  开关输出 → dg_output（**开/关都需 confirm=True**）
+  诊断 → dg_query（纯查询 SCPI）/ dg_check_error
+
 电源（DH1766）→ **psu_status（先查！含安全 warnings）** / psu_mode / psu_set_mode / psu_output / psu_power_cycle
 ```
 
@@ -100,6 +120,15 @@ DHO 示波器 → dho_status / dho_measure_item
 | dmm_measure | function | volt_dc/volt_ac/curr_dc/curr_ac/res/fres/cont/cap/diod/freq |
 | dmm_configure | range_v | 设定量程后 :CONF? 回读滞后一拍，以实测为准 |
 | dho_measure_item | item | RIGOL 长名：VPP/VMAX/VAVG/PERiod/FREQuency...；无值报 param_validation 错误（文案含 9.9E37）|
+| mho_measure_item | item, ch, ch2? | 手册 3.17.2 表：单信源 VMAX/VMIN/VPP/VTOP/VBASe/VAMP/VAVG/VRMS/MARea/MPARea/PERiod/FREQuency/RTIMe/FTIMe/PWIDth/PDUTy/PPULses/PEDGes/ACRMs…；双信源 RRDelay/RRPHase 等需给 ch2；无有效值报错含 9.9E37（RIGOL 哨兵） |
+| mho_get_waveform | ch, points=1000, mode, fmt, save_csv | NORMal **最多 1000 点**（超限报 param_validation）；RAW/MAXimum 可多但 RAW 必须已 STOP；fmt=BYTE/WORD/ASCii；voltage=(raw-YORigin-YREFerence)*YINCrement；RAW xinc 与采样率自洽（实测 5e-10s @2GSa/s） |
+| mho_screenshot | resource? | `:DISPlay:DATA? PNG` 原生 PNG（**无需转码**），存 TEST_DATA/mho/ 并返回路径，可直接 Read 读图 |
+| mho_acquisition | action=run\|stop\|single\|force | **stop 会冻结采集**（共享实验台上可能打断他人观察）；RAW 读内存波形前必须 stop，读完记得 run |
+| mho_autoset | confirm | **全局破坏性**：重置**所有**通道档位/时基/触发；仅在"信号简单周期 + 无其他已调通道"时用 |
+| dg_output | ch, on, confirm | 开/关都需 confirm=True；打开前需已开保护（库内联锁 protect_required） |
+| dg_protect | ch, high, low, state | **设幅度/偏移或开输出前必须先开**（state=True 且 high>low）；越界设置报 protect_range，不静默超压 |
+| dg_set_wave | shape, freq, amp, offset, phase, sample_rate | 各波形 `:APPL` 参数模板不同（DC/DUAL/PRBS 无 phase、NOISE/RS232 无 freq、SEQ 首参是采样率），库已按模板生成；频率上限随波形变（square/pulse 10MHz、ramp 1MHz）|
+| dg_set_param | param, value | freq/amp/offset/phase/load；写后回读，设备钳制时 note 提示 |
 | psu_status | — | **电源状态总览（操作前先调）**：三路电压/电流/功率/设定/OVP/OCP/输出/模式/耦合 + **safe/warnings** 安全检查（原 measure 与 pre_check 已并入）|
 | psu_power_cycle | ch, expect_mode, cycles=1, off_delay_s=1.0, on_delay_s=1.0, confirm | 上下电循环（关→延迟→开→延迟）；**confirm 必填**（授权同输出开关）；放电不足时调大 off_delay_s（电容残留需 ≥6s）|
 | psu_mode / psu_set_mode | mode | **操作电源前先查模式**：NORM/TRAC/SERI/PARA；TRAC 下 CH2 跟随 CH1 输出负压（非故障，手册§3.8）；切换前输出必须全关（库内强制）|
@@ -111,6 +140,9 @@ DHO 示波器 → dho_status / dho_measure_item
 |---|---|---|
 | sds_shutdown | confirm=True | 设备离线需面板手动开机 |
 | sdg_output（开/关） | confirm=True | 开=真实信号；关=可能打断测试/他人实验 |
+| mho_autoset | confirm=True | 全局破坏性：重置所有通道/时基/触发（多信号台面慎用） |
+| dg_output（开/关） | confirm=True | 开=真实信号输出；关=可能打断测试/他人实验 |
+| dg_protect → set_wave/output | 库内联锁 | 未开有效电压保护时设 amp/offset 或开输出一律被拒（protect_required） |
 | psu_output（开/关） | confirm=True | 开=真实电压；关=可能中断供电 |
 | （未暴露）| — | 复位类命令一律不可用 |
 

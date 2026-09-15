@@ -1,0 +1,293 @@
+{
+  "timestamp": "2026-09-15T11:11:47",
+  "rows": [
+    {
+      "cmd": "ACQuire:TYPE",
+      "same_enums": false,
+      "dho_enums": [
+        "NORMal|PEAK|AVERages"
+      ],
+      "mho_enums": [
+        "NORMal|PEAK|AVERages|HRESolution"
+      ],
+      "dho_found": true,
+      "mho_found": true
+    },
+    {
+      "cmd": "ACQuire:MDEPth",
+      "same_enums": true,
+      "dho_enums": [],
+      "mho_enums": [],
+      "dho_found": true,
+      "mho_found": true
+    },
+    {
+      "cmd": "ACQuire:SRATe?",
+      "same_enums": false,
+      "dho_enums": [
+        "ADJacent|OVERlay|WATerfall|MOSaic"
+      ],
+      "mho_enums": [],
+      "dho_found": true,
+      "mho_found": true
+    },
+    {
+      "cmd": "CHANnel:DISPlay",
+      "same_enums": false,
+      "dho_enums": [],
+      "mho_enums": [
+        "1|2|3|4",
+        "AC|DC|GND",
+        "1|ON",
+        "0|OFF"
+      ],
+      "dho_found": true,
+      "mho_found": true
+    },
+    {
+      "cmd": "CHANnel:SCALe",
+      "same_enums": true,
+      "dho_enums": [
+        "1|2|3|4"
+      ],
+      "mho_enums": [
+        "1|2|3|4"
+      ],
+      "dho_found": true,
+      "mho_found": true
+    },
+    {
+      "cmd": "CHANnel:OFFSet",
+      "same_enums": true,
+      "dho_enums": [
+        "1|2|3|4"
+      ],
+      "mho_enums": [
+        "1|2|3|4"
+      ],
+      "dho_found": true,
+      "mho_found": true
+    },
+    {
+      "cmd": "CHANnel:COUPling",
+      "same_enums": true,
+      "dho_enums": [
+        "1|2|3|4",
+        "AC|DC|GND"
+      ],
+      "mho_enums": [
+        "1|2|3|4",
+        "AC|DC|GND"
+      ],
+      "dho_found": true,
+      "mho_found": true
+    },
+    {
+      "cmd": "CHANnel:PROBe",
+      "same_enums": false,
+      "dho_enums": [
+        "1|2|3|4",
+        "0.001|0.002|0.005|0.01|0.02|0.1|0.2|0.5|1|2|5|10|20|50|200|500|1000|2000|5000|20000|50000"
+      ],
+      "mho_enums": [
+        "1|2|3|4"
+      ],
+      "dho_found": true,
+      "mho_found": true
+    },
+    {
+      "cmd": "CHANnel:BWLimit",
+      "same_enums": false,
+      "dho_enums": [
+        "1|2|3|4"
+      ],
+      "mho_enums": [
+        "1|2|3|4",
+        "OFF|ON|20M|250M"
+      ],
+      "dho_found": true,
+      "mho_found": true
+    },
+    {
+      "cmd": "TIMebase:MAIN:SCALe",
+      "same_enums": false,
+      "dho_enums": [
+        "MAIN|XY|ROLL"
+      ],
+      "mho_enums": [],
+      "dho_found": true,
+      "mho_found": false
+    },
+    {
+      "cmd": "TIMebase:MAIN:OFFSet",
+      "same_enums": true,
+      "dho_enums": [],
+      "mho_enums": [],
+      "dho_found": false,
+      "mho_found": false
+    },
+    {
+      "cmd": "TRIGger:MODE",
+      "same_enums": false,
+      "dho_enums": [
+        "EDGE|PULSe|SLOPe|VIDeo|DURation|TIMeout|WINDow|DELay|SETup|RS232|IIC|SPI|CAN|LIN"
+      ],
+      "mho_enums": [
+        "FULL|HALF|NONE"
+      ],
+      "dho_found": true,
+      "mho_found": true
+    },
+    {
+      "cmd": "TRIGger:STATus?",
+      "same_enums": true,
+      "dho_enums": [],
+      "mho_enums": [],
+      "dho_found": true,
+      "mho_found": true
+    },
+    {
+      "cmd": "TRIGger:SWEep",
+      "same_enums": true,
+      "dho_enums": [
+        "AUTO|NORMal|SINGle"
+      ],
+      "mho_enums": [
+        "AUTO|NORMal|SINGle"
+      ],
+      "dho_found": true,
+      "mho_found": true
+    },
+    {
+      "cmd": "TRIGger:EDGE:SLOPe",
+      "same_enums": false,
+      "dho_enums": [],
+      "mho_enums": [
+        "D0|D1|D2|D3|D4|D5|D6|D7|D8|D9|D10|D11|D12|D13|D14|D15|CHANnel1|CHANnel2|CHANnel3|CHANnel4",
+        "POSitive|NEGative|RFALl"
+      ],
+      "dho_found": false,
+      "mho_found": true
+    },
+    {
+      "cmd": "TRIGger:EDGE:SOURce",
+      "same_enums": false,
+      "dho_enums": [
+        "D0|D1|D2|D3|D4|D5|D6|D7|D8|D10|D11|D12|D13|D14|D15|CHANnel2|CHANnel3|EXT",
+        "POSitive|NEGative|RFALl"
+      ],
+      "mho_enums": [
+        "D0|D1|D2|D3|D4|D5|D6|D7|D8|D9|D10|D11|D12|D13|D14|D15|CHANnel1|CHANnel2|CHANnel3|CHANnel4",
+        "POSitive|NEGative|RFALl"
+      ],
+      "dho_found": true,
+      "mho_found": true
+    },
+    {
+      "cmd": "MEASure:ITEM",
+      "same_enums": false,
+      "dho_enums": [
+        "D0|D1|D2|D3|D4|D5|D6|D7|D8|D9|D10|D11|D12|D13|D14|D15|CHANnel1|CHANnel2|CHANnel3|CHANnel4|MATH1|MATH2|MATH3|MATH4",
+        "CHANnel1|CHANnel2|CHANnel3|CHANnel4|MATH1|MATH2|MATH3|MATH4"
+      ],
+      "mho_enums": [
+        "D0|D1|D2|D3|D4|D5|D6|D7|D8|D9|D10|D11|D12|D13|D14|D15|CHANnel1|CHANnel2|CHANnel3|CHANnel4|MATH1|MATH2|MATH3|MATH4"
+      ],
+      "dho_found": true,
+      "mho_found": true
+    },
+    {
+      "cmd": "MEASure:CLEar/DELete",
+      "same_enums": false,
+      "dho_enums": [],
+      "mho_enums": [
+        "D0|D1|D2|D3|D4|D5|D6|D7|D8|D9|D10|D11|D12|D13|D14|D15|CHANnel1|CHANnel2|CHANnel3|CHANnel4|MATH1|MATH2|MATH3|MATH4"
+      ],
+      "dho_found": false,
+      "mho_found": true
+    },
+    {
+      "cmd": "WAVeform:SOURce",
+      "same_enums": false,
+      "dho_enums": [],
+      "mho_enums": [
+        "CHANnel1|CHANnel2|CHANnel3|CHANnel4|MATH1|MATH2|MATH3|MATH4"
+      ],
+      "dho_found": true,
+      "mho_found": true
+    },
+    {
+      "cmd": "WAVeform:MODE",
+      "same_enums": false,
+      "dho_enums": [
+        "NORMal|MAXimum|RAW"
+      ],
+      "mho_enums": [
+        "NORMal|MAXimum|RAW",
+        "CHANnel1|CHANnel2|CHANnel3|CHANnel4|MATH1|MATH2|MATH3|MATH4"
+      ],
+      "dho_found": true,
+      "mho_found": true
+    },
+    {
+      "cmd": "WAVeform:FORMat",
+      "same_enums": true,
+      "dho_enums": [
+        "WORD|BYTE|ASCii"
+      ],
+      "mho_enums": [
+        "WORD|BYTE|ASCii"
+      ],
+      "dho_found": true,
+      "mho_found": true
+    },
+    {
+      "cmd": "WAVeform:POINts",
+      "same_enums": false,
+      "dho_enums": [],
+      "mho_enums": [
+        "WORD|BYTE|ASCii"
+      ],
+      "dho_found": true,
+      "mho_found": true
+    },
+    {
+      "cmd": "WAVeform:PREamble?",
+      "same_enums": true,
+      "dho_enums": [],
+      "mho_enums": [],
+      "dho_found": false,
+      "mho_found": true
+    },
+    {
+      "cmd": "DISPlay:DATA?",
+      "same_enums": true,
+      "dho_enums": [
+        "BMP|PNG|JPG"
+      ],
+      "mho_enums": [
+        "BMP|PNG|JPG"
+      ],
+      "dho_found": true,
+      "mho_found": true
+    },
+    {
+      "cmd": "SYSTem:ERRor?",
+      "same_enums": true,
+      "dho_enums": [],
+      "mho_enums": [],
+      "dho_found": true,
+      "mho_found": true
+    },
+    {
+      "cmd": "SYSTem:VERSion?",
+      "same_enums": false,
+      "dho_enums": [],
+      "mho_enums": [
+        "DEFault|OPEN"
+      ],
+      "dho_found": true,
+      "mho_found": true
+    }
+  ]
+}

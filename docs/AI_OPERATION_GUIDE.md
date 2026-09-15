@@ -125,6 +125,70 @@ nplc = dmm.get_nplc()
 注意 `:CONF?` 回读滞后一拍（锁存上轮配置），以实测值为准。
 语法为冒号嵌套 `:CONF:VOLT:DC`（空格分隔会 -102）。
 
+### mho_control（RIGOL MHO900 系列示波器）
+```python
+with MHO(resolve("mho")) as scope:
+    print(scope.idn())                                  # RIGOL TECHNOLOGIES,MHO984D,…
+    vpp = scope.measure_item("VPP", 1)                  # 单信源测量（手册 3.17.2 表）
+    ph  = scope.measure_item("RRPHase", 1, 2)           # 双信源相位/延迟（给两个通道）
+    wf  = scope.get_waveform(1, points=1000)            # NORMal 屏幕波形（1~1000 点）
+    raw = scope.get_waveform(1, mode="RAW", points=50000)  # 内存波形：需先 scope.stop()
+    png = scope.screenshot_png(Path("shot.png"))        # 原生 PNG，可直接读图
+```
+
+实测要点（MHO984D / 固件 00.01.00，留痕 `TEST_DATA/mho/verify_mho_*.json`）：
+- **命令集与 DHO800/900 不同**：清测量 `:MEASure:DELete`（DHO 是 `:MEASure:CLEar`）、
+  边沿第三态 `RFALl`（DHO 是 `RFail`）、面板锁定 `:SYSTem:LOCKed`；**无 `*OPT?`**（超时）。
+- 采样率随通道数下降：1~2ch 4GSa/s、3~4ch 1GSa/s（`snapshot()['sample_rate_hz']`）；
+  带宽同样分档（MHO984 1~2ch 800MHz、3~4ch 400MHz）。
+- `:WAVeform:POINts` 上限**随模式变**：NORMal 1~1000；RAW 1~最大存储深度（本机 100Mpts）。
+  RAW 必须 STOP 态读（库内直接报错，不做隐式 STOP）；`:WAVeform:STARt/STOP` 是 **1 起始**索引。
+- 波形 ASCII 格式**不带 TMC 头**（二进制格式带）；WORD 字节序手册未记载，
+  实测低字节在前（冻结态 BYTE/WORD Vpp 差 0.2%，见验收脚本 §6）。
+- 无效测量统一返回 `9.9E37` 哨兵，库内转成 ValueError（文案含原值）。
+- 截屏 `:DISPlay:DATA? PNG` 直接回 PNG 位图流，**没有** SDS 那种 BMP alpha=0 问题。
+
+### rigol_scope（DHO800/900 与 MHO900 共享内核，2026-09-15 合并）
+
+两系列命令集 97% 重合（DHO 驱动原有 40 条命令 100% 存在于 MHO 手册），故合并为
+**一套实现 + 一张家族差异表**：`rigol_scope/scope.py`（通用实现）、
+`rigol_scope/families.py`（差异值）。`dho_control.DHO` / `mho_control.MHO` 只是薄封装，
+公开 API 未变。比对证据：`docs/rigol_scope_compare_20260915.md`。
+
+**合并带来的能力补齐（DHO 侧）**：双信源相位/延迟测量（`measure_item("RRPHase", 1, 2)`，
+DHO 手册同样记载）、波形分片读取、points/RAW 前置校验、原生 PNG 截图；
+并修掉 DHO 旧实现的 ASCII 死分支（此前 `fmt="ASCii"` 恒抛异常）。
+
+**家族差异（改代码时唯一要查的地方）**：清测量 `:MEASure:CLEar`(DHO)/`:MEASure:DELete`(MHO)、
+采集第四态 `ULTRa`(DHO)/`HRESolution`(MHO)、`:ACQuire:BITS` 与 `:CHANnel<n>:Impedance` 仅 MHO。
+边沿第三态两系列**都是** `RFALl`（`RFail` 是旧 docstring 笔误）。
+
+⚠ **读波形的格式选择**：`fmt="BYTE"` 是 8bit，2V/div 下每码 68mV——小信号只有几个码值，
+**量值必须用 `WORD`**（0.27mV/码）；BYTE 只适合看形态/粗略幅度。
+（DHO 合并后尚未在真机复验——本实验台当前无 DHO；离线闭环见
+`TEST_SCRIPTS/common/verify_rigol_scope_shared.py`，真机补验清单见该文件头部。）
+
+### dg832_control（RIGOL DG800 系列信号源）
+```python
+from dg832_control import DG832
+with DG832() as gen:                     # 资源串缺省 = 自动发现（USB-TMC）
+    gen.set_voltage_limit(1, high=3.3, low=-3.3, state=True)   # ① 保护先行（强制）
+    gen.set_wave(1, "sine", freq=1000, amp=2.0, offset=0.0)    # ② 设波形
+    gen.output(1, True)                                        # ③ 开输出
+    gen.set_freq(1, 2000)                                      # 单参数（回读 {"value","note"}）
+    gen.set_voltage_limit(1, state=False)                      # 收尾按需关保护
+```
+
+实测要点（DG832 / 固件 00.02.06.00.01，留痕 `TEST_DATA/dg832/verify_dg832_*.json`）：
+- **保护联锁（本库独有）**：设 amp/offset 或开输出前必须已开有效保护，否则 `protect_required`；
+  越界 `protect_range`——把"防超压"做进代码而不是靠人记。
+- 省略参数 = **保持当前值**（库先读 `APPL?` 填充）；SCPI 裸发 `DEF` 会重置为该波形默认值。
+- `:OUTP{n}:LOAD?` 高阻返回 `9.9E+37`（不是 INF 文本）；写回时用 `INF`。
+- 波形频率上限低于型号上限：DG832 sine 35MHz / square·pulse 10MHz / ramp 1MHz / harmonic 15MHz。
+- 扫频边界命令是 `FREQ:STAR/STOP`（**没有** `SWE:STAR/STOP`）；扫频关闭时写边界会被拒（-220）。
+- 驱动前提：**完整版 NI-VISA ≥ 24.x**；Ultra Sigma 自带旧版 IVA visa 3.2 会导致 USB-TMC
+  第二条命令后卡死（已实测）。多会话共用同一 USB 设备时跨进程无锁，操作前先读基线。
+
 ### dho_control / dh1766_control
 见各自 docstring 与 EXPERIENCE.md。
 DHO 读/写/波形读取已实测留痕（2026-08-24）：`TEST_DATA/dho/dho_first_verify_*.json`

@@ -90,3 +90,9 @@ WAV_SOURCES = (
     + tuple(f"D{i}" for i in range(16))
     + tuple(f"MATH{i}" for i in range(1, 5))
 )
+
+# ================= 家族事实指针 =================
+# **取值**（采集方式枚举/测量项表/触发类型/点数上限/能力开关有无…）集中在
+# `rigol_scope/families.py` 的 Family 表（那里逐项标注了手册出处，避免两处维护）；
+# 本文件只保留**命令拼写**——命令审计器按本系列手册逐条核对的就是这些。
+# 本系列与另一系列的差异清单见 `docs/rigol_scope_compare_20260915.md`。

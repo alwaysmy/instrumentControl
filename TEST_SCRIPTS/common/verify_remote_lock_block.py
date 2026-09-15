@@ -8,6 +8,10 @@
 2026-09-13 补充：DH1766 的锁定命令是 `SYST:RWL`（面板 Lock 键不可切回本地），
 标准形式 `SYST:COMM:RLST <state>`（RWL 值）同类——此前黑名单只覆盖 SDS 的
 `SYST:REM/REMOTE/LOCK`，`SYST:RWL` 会漏放，已一并纳入并加固本回归。
+2026-09-15 补充（MHO 接入轮审阅发现的绕过）：① `instr_query` 完全不查黑名单，
+`"*RST;*IDN?"` 这类多命令消息可从"只读口"直接复位仪器；② `instr_write` 的
+`readback_cmd` 同样未查黑名单；③ 黑名单只比对长短两种写法，`SYST:RESE` /
+`SYST:PRESE` / `SYST:COMMU:RLST` 等**中间缩写**漏网。三处已修，用例见下方 §§2-4。
 """
 import json
 import sys
@@ -36,31 +40,67 @@ BLOCKED = (
     "SYST:RWL;SYST:COMM:RLST?",  # 含多命令分隔符，即使以 ? 结尾也按写路径拦
     "*RST", "*RST;*CLS", "*SAV 1", "*RCL 2",
     "SYST:RES", "SYST:FACT", "SYST:PRES",
+    # 2026-09-15：短长形式之间的**中间缩写**（SCPI-99 §6.2.2 允许）
+    "SYST:RESE", "SYST:RESET", "SYSTem:PRESE", "SYST:FACTO",
+    "SYST:COMMU:RLST RWL", "SYSTEM:COMMUNICATE:RLST RWL",
+    "SYST:REMON",  # "SYST:REM ON" 空白归一后的粘连形态
+    # 2026-09-15：MHO 的屏幕/键盘锁定（手册 3.24.14）与 AES 类锁定同族
+    "SYSTem:LOCKed ON", "SYST:LOCKED 0",
 )
 # 应放行（同一正则不得误伤）：纯查询保留用于状态诊断
 ALLOWED = (
     "SYST:ERR?", "SYST:VERS?", "SYST:BEEP",
     "SYST:COMM:RLST?", "SYST:COMM:RLST:STAT?", "SYST:REM?",
     "VOLT 1", "OUTP ON", "APPL:OUTP?", "MEAS:VOLT:DC?",
+    # 2026-09-15：锁定类的**纯查询**（含 MHO 的 LOCKed?）仍放行，用于诊断面板是否被锁
+    "SYSTem:LOCKed?", "SYST:LOCKED?", "SYSTem:PSTatus?", "SYSTem:OPTion:STATus?",
 )
+# 2026-09-15：多命令走私 —— 查询口/回读口都必须整条为纯查询，且逐段查黑名单
+SMUGGLE = (
+    "*RST;*IDN?", "*IDN?;*RST", ":SYSTem:LOCKed ON;*IDN?", "*IDN?;:SYST:RESE",
+    ":SYSTem:REM ON;:SYSTem:ERRor?", "*CLS;*RST",
+)
+SMUGGLE_OK = ("*IDN?;:SYSTem:ERRor?",)  # 全查询的多命令消息（真机路径才验，见 §4）
 
-print("=== 拦截用例（期望 error_type=forbidden，且不发起连接）===", flush=True)
+print("=== §1 拦截用例（期望 error_type=forbidden，且不发起连接）===", flush=True)
 for cmd in BLOCKED:
     r = json.loads(server.instr_write(RES, cmd, confirm=True))
     ok = r["ok"] is False and r.get("error_type") == "forbidden"
     if not ok:
         fails.append(cmd)
-    print(f"  [{'PASS' if ok else 'FAIL'}] 拦 {cmd:24s} -> {r.get('error_type')}", flush=True)
+    print(f"  [{'PASS' if ok else 'FAIL'}] 拦 {cmd:32s} -> {r.get('error_type')}", flush=True)
 
-print("\n=== 放行用例（同正则不得误伤）===", flush=True)
+print("\n=== §2 放行用例（同正则不得误伤）===", flush=True)
 for cmd in ALLOWED:
     blocked = server._is_forbidden(cmd)
     if blocked:
         fails.append(cmd)
-    print(f"  [{'PASS' if not blocked else 'FAIL'}] 放 {cmd:24s} -> forbidden={blocked}", flush=True)
+    print(f"  [{'PASS' if not blocked else 'FAIL'}] 放 {cmd:32s} -> forbidden={blocked}", flush=True)
+
+print("\n=== §3 多命令走私：instr_query（只读口）与 instr_write.readback_cmd ===", flush=True)
+# 判定标准是"**不发出去**"：黑名单命中报 forbidden；整条不含 '?' 的（如 '*CLS;*RST'）
+# 会被更早的"查询必须含 ?"参数校验拦下（param_validation）——两者都不连接设备。
+# 只有真的执行了（error_type 变成 connection/timeout/ok）才算失败。
+for cmd in SMUGGLE:
+    r = json.loads(server.instr_query(RES, cmd))
+    ok_q = r["ok"] is False and r.get("error_type") in ("forbidden", "param_validation")
+    rw = json.loads(server.instr_write(RES, "*IDN?", confirm=True, readback_cmd=cmd))
+    ok_w = rw["ok"] is False and rw.get("error_type") in ("forbidden", "param_validation")
+    if not (ok_q and ok_w):
+        fails.append(f"smuggle:{cmd}")
+    print(f"  [{'PASS' if ok_q and ok_w else 'FAIL'}] {cmd:32s} "
+          f"query={r.get('error_type')} readback={rw.get('error_type')}", flush=True)
+
+print("\n=== §4 纯查询多命令消息（不得误伤；dummy 资源连接失败属预期）===", flush=True)
+for cmd in SMUGGLE_OK:
+    r = json.loads(server.instr_query(RES, cmd))
+    ok = r.get("error_type") != "forbidden"
+    if not ok:
+        fails.append(f"pure-query:{cmd}")
+    print(f"  [{'PASS' if ok else 'FAIL'}] {cmd:32s} -> {r.get('error_type')}", flush=True)
 
 if "--with-device" in sys.argv:
-    print("\n=== 真机查询路径（--with-device）===", flush=True)
+    print("\n=== §5 真机查询路径（--with-device）===", flush=True)
     # 地址由 common.resolver 解析（不写死 IP，换网段/换口自适应）；离线路径不触发解析
     RES = resolve("sds")
     r = json.loads(server.instr_query(RES, "SYST:COMM:RLST?"))

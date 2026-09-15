@@ -1,6 +1,6 @@
 # instrumentControl
 
-**给 AI/Agent 用的仪器控制 MCP**：把实验室仪器（示波器 ×2 / 信号源 / 万用表 / 电源 / 校准器）
+**给 AI/Agent 用的仪器控制 MCP**：把实验室仪器（示波器 ×3 / 信号源 ×2 / 万用表 / 电源 / 校准器）
 统一封装为 VISA-SCPI 驱动库，再由 `mcp_instruments/` 暴露成 MCP 工具，
 让 AI 能安全地发现设备、查询状态、自动定标、测量、截屏、上下电。
 
@@ -11,12 +11,15 @@
 AI 客户端（DSH / Codex / Claude / opencode …，经 MCP stdio）
         │
         ▼
-mcp_instruments/server.py ─── 31 工具（28 专用 + 3 通用护栏），无状态连接+全局锁串行化
+mcp_instruments/server.py ─── 49 工具（46 专用 + 3 通用护栏），无状态连接+全局锁串行化
         │
         ├─▶ sds_control       Siglent SDS800X HD 示波器（波形/截图/测量/触发诊断/auto_scale）
         ├─▶ sdg_control       Siglent SDG2000X 信号源（BSWV 键值对）
         ├─▶ keysight_3446x    Keysight 34465A 万用表（CONF/MEAS/NPLC）
         ├─▶ dho_control       RIGOL DHO800/900 示波器
+        ├─▶ rigol_scope       共享内核：DHO800/900 与 MHO900 命令集 97% 重合，一份实现
+        ├─▶ mho_control       RIGOL MHO900 系列示波器（MHO934/954/984；截图走原生 PNG）
+        ├─▶ dg832_control     RIGOL DG800 系列信号源（DG832 基准；保护联锁 + DC 快照 + 扫频）
         ├─▶ dh1766_control    DH1766 三路可编程电源（唯一 pip 可安装，自带手册/经验文档）
         └─▶ emoe_control      Emoe 校准器（骨架：仅发现 + `*IDN?`）
                  ▲
@@ -70,7 +73,7 @@ MCP 注册（示例，路径按需替换）：
 | `TEST_SCRIPTS/` | 实测/验证脚本，按设备分目录 |
 | `TEST_DATA/` | 实测留痕（JSON/CSV/PNG，时间戳命名） |
 | `docs/` | 使用手册、命令审计报告、实测记录、设计文档 |
-| `dg832-control/` | DG832 信号源独立嵌套 git 仓库（历史库，勿混入主仓提交） |
+| `dg832_control/` | DG832 信号源库（2026-09-15 由嵌套仓库并入本仓；手册/笔记在 `docs/`） |
 | `archive/` | 历史版本归档（旧版驱动，可回溯） |
 
 ## 设备与发现入口
@@ -82,6 +85,8 @@ MCP 注册（示例，路径按需替换）：
 |---|---|---|
 | DH1766A-1 三路电源 | `dh1766_control` | `find_dh1766()` · `resolve("psu")` · `psu_*` |
 | RIGOL DHO924S | `dho_control` | `find_dho()` · `resolve("dho")` · `dho_*` |
+| RIGOL MHO984D | `mho_control` | `find_mho()` · `resolve("mho")` · `mho_*` |
+| RIGOL DG832 | `dg832_control` | `DG832()`（自动发现） · `resolve("dg")` · `dg_*` |
 | Siglent SDS824X HD | `sds_control` | `find_sds()` · `resolve("sds")` · `sds_*` |
 | Siglent SDG2122X | `sdg_control` | `find_sdg()` · `resolve("sdg")` · `sdg_*` |
 | Keysight 34465A | `keysight_3446x` | `find_dmm()` · `resolve("dmm")` · `dmm_*` |

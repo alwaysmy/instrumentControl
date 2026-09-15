@@ -1,7 +1,7 @@
 # instrument MCP Server
 
-五台仪器的统一 MCP 接口（sds_control / sdg_control / keysight_3446x /
-dho_control / dh1766_control + common 统一发现层）。
+七台仪器的统一 MCP 接口（sds_control / sdg_control / keysight_3446x /
+dho_control / mho_control / dg832_control / dh1766_control + common 统一发现层）。
 
 ## 启动
 
@@ -13,12 +13,12 @@ MCP 注册（opencode/cursor 等）：command 用 python 全路径，args 为本
 
 ## 工具清单
 
-共 **31 个** = 28 个设备专用 + 3 个通用护栏（`instr_discover` / `instr_query` / `instr_write`）。
+共 **49 个** = 46 个设备专用 + 3 个通用护栏（`instr_discover` / `instr_query` / `instr_write`）。
 
 | 工具 | 说明 | 安全 |
 |---|---|---|
 | `instr_discover(cidr?)` | 全网段+VISA 发现所有仪器；结果按 `*IDN?` 回写地址缓存（`recognised_now`），探测到 DH1766 会补发 `SYST:LOC` 归还面板 | 只读（+DH1766 一次 `SYST:LOC`） |
-| `instr_query(resource, cmd, timeout_ms?)` | 通用 SCPI 查询（新设备零接入；cmd 必须含 `?`） | 只读 |
+| `instr_query(resource, cmd, timeout_ms?)` | 通用 SCPI 查询（新设备零接入；cmd 必须含 `?`，且**每个 `;` 分段都须是查询**——多命令消息不能夹带写命令） | 只读 |
 | `instr_write(resource, cmd, readback_cmd?, confirm, timeout_ms?)` | 通用 SCPI 写：黑名单拦截/drain+SYST:ERR?/自动回读/审计落盘/看门狗 | **confirm=True**；`*RST` 等一律 forbidden |
 | `sds_status` | SDS 快照（采集/时基/触发/通道） | 只读 |
 | `sds_auto_scale(ch, use_autoset?)` | 自动定标；use_autoset 破坏性需理解语义 | 改配置 |
@@ -39,6 +39,21 @@ MCP 注册（opencode/cursor 等）：command 用 python 全路径，args 为本
 | `dmm_measure(function)` | 34465A 测量（10 种） | 只读 |
 | `dmm_status` / `dmm_configure` | 快照 / 配置 | 只读/改配置 |
 | `dho_status` / `dho_measure_item` | DHO 快照 / 测量 | 只读 |
+| `mho_status` | MHO 快照（触发/采集/采样率/四通道档位；本系列采样率随通道数下降） | 只读 |
+| `mho_measure_item(item, ch, ch2?)` | MHO 测量（手册 3.17.2 表：VPP/VMAX/VAVG/VRMS/PERiod/FREQuency/RTIMe…；双信源延迟·相位 RRDelay/RRPHase 需 ch2）；无有效值报错含 9.9E37 | 只读 |
+| `mho_screenshot` | MHO 截屏存 PNG 返回路径（`:DISPlay:DATA? PNG` 原生位图，**可直接 Read 读图**） | 只读 |
+| `mho_get_waveform(ch, points=1000, mode, fmt, save_csv)` | MHO 读波形（NORMal 1~1000 点 / RAW 需 STOP；BYTE·WORD·ASCii）；返回摘要 + 可选 CSV | 只读 |
+| `mho_acquisition(action)` | run/stop/single/force（**stop 冻结采集**，RAW 读内存前必须） | 改采集状态 |
+| `mho_autoset(confirm)` | `:AUToset` 一键定标；**全局破坏性**（重置所有通道/时基/触发），confirm=True | **confirm 必填** |
+| `dg_status(model?)` | DG832 快照：设备信息 + CH1/2 波形配置/输出/负载（**动它之前先查**） | 只读 |
+| `dg_protect(ch, high?, low?, state?)` / `dg_get_protect(ch)` | 电压保护（防超压）；**设幅度/偏移或开输出前必须先开有效保护** | 改配置 |
+| `dg_set_wave(ch, shape, freq?, amp?, offset?, phase?, sample_rate?)` | 设波形（一条 `:APPL`；省略参数=保持当前值，不重置为默认） | 改配置 |
+| `dg_set_param(ch, param, value)` | freq/amp/offset/phase/load 单参数设置并回读（设备钳制时返回 note） | 改配置 |
+| `dg_set_dc(ch, level)` | DC 专用切换：设电平 + 返回切换前快照（切回时显式传参） | 改配置 |
+| `dg_sweep(...)` / `dg_sweep_trigger(ch)` | 频率扫频配置/开关/查询 + 手动触发（限 sine/square/ramp/user） | 改配置 |
+| `dg_output(ch, on, confirm)` | 输出开关；**开/关都需 confirm=True**；打开前需已开保护（库内联锁） | **confirm 必填** |
+| `dg_counter()` | 内置频率计（[Counter] 输入口） | 只读 |
+| `dg_query(scpi)` / `dg_check_error()` | 只读 SCPI 查询（纯查询消息） / 错误队列查询清空 | 只读 |
 | `psu_status` | DH1766 状态总览（含电压/电流/模式 + safe/warnings 安全检查）| 只读 |
 | `psu_mode` | 电源输出模式（NORM/TRAC/SERI/PARA，**操作前先查**） | 只读 |
 | `psu_power_cycle(ch, expect_mode, cycles, off_delay_s, on_delay_s, confirm)` | 上下电循环（默认 1 次/延迟 1s）；**confirm 必填** | 改配置 |
@@ -48,7 +63,9 @@ MCP 注册（opencode/cursor 等）：command 用 python 全路径，args 为本
 安全约定：复位类命令不暴露（instr_write 黑名单亦不放行）；**远程锁定类命令
 （`SYSTem:REMote` / `SYST:REM` / `SYST:RWL` / `SYST:LOCK` / `:SYST:COMM:RLST`）
 同样黑名单拦截**（纯查询形式放行，如 `SYST:REM?` / `SYST:COMM:RLST?`）；
-关机/开输出/通用写必须 `confirm=True`；每次调用连接→操作→关闭（无状态）+ 全局锁串行化 +
+关机/开输出/通用写必须 `confirm=True`；`instr_query` 只收纯查询消息、`instr_write` 的
+`readback_cmd` 同受黑名单约束（2026-09-15 堵住从只读口/回读口走私复位与锁定命令）；
+每次调用连接→操作→关闭（无状态）+ 全局锁串行化 +
 通用写硬超时看门狗（离线资源不冻结 MCP）；错误统一
 `{ok:false, error_type, error}` 分类返回。
 DH1766 工具每次调用收尾自动补发 `SYST:LOC` 归还面板控制权——**任何远程会话都会把该电源
@@ -75,6 +92,8 @@ DH1766 工具每次调用收尾自动补发 `SYST:LOC` 归还面板控制权—�
 | `sdg` | Siglent SDG2000X 信号源 | `INSTRUMENT_SDG_RES` | `SDG` |
 | `dmm` | Keysight 34465A 万用表 | `INSTRUMENT_DMM_RES` | `34465A` |
 | `dho` | RIGOL DHO800/900 示波器 | `INSTRUMENT_DHO_RES` | `DHO` |
+| `mho` | RIGOL MHO900 系列示波器 | `INSTRUMENT_MHO_RES` | `MHO` |
+| `dg` | RIGOL DG800 系列信号源 | `INSTRUMENT_DG_RES` | `DG8` |
 | `psu` | DH1766 三路电源 | `INSTRUMENT_PSU_RES` | `DH1766` |
 
 配置/缓存目录：`%LOCALAPPDATA%\instrumentControl\`（非 Windows 退 `XDG_CACHE_HOME` / `~/.cache`）。
@@ -83,6 +102,7 @@ DH1766 工具每次调用收尾自动补发 `SYST:LOC` 归还面板控制权—�
 ```json
 { "sds": "TCPIP0::<host>::inst0::INSTR",
   "dho": "TCPIP0::<host>::5555::SOCKET",
+  "mho": "TCPIP0::<host>::inst0::INSTR",
   "psu": "USB0::0x0957::0xA007::<serial>::INSTR" }
 ```
 

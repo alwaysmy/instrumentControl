@@ -31,6 +31,8 @@ DEVICE_KINDS: dict[str, tuple[str, str, str]] = {
     "sdg": ("SDG", "Siglent SDG2000X 信号源", "INSTRUMENT_SDG_RES"),
     "dmm": ("34465A", "Keysight 34465A 万用表", "INSTRUMENT_DMM_RES"),
     "dho": ("DHO", "RIGOL DHO800/900 示波器", "INSTRUMENT_DHO_RES"),
+    "mho": ("MHO", "RIGOL MHO900 系列示波器", "INSTRUMENT_MHO_RES"),
+    "dg": ("DG8", "RIGOL DG800 系列信号源（DG832 基准）", "INSTRUMENT_DG_RES"),
     "psu": ("DH1766", "DH1766 三路可编程电源", "INSTRUMENT_PSU_RES"),
 }
 
@@ -68,7 +70,7 @@ def remember(kind: str, resource: str) -> None:
 
 
 def idn_kind(idn: Optional[str]) -> Optional[str]:
-    """按 *IDN? 文本判断属于哪类设备（SDS/SDG/34465A/DHO/DH1766）。"""
+    """按 *IDN? 文本判断属于哪类设备（匹配串见 DEVICE_KINDS）。"""
     if not idn:
         return None
     up = idn.upper()
@@ -109,7 +111,7 @@ def remember_candidates(pairs: list[tuple[str, str]]) -> dict[str, str]:
 
 
 def known_resources() -> dict[str, str]:
-    """解析层已知地址映射（配置优先于缓存；只含 5 类设备的合法条目）。"""
+    """解析层已知地址映射（配置优先于缓存；只含 DEVICE_KINDS 里的合法条目）。"""
     out = {k: v for k, v in _load_json(CACHE_FILE).items()
            if k in DEVICE_KINDS and isinstance(v, str)}
     out.update({k: v for k, v in _load_json(CONFIG_FILE).items()
@@ -231,7 +233,8 @@ def config_template() -> dict:
     return {
         "_说明": (
             "仪器地址配置文件（本机专用，不入库、可随时手改）。"
-            "键 = 设备类 sds/sdg/dmm/dho/psu；值 = 完整 VISA 资源串；"
+            "键 = 设备类（sds/sdg/dmm/dho/mho/dg/psu，见 resolver.DEVICE_KINDS）；"
+            "值 = 完整 VISA 资源串；"
             "删除某键 = 该项回落到『上次成功缓存 → 自动发现』。"
             "优先级：显式入参 > 环境变量 INSTRUMENT_<KIND>_RES > 本文件 > 缓存 > 自动发现。"
             "写入用 `python mcp_instruments/config_cli.py set <kind> <resource>`，"

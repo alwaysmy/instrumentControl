@@ -99,6 +99,40 @@ for cmd in SMUGGLE_OK:
         fails.append(f"pure-query:{cmd}")
     print(f"  [{'PASS' if ok else 'FAIL'}] {cmd:32s} -> {r.get('error_type')}", flush=True)
 
+print("\n=== §6 带参数的查询必须放行（SCPI 允许 `<header>? <param>`）===", flush=True)
+# 2026-09-15 用户报障：护栏曾按"整段以 ? 结尾"判查询，把 `:MEASure:ITEM? VPP,CHANnel1`
+# 这类**标准写法**一起拒了（两个 RIGOL 手册的实例都是这个形态）。现判据为
+# "命令头里的第一个 '?' 之前是合法助记符"；下面这组就是当时的漏网盲区。
+QUERY_WITH_PARAMS = (
+    ":MEASure:ITEM? VPP,CHANnel1",          # RIGOL 手册实例形态
+    ":MEASure:ITEM? OVERshoot,CHANnel2",
+    ":TRIGger:EDGE:LEVel? MAX",
+    "SAMPle:COUNt? MAX",                    # Keysight 风格（无前导冒号）
+    "MEAS:ITEM? VPP,CH4",                   # 短形式
+    ":WAVeform:DATA?",
+    "*IDN?;:SYSTem:ERRor?",                 # 多段且都是查询
+)
+for cmd in QUERY_WITH_PARAMS:
+    q, f = server._is_query_only(cmd), server._is_forbidden(cmd)
+    ok = q and not f
+    if not ok:
+        fails.append(f"query-with-params:{cmd}")
+    print(f"  [{'PASS' if ok else 'FAIL'}] 放 {cmd:34s} -> query_only={q} forbidden={f}", flush=True)
+    r = json.loads(server.instr_query("dummy", cmd))     # dummy：拦截在连接前，安全
+    ok2 = r.get("error_type") != "forbidden"
+    if not ok2:
+        fails.append(f"instr_query-rejected:{cmd}")
+    print(f"  [{'PASS' if ok2 else 'FAIL'}] instr_query 不拦 -> {r.get('error_type')}", flush=True)
+
+print("\n=== §7 参数里偷发命令仍须拦截（新增防御）===", flush=True)
+STILL_BLOCKED = (":MEASure:ITEM? VPP,*RST", ":OUTP1 ON;:OUTP1?", ':DISP:TEXT "why?"')
+for cmd in STILL_BLOCKED:
+    ok = server._is_forbidden(cmd) or not server._is_query_only(cmd)
+    if not ok:
+        fails.append(f"still-blocked:{cmd}")
+    print(f"  [{'PASS' if ok else 'FAIL'}] 拦 {cmd:34s} -> "
+          f"forbidden={server._is_forbidden(cmd)} query_only={server._is_query_only(cmd)}", flush=True)
+
 if "--with-device" in sys.argv:
     print("\n=== §5 真机查询路径（--with-device）===", flush=True)
     # 地址由 common.resolver 解析（不写死 IP，换网段/换口自适应）；离线路径不触发解析

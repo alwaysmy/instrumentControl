@@ -522,7 +522,9 @@ def _classify_forbidden(cmd: str) -> str | None:
         head = re.split(r"\s+", stripped)[0].upper().lstrip(":")
         if not head:
             continue
-        if _FORBIDDEN_COMMON_RE.match(head):
+        # 公共命令族（*RST/*SAV/*RCL）在**整段**上搜，不限定在命令头——数据段里混进
+        # 这几个词没有正当用途，宁可误拦（防御"参数位置偷发复位"）。
+        if _FORBIDDEN_COMMON_RE.search(stripped):
             return "reset"
         segs = [s for s in head.split(":") if s]
         if not segs or not _mnemonic(segs[0], "SYST", "SYSTEM"):
@@ -536,15 +538,41 @@ def _classify_forbidden(cmd: str) -> str | None:
     return None
 
 
-def _is_query_only(cmd: str) -> bool:
-    """整条消息是否"纯查询"：每个 `;` 分段都以 `?` 结尾（SCPI 多命令消息）。
+# 合法助记符形状（命令头在 '?' 之前的部分）：`*IDN` / `:MEASure:ITEM` / `MEAS:ITEM`。
+# 注意前导冒号是 SCPI 根指示符，必须允许——漏掉它会把自己写的 `:MEASure:ITEM? VPP,CH4`
+# 反过来判成"非查询"（2026-09-15 改这条判据时当场踩到，回归用例已覆盖）。
+_MNEMONIC_HEAD_RE = re.compile(r"^[:*]?[A-Za-z][A-Za-z0-9:<>{}_.]*$")
 
-    纯查询不改变仪器状态，故锁定类查询（`SYST:REM?`/`:SYSTem:LOCKed?`）放行，
-    用于诊断面板是否被锁。
+
+def _segment_is_query(segment: str) -> bool:
+    """单条命令是否为查询。
+
+    **问号后可以带参数**——`<header>? <param>` 是标准 SCPI 写法，两系列示波器手册的
+    实例都是这个形态（`:MEASure:ITEM? VPP,CHANnel2`、`:TRIGger:EDGE:LEVel?`…），
+    Keysight 也有 `SAMPle:COUNt? MAX` 这类。因此判据是"**命令头里的第一个 '?' 之前
+    是合法助记符**"，而**不是**"整段以 '?' 结尾"——后者会把带参数的查询一并拒掉
+    （2026-09-15 用户报障修正：`:MEASure:ITEM? VPP,CHANnel1` 曾被误判为 forbidden）。
+
+    仍能拦住写命令：写命令头里没有 '?'；而 `:DISP:TEXT"why?"` 这类**参数里恰好含 '?'**
+    的写法，因 '?' 之前出现了引号、不构成合法助记符，照样判为写。
     """
-    parts = [re.sub(r"\s+", "", p) for p in cmd.split(";")]
-    parts = [p for p in parts if p]
-    return bool(parts) and all(p.endswith("?") for p in parts)
+    seg = segment.strip()
+    if not seg:
+        return False
+    toks = seg.split()
+    head = toks[0] if toks else ""
+    q = head.find("?")
+    return q >= 0 and bool(_MNEMONIC_HEAD_RE.match(head[:q]))
+
+
+def _is_query_only(cmd: str) -> bool:
+    """整条消息是否"纯查询"：每个 `;` 分段都是查询（**问号后允许带参数**）。
+
+    SCPI 允许在一条消息里用 `;` 串联多条命令，只查首尾会让 `"*IDN?;*RST"` 之类的
+    写命令从查询口溜进去；故逐段判"是不是查询"，而不是"整条以 ? 结尾"。
+    """
+    parts = [p for p in (p.strip() for p in cmd.split(";")) if p]
+    return bool(parts) and all(_segment_is_query(p) for p in parts)
 
 
 def _is_forbidden(cmd: str) -> bool:
@@ -637,9 +665,11 @@ def instr_query(resource: str, cmd: str, timeout_ms: int = 5000) -> str:
     只读不留痕；写操作用 instr_write（有黑名单/confirm/审计三道护栏）。
     设备无响应有硬超时看门狗（下限 30s，覆盖 VISA 冷启动），离线资源不会冻结 MCP。
 
-    护栏：`cmd` 及每条 `;` 分段**都必须以 '?' 结尾**（纯查询消息）——SCPI 允许在
-    一条消息里用 ';' 串联多条命令，只查首尾会让 `"*IDN?;*RST"` 之类的写命令从
-    查询口溜进去；命中的按 `forbidden` 拒绝。多命令消息要么全是查询，要么走 instr_write。"""
+    护栏：`cmd` 里每条 `;` 分段**都必须是查询**——判据是"命令头里带 '?'"，
+    **问号后允许带参数**（`:MEASure:ITEM? VPP,CHANnel1`、`:TRIGger:EDGE:LEVel? MAX`
+    都是标准 SCPI 查询写法）。之所以逐段判而不是"整条以 ? 结尾"：SCPI 允许用 `;`
+    串联多条命令，只查首尾会让 `"*IDN?;*RST"` 之类的写命令从查询口溜进去；
+    命中的按 `forbidden` 拒绝。多命令消息要么全是查询，要么走 instr_write。"""
     if "?" not in cmd:
         return _err("param_validation", f"查询命令必须含 '?': {cmd!r}",
                     "instruments", resource)
@@ -1397,12 +1427,13 @@ def dg_counter(model: str | None = None, resource: str | None = None) -> str:
 
 @mcp.tool()
 def dg_query(scpi: str, model: str | None = None, resource: str | None = None) -> str:
-    """DG832 只读 SCPI 查询（须以 `?` 结尾且不含 `;`，如 `:SOUR1:APPL?`、`:OUTP1?`）。
-    整条为纯查询——多命令串联或写命令一律拒绝（与 instr_query 同口径）。"""
+    """DG832 只读 SCPI 查询（如 `:SOUR1:APPL?`、`:OUTP1?`、`:MEASure:ITEM? VPP,CHANnel1`）。
+    整条必须是纯查询——判据同 instr_query：每条 `;` 分段的**命令头带 '?'** 即可，
+    **问号后允许带参数**；写命令（头里无 '?'）与复位/锁定类一律拒绝。"""
     cmd = scpi.strip()
-    if not cmd.endswith("?") or not _is_query_only(cmd) or _is_forbidden(cmd):
+    if not _is_query_only(cmd) or _is_forbidden(cmd):
         return _err("param_validation" if "?" not in cmd else "forbidden",
-                    f"dg_query 只接受纯查询消息（每条以 ? 结尾、不得含复位/锁定类命令）: {scpi!r}",
+                    f"dg_query 只接受纯查询消息（问号后可以带参数；不得含写命令/复位/锁定类）: {scpi!r}",
                     "DG832")
     return _call("DG832", lambda: _dg(resource, model), lambda g: g.query(cmd))
 

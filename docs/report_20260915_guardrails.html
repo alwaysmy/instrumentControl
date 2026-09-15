@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>instrumentControl — 护栏与交付功能汇报（2026-09-15）</title>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#161b22; --panel2:#1c2430; --line:#2b3542;
+    --fg:#e6edf3; --dim:#9aa7b4; --accent:#4aa3ff; --ok:#3fb950; --warn:#d29922;
+    --bad:#f85149; --violet:#a371f7; --cyan:#39c5cf;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:15px/1.65 -apple-system,"Segoe UI","Microsoft YaHei",Roboto,sans-serif}
+  .wrap{max-width:1180px;margin:0 auto;padding:36px 24px 80px}
+  h1{font-size:26px;margin:0 0 6px;letter-spacing:.3px}
+  h2{font-size:19px;margin:44px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:15px;margin:22px 0 8px;color:var(--dim);font-weight:600}
+  .sub{color:var(--dim);font-size:13px;margin-bottom:26px}
+  code{background:#0b0f14;border:1px solid var(--line);border-radius:5px;padding:1px 5px;
+       font:13px/1.5 Consolas,"Courier New",monospace;color:#c9d1d9}
+  table{width:100%;border-collapse:collapse;margin:12px 0 6px;font-size:13.5px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--dim);font-weight:600;background:var(--panel2)}
+  tr:hover td{background:#12181f}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:12px;margin:18px 0 6px}
+  .card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);
+        border-radius:10px;padding:14px 16px}
+  .card .n{font-size:26px;font-weight:700;line-height:1.15}
+  .card .l{color:var(--dim);font-size:12.5px;margin-top:3px}
+  .card.ok .n{color:var(--ok)} .card.bad .n{color:var(--bad)}
+  .card.acc .n{color:var(--accent)} .card.vio .n{color:var(--violet)}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:14px 0}
+  .tag{display:inline-block;font-size:11.5px;padding:2px 8px;border-radius:999px;
+       border:1px solid var(--line);background:#0d1218;color:var(--dim);margin-right:6px}
+  .tag.block{color:var(--bad);border-color:#5b2422}
+  .tag.allow{color:var(--ok);border-color:#1e4a26}
+  .tag.gate{color:var(--warn);border-color:#5a4416}
+  .muted{color:var(--dim)}
+  .legend{font-size:12.5px;color:var(--dim);margin-top:6px}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 5px 0 12px}
+  footer{margin-top:52px;padding-top:16px;border-top:1px solid var(--line);color:var(--dim);font-size:12.5px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:820px){.grid2{grid-template-columns:1fr}}
+  ul{margin:8px 0 8px 18px;padding:0} li{margin:4px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>instrumentControl — 护栏与交付功能汇报</h1>
+  <div class="sub">
+    2026-09-15 · 基线 commit <code>f4b5619</code> → 当前 <code>288763d</code>（已推送 origin/main）<br>
+    本页为静态自包含文档（无外部依赖），所有数字取自仓库内脚本的真实运行结果，可用页面末尾命令复算。
+  </div>
+
+  <div class="cards">
+    <div class="card ok"><div class="n">64 / 64</div><div class="l">护栏回归用例全 PASS（离线）</div></div>
+    <div class="card acc"><div class="n">50</div><div class="l">MCP 工具（原 31）</div></div>
+    <div class="card vio"><div class="n">9</div><div class="l">设备/家族库（原 6）</div></div>
+    <div class="card"><div class="n">530 / 29</div><div class="l">命令审计 HIT / MISS</div></div>
+    <div class="card"><div class="n">311+</div><div class="l">自动化断言（离线+真机）</div></div>
+    <div class="card bad"><div class="n">26</div><div class="l">黑名单拦截用例（§1）</div></div>
+  </div>
+
+  <h2>一、护栏拦截了什么</h2>
+  <div class="panel">
+    <p class="muted" style="margin-top:0">
+      三道口子：<b>写路径</b>（<code>instr_write</code> 与各设备写工具）、<b>查询路径</b>（<code>instr_query</code>/<code>dg_query</code>）、
+      <b>设备类高危动作</b>（输出/关机/复位/复位兜底）。下面按"拦什么 / 怎么判 / 证据"列。</p>
+
+    <h3>1.1 命令黑名单（命中即 <code>error_type=forbidden</code>，confirm 也不放行）</h3>
+    <table>
+      <thead><tr><th>家族</th><th>拦截写法（含短/长/中间缩写）</th><th>为什么拦</th><th>处置策略</th></tr></thead>
+      <tbody>
+        <tr><td><span class="tag block">复位</span></td>
+            <td><code>*RST</code>、<code>:SYSTem:RESet</code>、<code>:SYST:RESE</code>、<code>:SYST:PRESet</code>、<code>:SYST:FACTory</code></td>
+            <td>清空现场全部设定（别人调好的通道/触发一起没）</td>
+            <td>零暴露；常量保留 + 语义说明 + 受控脚本</td></tr>
+        <tr><td><span class="tag block">存储覆写</span></td>
+            <td><code>*SAV n</code>、<code>*RCL n</code></td>
+            <td>覆写/调用仪器存储位，等同改设定且难追溯</td>
+            <td>一律拦</td></tr>
+        <tr><td><span class="tag block">远程锁定</span></td>
+            <td><code>SYST:REM ON</code>、<code>SYST:RWL</code>、<code>:SYSTem:LOCKed ON</code>、<code>:SYST:COMM:RLST RWL</code></td>
+            <td>禁触摸屏/面板按键，现场无法人工接管</td>
+            <td><b>写拦、纯查询放行</b>（<code>SYST:REM?</code> 等留作诊断）</td></tr>
+        <tr><td><span class="tag block">参数偷发</span></td>
+            <td><code>:MEASure:ITEM? VPP,*RST</code>、<code>:OUTP1 ON;:OUTP1?</code></td>
+            <td>把写命令塞进查询消息的参数位或 <code>;</code> 后续段</td>
+            <td>逐 <code>;</code> 分段判 + 公共命令族整段搜索</td></tr>
+      </tbody>
+    </table>
+    <div class="legend">
+      <span class="tag">判据</span> 助记符前缀匹配（<code>short..long</code> 任意前缀）+ 逐段判定——
+      避免 <code>SYST:RESE</code> 这类合法中间缩写漏网（SCPI-99 §6.2.2）。
+    </div>
+
+    <h3>1.2 查询判据（修过一次的坑）</h3>
+    <table>
+      <thead><tr><th>形态</th><th>判定</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td><code>*IDN?</code>、<code>:SYSTem:ERRor?</code></td><td><span class="tag allow">放行</span></td><td>无参数查询</td></tr>
+        <tr><td><code>:MEASure:ITEM? VPP,CHANnel1</code><br><code>SAMPle:COUNt? MAX</code></td>
+            <td><span class="tag allow">放行</span></td>
+            <td><b>问号后允许带参数</b>——两系列 RIGOL 手册的实例都是这个形态。早期误按"整段以 <code>?</code> 结尾"判，
+                把这类合法查询一并拒了（用户报障后修正）</td></tr>
+        <tr><td><code>*IDN?;*RST</code>、<code>:SYSTem:LOCKed ON;*IDN?</code></td>
+            <td><span class="tag block">拦截</span></td><td>多段消息里夹带写命令</td></tr>
+        <tr><td><code>:DISP:TEXT "why?"</code></td>
+            <td><span class="tag block">拦截</span></td>
+            <td>写命令的参数里恰好含 <code>?</code>：因引号不构成助记符，仍判为写</td></tr>
+      </tbody>
+    </table>
+
+    <h3>1.3 状态声明门 &amp; confirm 门（高危动作先验后动）</h3>
+    <table>
+      <thead><tr><th>工具</th><th>门</th><th>语义</th></tr></thead>
+      <tbody>
+        <tr><td><code>sdg_output</code> / <code>dg_output</code></td><td><span class="tag gate">confirm</span><span class="tag gate">expect_load</span></td>
+            <td>开/关都要授权；负载声明（HZ/50Ω）仅校验不设置，不符即拒</td></tr>
+        <tr><td><code>psu_output</code> / <code>psu_power_cycle</code></td><td><span class="tag gate">confirm</span><span class="tag gate">expect_mode</span></td>
+            <td>拓扑声明（NORM/TRAC/SERI/PARA）；防 TRAC 联动下误操作</td></tr>
+        <tr><td><code>sds_shutdown</code> / <code>mho_autoset</code></td><td><span class="tag gate">confirm</span></td>
+            <td>关机需手动开机；autoset 是全局破坏性（重置所有通道/时基/触发）</td></tr>
+        <tr><td><code>usb_reset</code>（故障兜底）</td><td><span class="tag gate">confirm</span><span class="tag gate">escalate</span></td>
+            <td>重启该仪器的 USB 节点（会话中断 2~3s）；无管理员权限时需显式提权（弹 UAC）</td></tr>
+      </tbody>
+    </table>
+
+    <h3>1.4 库内联锁（不靠调用方自觉）</h3>
+    <ul>
+      <li><b>DG832 防超压联锁</b>：设幅度/偏移或开输出前必须已开有效电压保护，否则
+          <code>protect_required</code>；越界 <code>protect_range</code>——不静默超压。</li>
+      <li><b>DH1766 继电器保护</b>：切换输出模式（TRAC/SERI/PARA）前必须输出全关，库内无条件拦截。</li>
+      <li><b>DH1766 safe_mode</b>：带电通道拒绝改设定（<span class="muted">已知可被 <code>apply_voltage()</code> 旁路，
+          已列专项审计待修，见 <code>docs/dh1766_audit_20260915.md</code></span>）。</li>
+      <li><b>复位族"保留但不暴露"</b>：命令常量留在各库 <code>commands.py</code>（附语义与风险），
+          库内无公开方法、MCP 无工具；万一要用走受控脚本
+          <code>rigol_scope_reset.py --allow-reset --reboot|--factory</code>。</li>
+    </ul>
+
+    <h3>1.5 兜底与留痕</h3>
+    <ul>
+      <li><b>看门狗</b>：离线/挂起资源硬超时（≥30s），不让 MCP 被一条死连接冻住；
+          超时在审计里记 <code>executed="unknown"</code>（命令可能已送达，需回读确认）。</li>
+      <li><b>审计落盘</b>：每次通用写（含被拒绝的）→ <code>TEST_DATA/common/mcp_scpi_audit_*.jsonl</code>。</li>
+      <li><b>地址自证</b>：连接后核对 <code>*IDN?</code>，地址被 DHCP 分给别的设备时直接拒绝下发 SCPI。</li>
+    </ul>
+  </div>
+
+  <h2>二、护栏回归覆盖（64 用例，全 PASS）</h2>
+  <div class="panel">
+    <svg viewBox="0 0 1060 240" width="100%" height="240" role="img" aria-label="护栏用例按节分布">
+      <!-- 轴 -->
+      <line x1="150" y1="10" x2="150" y2="215" stroke="#2b3542"/>
+      <line x1="150" y1="215" x2="1000" y2="215" stroke="#2b3542"/>
+      <!-- 网格：与条形同比例（1 用例 = 6.9px） -->
+      <g stroke="#20272f">
+        <line x1="219" y1="8" x2="219" y2="205"/><line x1="288" y1="8" x2="288" y2="205"/>
+        <line x1="357" y1="8" x2="357" y2="205"/>
+      </g>
+      <!-- 刻度锚在轴线上：0 / 10 / 20 / 30 用例 -->
+      <g fill="#9aa7b4" font-size="11" text-anchor="middle">
+        <text x="150" y="228">0</text><text x="219" y="228">10</text>
+        <text x="288" y="228">20</text><text x="357" y="228">30</text>
+      </g>
+      <!-- 条：26/14/6/1/14/3，比例 20px/10 用例 → 1 用例 = 6.83px（宽）用水平条 -->
+      <g>
+        <rect x="150" y="26"  width="179" height="26" fill="#f85149" rx="3"/>
+        <text x="340" y="44" fill="#e6edf3" font-size="12.5">§1 黑名单拦截 26（复位/覆写/锁定/缩写）</text>
+        <rect x="150" y="62"  width="96"  height="26" fill="#3fb950" rx="3"/>
+        <text x="257" y="80" fill="#e6edf3" font-size="12.5">§2 放行不得误伤 14</text>
+        <rect x="150" y="98"  width="41"  height="26" fill="#d29922" rx="3"/>
+        <text x="202" y="116" fill="#e6edf3" font-size="12.5">§3 多命令走私 6</text>
+        <rect x="150" y="134" width="7"   height="26" fill="#39c5cf" rx="3"/>
+        <text x="168" y="152" fill="#e6edf3" font-size="12.5">§4 纯查询多段 1</text>
+        <rect x="150" y="170" width="96"  height="26" fill="#4aa3ff" rx="3"/>
+        <text x="257" y="188" fill="#e6edf3" font-size="12.5">§6 带参数查询放行 14（本次修正的盲区）</text>
+      </g>
+    </svg>
+    <div class="legend">
+      <span class="tag">§7</span> 参数里偷发命令仍拦 3（<code>:MEASure:ITEM? VPP,*RST</code> 等）——
+      条太短未画；比例：1 用例 ≈ 6.9px。
+    </div>
+    <table>
+      <thead><tr><th>节</th><th>覆盖的护栏行为</th><th>用例数</th><th>结果</th></tr></thead>
+      <tbody>
+        <tr><td>§1</td><td>复位/存储覆写/远程锁定（含中间缩写与粘连写法）必须拦</td><td>26</td><td><span class="tag allow">PASS</span></td></tr>
+        <tr><td>§2</td><td>正常命令不得误伤（<code>:SYSTem:BEEPer OFF</code>、写 <code>VOLT 1</code> 等）</td><td>14</td><td><span class="tag allow">PASS</span></td></tr>
+        <tr><td>§3</td><td><code>instr_query</code> / <code>readback_cmd</code> 的分号走私</td><td>6</td><td><span class="tag allow">PASS</span></td></tr>
+        <tr><td>§4</td><td>纯查询多段消息不得误伤</td><td>1</td><td><span class="tag allow">PASS</span></td></tr>
+        <tr><td>§6</td><td><b>带参数查询必须放行</b>（本次用户报障修正的盲区）</td><td>14</td><td><span class="tag allow">PASS</span></td></tr>
+        <tr><td>§7</td><td>参数位置偷发命令仍须拦截（新增纵深防御）</td><td>3</td><td><span class="tag allow">PASS</span></td></tr>
+        <tr><td>合计</td><td>脚本 <code>TEST_SCRIPTS/common/verify_remote_lock_block.py</code></td><td><b>64</b></td><td><span class="tag allow">全 PASS</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>三、本次交付的功能</h2>
+  <div class="panel">
+    <h3>3.1 MCP 工具分布（31 → 50）</h3>
+    <svg viewBox="0 0 1060 230" width="100%" height="230" role="img" aria-label="MCP 工具分布">
+      <line x1="120" y1="8" x2="120" y2="200" stroke="#2b3542"/>
+      <g fill="#9aa7b4" font-size="12">
+        <text x="112" y="26"  text-anchor="end">sds 示波器</text>
+        <text x="112" y="52"  text-anchor="end">dg 信号源</text>
+        <text x="112" y="78"  text-anchor="end">mho 示波器</text>
+        <text x="112" y="104" text-anchor="end">psu 电源</text>
+        <text x="112" y="130" text-anchor="end">sdg 信号源</text>
+        <text x="112" y="156" text-anchor="end">dmm 万用表</text>
+        <text x="112" y="182" text-anchor="end">instr/usb/dho</text>
+      </g>
+      <g rx="3">
+        <rect x="120" y="12"  width="234" height="18" fill="#4aa3ff" rx="3"/><text x="362" y="26" fill="#9aa7b4" font-size="12">13</text>
+        <rect x="120" y="38"  width="216" height="18" fill="#a371f7" rx="3"/><text x="344" y="52" fill="#9aa7b4" font-size="12">12（本次并入）</text>
+        <rect x="120" y="64"  width="108" height="18" fill="#39c5cf" rx="3"/><text x="236" y="78" fill="#9aa7b4" font-size="12">6（本次新增）</text>
+        <rect x="120" y="90"  width="90"  height="18" fill="#3fb950" rx="3"/><text x="218" y="104" fill="#9aa7b4" font-size="12">5</text>
+        <rect x="120" y="116" width="72"  height="18" fill="#3fb950" rx="3"/><text x="200" y="130" fill="#9aa7b4" font-size="12">4</text>
+        <rect x="120" y="142" width="72"  height="18" fill="#3fb950" rx="3"/><text x="200" y="156" fill="#9aa7b4" font-size="12">4</text>
+        <rect x="120" y="168" width="54"  height="18" fill="#d29922" rx="3"/>
+        <text x="182" y="182" fill="#9aa7b4" font-size="12">3 通用护栏 + 1 故障兜底 usb_reset + 2 dho</text>
+      </g>
+    </svg>
+
+    <h3>3.2 交付清单</h3>
+    <table>
+      <thead><tr><th>#</th><th>交付项</th><th>关键内容</th><th>验证</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td><b>MHO900 接入</b><br><span class="muted">mho_control/</span></td>
+            <td>480 页手册提取 + 47 条命令常量 + 库 + 6 个 <code>mho_*</code> 工具；<code>resolve("mho")</code></td>
+            <td>真机 45/45</td></tr>
+        <tr><td>2</td><td><b>DHO/MHO 合并共享内核</b><br><span class="muted">rigol_scope/</span></td>
+            <td>命令集 97% 重合（DHO 驱动 40 条命令 100% 存在于 MHO 手册）；<code>Family</code> 差异表；
+                DHO 补齐双信源测量/分片读取/PNG 截图，修 ASCII 死分支</td>
+            <td>离线 63 + 真机 45/45</td></tr>
+        <tr><td>3</td><td><b>DG832 并入</b><br><span class="muted">dg832_control/</span></td>
+            <td>驱动逐字节迁入（md5 一致）+ 12 个 <code>dg_*</code> 工具 + 手册/笔记入库；旧三处副本退役</td>
+            <td>只读 15/15 · 写矩阵 18/18 · 边界 20/20</td></tr>
+        <tr><td>4</td><td><b>审计器重构</b><br><span class="muted">audit_all_commands.py</span></td>
+            <td>AST 提取（排除 docstring、还原 f-string）＋段键归一＋后缀路径命中；
+                MISS 从"35 条含 ~30 假阳性"收敛到 29 条条条可解释</td>
+            <td>闭环自测 85 断言</td></tr>
+        <tr><td>5</td><td><b>缺陷审阅</b><br><span class="muted">docs/review_20260915.md</span></td>
+            <td>全仓 A–F 六类缺陷清单；DH1766 专项审计（safe_mode 旁路等 9 项 + 真机 T1–T8 清单）</td>
+            <td>高severity项逐条复核</td></tr>
+        <tr><td>6</td><td><b>安全加固</b></td>
+            <td>堵走私通道、补中间缩写、修正查询判据（本次）；黑名单改为逐段+助记符前缀判定</td>
+            <td>64 护栏用例</td></tr>
+        <tr><td>7</td><td><b>USB-TMC 故障兜底</b><br><span class="muted">common/usb_reset.py</span></td>
+            <td>重启仪器 USB 的 PnP 设备（不用上下电/拔插）；VISA 资源串反解 VID/PID/SN；UAC 提权；MCP 工具 <code>usb_reset</code></td>
+            <td>真机 <b>2.4s</b> 恢复、设定 100% 保留</td></tr>
+        <tr><td>8</td><td><b>复位族"保留不暴露"</b></td>
+            <td>更正 <code>:SYSTem:RESet</code>=重启 / <code>*RST</code>=恢复出厂（旧 docstring 写反）；
+                常量+说明留在库内，受控脚本 <code>rigol_scope_reset.py</code></td>
+            <td>无授权即拒（实测）</td></tr>
+        <tr><td>9</td><td><b>MCP/技能安装</b></td>
+            <td>zcode 注册 <code>instruments</code>（stdio 握手 50 工具）；<code>instrument-mcp</code> 技能以目录链接装入；
+                旧 DG832 独立服务器留转发器兜底</td>
+            <td>握手 + 转发器各验一次</td></tr>
+        <tr><td>10</td><td><b>文档体系</b></td>
+            <td><code>agent.md</code>（入口）、DHO 交接单、DHO/MHO 比对报告、DH1766 专项审计、TEST_RECORDS 时间线</td>
+            <td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>四、命令审计覆盖率（代码 vs 手册）</h2>
+  <div class="panel">
+    <svg viewBox="0 0 1060 364" width="100%" height="364" role="img" aria-label="各库命令审计 HIT/MISS">
+      <g font-size="12">
+        <line x1="184" y1="12" x2="184" y2="264" stroke="#2b3542"/>
+        <text x="176" y="25" text-anchor="end">dh1766</text>
+        <rect x="184" y="12" width="152" height="18" fill="#39c5cf"/>
+        <rect x="336" y="12" width="32" height="18" fill="#f85149"/>
+        <text x="378" y="25" fill="#9aa7b4">38 / 8</text>
+        <text x="176" y="51" text-anchor="end">dg832</text>
+        <rect x="184" y="38" width="148" height="18" fill="#39c5cf"/>
+        <text x="342" y="51" fill="#9aa7b4">37 / 0</text>
+        <text x="176" y="77" text-anchor="end">dho</text>
+        <rect x="184" y="64" width="160" height="18" fill="#39c5cf"/>
+        <text x="354" y="77" fill="#9aa7b4">40 / 0</text>
+        <text x="176" y="103" text-anchor="end">mho</text>
+        <rect x="184" y="90" width="184" height="18" fill="#39c5cf"/>
+        <text x="378" y="103" fill="#9aa7b4">46 / 0</text>
+        <text x="176" y="129" text-anchor="end">sds</text>
+        <rect x="184" y="116" width="208" height="18" fill="#39c5cf"/>
+        <rect x="392" y="116" width="24" height="18" fill="#f85149"/>
+        <text x="426" y="129" fill="#9aa7b4">52 / 6</text>
+        <text x="176" y="155" text-anchor="end">sdg</text>
+        <rect x="184" y="142" width="24" height="18" fill="#39c5cf"/>
+        <rect x="208" y="142" width="12" height="18" fill="#f85149"/>
+        <text x="230" y="155" fill="#9aa7b4">6 / 3</text>
+        <text x="176" y="181" text-anchor="end">k3446x</text>
+        <rect x="184" y="168" width="112" height="18" fill="#39c5cf"/>
+        <rect x="296" y="168" width="4" height="18" fill="#f85149"/>
+        <text x="310" y="181" fill="#9aa7b4">28 / 1</text>
+        <text x="176" y="207" text-anchor="end">探针脚本</text>
+        <rect x="184" y="194" width="76" height="18" fill="#39c5cf"/>
+        <rect x="260" y="194" width="36" height="18" fill="#f85149"/>
+        <text x="306" y="207" fill="#9aa7b4">19 / 9（探针故意发待验证命令）</text>
+        <text x="176" y="233" text-anchor="end">rigol_scope</text>
+        <rect x="184" y="220" width="156" height="18" fill="#39c5cf"/>
+        <rect x="340" y="220" width="4" height="18" fill="#f85149"/>
+        <text x="354" y="233" fill="#9aa7b4">39 / 1（否定性说明文字）</text>
+        <text x="176" y="259" text-anchor="end">common 兜底</text>
+        <rect x="184" y="246" width="4" height="18" fill="#39c5cf"/>
+        <rect x="188" y="246" width="4" height="18" fill="#f85149"/>
+        <text x="202" y="259" fill="#9aa7b4">1 / 1（PowerShell 通配符假阳性）</text>
+        <text x="184" y="294" fill="#9aa7b4" font-size="11.5">
+          合计 530 HIT / 29 MISS（MISS 条条可解释：8 STAT 组出处为原版手册 · 6 SDS 旧短形式别名 · 3 SDG 提取版缺节 ·
+          1 Keysight · 9 探针故意 · 1 说明文字 · 1 通配符假阳性）
+        </text>
+        <g font-size="12.5" transform="translate(0,314)">
+          <rect x="184" y="0" width="12" height="12" fill="#39c5cf"/><text x="202" y="11" fill="#9aa7b4">HIT（手册有出处）</text>
+          <rect x="334" y="0" width="12" height="12" fill="#f85149"/><text x="352" y="11" fill="#9aa7b4">MISS（人工甄别后归档）</text>
+        </g>
+      </g>
+    </svg>
+  </div>
+
+  <h2>五、验证证据索引（可复算）</h2>
+  <div class="panel">
+    <table>
+      <thead><tr><th>脚本 / 文件</th><th>作用</th><th>断言/规模</th><th>最新结果</th></tr></thead>
+      <tbody>
+        <tr><td><code>TEST_SCRIPTS/common/verify_remote_lock_block.py</code></td><td>护栏回归（离线，本次新增 §6/§7）</td><td>64 用例</td><td><span class="tag allow">全 PASS</span></td></tr>
+        <tr><td><code>TEST_SCRIPTS/common/verify_audit_extractor.py</code></td><td>审计器闭环自测（提取/归一/全仓 MISS 基线）</td><td>85 断言</td><td><span class="tag allow">全 PASS</span></td></tr>
+        <tr><td><code>TEST_SCRIPTS/common/audit_all_commands.py</code></td><td>六套库+脚本 vs 手册命令审计</td><td>10 组 / 559 命令</td><td>530 HIT · 29 MISS</td></tr>
+        <tr><td><code>TEST_SCRIPTS/common/verify_rigol_scope_shared.py</code></td><td>DHO/MHO 共享内核离线闭环（假传输回放）</td><td>63 断言</td><td><span class="tag allow">全 PASS</span></td></tr>
+        <tr><td><code>TEST_SCRIPTS/mho/verify_mho.py</code></td><td>MHO 真机验收（含冻结态字节序实证）</td><td>45 项</td><td><span class="tag allow">45/45</span></td></tr>
+        <tr><td><code>TEST_SCRIPTS/dg832/verify_dg832.py</code> / <code>test_dg832_write_matrix.py</code> / <code>verify_dg832_edge_cases.py</code></td>
+            <td>DG832 只读体检 / 写路径矩阵 / 边界回归</td><td>15 · 18 · 20 项</td>
+            <td><span class="tag allow">15/15 · 18/18 · 20/20</span></td></tr>
+        <tr><td><code>TEST_DATA/dg832/usb_pnp_reset_verify_20260915.json</code></td><td>USB PnP 复位前后逐字段对比</td><td>10 字段</td><td><span class="tag allow">设定 100% 保留</span></td></tr>
+        <tr><td><code>docs/review_20260915.md</code> · <code>docs/dh1766_audit_20260915.md</code> · <code>docs/rigol_scope_compare_20260915.md</code> · <code>docs/dho_live_verification_handoff.md</code></td>
+            <td>审阅报告 / DH1766 专项 / DHO-MHO 比对 / DHO 交接单</td><td>—</td><td>已入库并推送</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <footer>
+    复算：<code>python TEST_SCRIPTS/common/verify_remote_lock_block.py</code> ·
+    <code>python TEST_SCRIPTS/common/verify_audit_extractor.py</code> ·
+    <code>python TEST_SCRIPTS/common/audit_all_commands.py</code> ·
+    <code>python TEST_SCRIPTS/common/verify_rigol_scope_shared.py</code><br>
+    仓库：<code>D:\WorkDesigns\3_WorkTools\instrumentControl</code>（origin/main <code>288763d</code>）·
+    本页所有数字取自上述脚本的真实输出；安全红线与操作规程见 <code>AGENTS.md</code>。
+  </footer>
+</div>
+</body>
+</html>

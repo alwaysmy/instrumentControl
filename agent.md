@@ -20,6 +20,7 @@ pip install -r requirements.txt        # pyvisa（+ 跑 MCP 需 mcp 包）
 python mcp_instruments/config_cli.py show         # 看地址解析链现状（不连设备）
 python TEST_SCRIPTS/common/verify_all_devices.py  # 真机只读全链路验收（约 1 分钟）
 python TEST_SCRIPTS/common/audit_all_commands.py  # SCPI 命令审计（代码 vs 手册提取版）
+python TEST_SCRIPTS/common/audit_guardrail_coverage.py  # 护栏覆盖性审计（查误伤/漏项）
 python mcp_instruments/server.py                  # 启动 MCP 服务器（stdio）
 ```
 

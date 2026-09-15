@@ -147,6 +147,9 @@ AI/Agent 操作仪器必须遵守以下规范。
   `TEST_DATA/common/verify_all_devices_*.json`）
 - 命令审计器：`TEST_SCRIPTS/common/audit_all_commands.py`（新增命令后必跑，
   防猜测命令回归；判据=段键元组+段内长短形式兼容+后缀路径命中，见文件头 docstring）
+- **护栏覆盖性审计**：`TEST_SCRIPTS/common/audit_guardrail_coverage.py`（改护栏/白名单后必跑）
+  —— 用手册全部命令穷举黑名单与查询判据（查误伤），并把各工具入参白名单与手册枚举**双向**比对
+  （查"手册有我们缺"= 会误拦）。首轮抓到 3 个真缺陷，见 `docs/review_20260915.md` §四.五
 - **审计器自测（离线闭环）**：`TEST_SCRIPTS/common/verify_audit_extractor.py`
   —— 提取/归一化/全仓 MISS 基线三层断言，改审计器后必跑（无仪器也能跑）
 - 审计报告：`docs/command_audit_full_20260823.md`（脚本自动生成，重跑即覆盖；

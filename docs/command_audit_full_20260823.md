@@ -340,11 +340,11 @@
 
 - [HIT ] `SYSTem:RESet` @ TEST_SCRIPTS\common\rigol_scope_reset.py:38
 - [HIT ] `*RST` @ TEST_SCRIPTS\common\rigol_scope_reset.py:38
-- [**MISS**] `*OPT?` @ rigol_scope\families.py:126
+- [**MISS**] `*OPT?` @ rigol_scope\families.py:128
 - [HIT ] `MEASure:CLEar` @ rigol_scope\families.py:55
-- [HIT ] `ACQuire:BITS` @ rigol_scope\families.py:87
-- [HIT ] `CHANnel<n>:Impedance` @ rigol_scope\families.py:87
-- [HIT ] `MEASure:DELete` @ rigol_scope\families.py:96
+- [HIT ] `ACQuire:BITS` @ rigol_scope\families.py:89
+- [HIT ] `CHANnel<n>:Impedance` @ rigol_scope\families.py:89
+- [HIT ] `MEASure:DELete` @ rigol_scope\families.py:98
 - [HIT ] `*IDN?` @ rigol_scope\scope.py:102
 - [HIT ] `SYSTem:VERSion?` @ rigol_scope\scope.py:106
 - [HIT ] `SYSTem:ERRor?` @ rigol_scope\scope.py:110

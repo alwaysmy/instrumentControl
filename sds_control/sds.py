@@ -278,7 +278,7 @@ class SDS:
         "MEAN", "STDEV", "VSTD", "RMS", "CRMS", "MEDIAN", "CMEDIAN",
         "OVSN", "FPRE", "OVSP", "RPRE", "ULOWer", "PER", "FREQ",
         "TMAX", "TMIN", "PWID", "NWID", "DUTY", "NDUTY", "WID", "NBWID",
-        "DELAY", "TIMEL", "RISE", "FALL", "RISE20T90", "FALL80T20",
+        "DELAY", "TIMEL", "RISE", "FALL", "RISE20T80", "FALL80T20",  # T80 不是 T90（手册 SIMPle:ITEM 表逐字，2026-09-15 审计更正）
         "CCJ", "PAREA", "NAREA", "AREA", "ABSAREA", "CYCLES",
         "REDGES", "FEDGES", "EDGES", "PPULSES", "NPULSES",
         "PACArea", "NACArea", "ACArea", "ABSACArea",

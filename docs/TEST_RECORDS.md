@@ -203,3 +203,15 @@
     （5 条，含用户报障那条三段回读，同时断言 `instr_query` 与 `readback_cmd` 都不拦）；
     §3/§7 保留夹带写、复位/锁定的拦截用例（新增 `:CHANnel4:DISPlay?;:OUTP4 ON`）。
   - 文档口径（AGENTS/MCP README/mcp SKILL/review/HTML 汇报）同步为"逐段判、多段纯查询放行"。
+- 2026-09-15（同日，护栏覆盖性审计轮）：新增 `TEST_SCRIPTS/common/audit_guardrail_coverage.py`
+  —— 把"改护栏只验证想拦的、没验证不想拦的"自动化：§A 用**六套手册的全部命令**（约 7900 条）
+  喂黑名单查误伤；§B 每条命令生成 `:CMD?` / `:CMD? MAX` 查查询判据；§C/§D 把各工具的**入参白名单**
+  与手册枚举**双向**比对（手册有我们缺 = 会误拦）。
+  - **首轮抓到并修掉 3 个真缺陷**（均属"白名单抄写/打字未核对"）：
+    `sds_control.SDS.MEAS_TYPES` 的 `RISE20T90` → 手册是 `RISE20T80`（真项被误拦+错项被误放）；
+    `rigol_scope` DHO 触发类型误抄 MHO 列表（多出 IIS/FLEXray/M1554，M1554 两手册皆无）；
+    `rigol_scope` DHO 测量项缺 `ACRMs`（会误拦合法测量）。
+  - 审计脚本自身也修了两处启发式缺陷：提取残留过滤要按字符类（`{"OFF"|"CALCulate:DATA"}`
+    曾漏过 2 条）；item 枚举要合并"分页切成两块"的续块（曾误判 MHO 缺 `FFDelay`）。
+  - 现状：§A 0 / §B 0 / §C 0 / §D 0（留痕 `TEST_DATA/common/guardrail_coverage_*.json`）；
+    SDS 那侧的 item 表因提取形态是表格、§D 跳过（由 §C + 显式 diff 把关，已说明）。

@@ -61,10 +61,12 @@ DHO = Family(
     chan_impedances=None,                # 手册无 :CHANnel<n>:Impedance（MHO 才有）
     chan_units=("WATT", "AMPere", "VOLTage", "UNKNown"),   # 手册 3.6.12
     edge_slopes=("POSitive", "NEGative", "RFALl"),         # 手册 3.27.8.2（非 RFail）
+    # 手册 3.27.1 参数表逐字（17 项）：原先误抄了 MHO 的列表，多出 IIS/FLEXray/M1554
+    # （DHO 手册 0 命中；M1554 连 MHO 手册也没有——MHO 是 M1553），2026-09-15 审计更正。
+    # 注：CAN/LIN 仅 DHO900 系列支持（手册该节"说明"原文）。
     trigger_types=(
         "EDGE", "PULSe", "SLOPe", "VIDeo", "PATTern", "DURation", "TIMeout", "RUNT",
         "WINDow", "DELay", "SETup", "NEDGe", "RS232", "IIC", "SPI", "CAN", "LIN",
-        "IIS", "FLEXray", "M1554",
     ),
     trigger_sweeps=("AUTO", "NORMal", "SINGle"),           # 手册 3.27.4
     wav_modes=("NORMal", "MAXimum", "RAW"),                # 手册 3.28.2
@@ -76,7 +78,7 @@ DHO = Family(
         "OVERshoot", "PREShoot", "MARea", "MPARea", "PERiod", "FREQuency",
         "RTIMe", "FTIMe", "PWIDth", "NWIDth", "PDUTy", "NDUTy", "TVMAX",
         "TVMIN", "PSLewrate", "NSLewrate", "VUPPer", "VMID", "VLOWer",
-        "VARiance", "PVRMs", "PPULses", "NPULses", "PEDGes", "NEDGes",
+        "VARiance", "PVRMs", "PPULses", "NPULses", "PEDGes", "NEDGes", "ACRMs",
     ),
     # DHO 手册同样记载双信源项（RRDelay/RRPHase 等各 12 处）——合并前 DHO 驱动未暴露，
     # 属**能力缺口**而非仪器缺口，合并后补齐。

@@ -1,0 +1,166 @@
+{
+  "timestamp": "2026-09-15T21:26:08",
+  "per_manual": {
+    "dh1766": {
+      "commands": 54,
+      "blocked": 0,
+      "query_rejected": 0
+    },
+    "dg832": {
+      "commands": 653,
+      "blocked": 0,
+      "query_rejected": 0
+    },
+    "dho": {
+      "commands": 1516,
+      "blocked": 0,
+      "query_rejected": 0
+    },
+    "mho": {
+      "commands": 1121,
+      "blocked": 0,
+      "query_rejected": 0
+    },
+    "sds": {
+      "commands": 2988,
+      "blocked": 0,
+      "query_rejected": 0
+    },
+    "sdg": {
+      "commands": 583,
+      "blocked": 0,
+      "query_rejected": 24
+    },
+    "k3446x": {
+      "commands": 988,
+      "blocked": 0,
+      "query_rejected": 2
+    }
+  },
+  "A_blacklist_false_positive": [],
+  "B_query_rule_reject": [
+    {
+      "manual": "sdg",
+      "cmd": ":AMPLIQ:AMPLitude</u>?"
+    },
+    {
+      "manual": "sdg",
+      "cmd": ":AMPLIQ:AMPLitude</u>? MAX"
+    },
+    {
+      "manual": "sdg",
+      "cmd": ":IQ:AMPLIQ:AMPLitude</u>?"
+    },
+    {
+      "manual": "sdg",
+      "cmd": ":IQ:AMPLIQ:AMPLitude</u>? MAX"
+    },
+    {
+      "manual": "sdg",
+      "cmd": ":IQ:CENTerfreq<中心频率>?"
+    },
+    {
+      "manual": "sdg",
+      "cmd": ":IQ:CENTerfreq<中心频率>? MAX"
+    },
+    {
+      "manual": "sdg",
+      "cmd": ":IQ:IQAD:IOFFsetIQ:IQADjustment:IOFFset</u>?"
+    },
+    {
+      "manual": "sdg",
+      "cmd": ":IQ:IQAD:IOFFsetIQ:IQADjustment:IOFFset</u>? MAX"
+    },
+    {
+      "manual": "sdg",
+      "cmd": ":IQ:SAMPlerate<采样率>?"
+    },
+    {
+      "manual": "sdg",
+      "cmd": ":IQ:SAMPlerate<采样率>? MAX"
+    },
+    {
+      "manual": "sdg",
+      "cmd": ":IQ:WAVEload:USERstored<波形名称>?"
+    },
+    {
+      "manual": "sdg",
+      "cmd": ":IQ:WAVEload:USERstored<波形名称>? MAX"
+    },
+    {
+      "manual": "sdg",
+      "cmd": ":IQ:WAVEload:USERstored<路径>?"
+    },
+    {
+      "manual": "sdg",
+      "cmd": ":IQ:WAVEload:USERstored<路径>? MAX"
+    },
+    {
+      "manual": "sdg",
+      "cmd": ":IQAD:IOFFsetIQ:IQADjustment:IOFFset</u>?"
+    },
+    {
+      "manual": "sdg",
+      "cmd": ":IQAD:IOFFsetIQ:IQADjustment:IOFFset</u>? MAX"
+    },
+    {
+      "manual": "sdg",
+      "cmd": ":ON:MODE<值>?"
+    },
+    {
+      "manual": "sdg",
+      "cmd": ":ON:MODE<值>? MAX"
+    },
+    {
+      "manual": "sdg",
+      "cmd": ":POWER:ON:MODE<值>?"
+    },
+    {
+      "manual": "sdg",
+      "cmd": ":POWER:ON:MODE<值>? MAX"
+    },
+    {
+      "manual": "sdg",
+      "cmd": ":WAVEload:USERstored<波形名称>?"
+    },
+    {
+      "manual": "sdg",
+      "cmd": ":WAVEload:USERstored<波形名称>? MAX"
+    },
+    {
+      "manual": "sdg",
+      "cmd": ":WAVEload:USERstored<路径>?"
+    },
+    {
+      "manual": "sdg",
+      "cmd": ":WAVEload:USERstored<路径>? MAX"
+    },
+    {
+      "manual": "k3446x",
+      "cmd": ":CAPacitance:SECondary{\"OFF\"|\"CALCulate:DATA\"}?"
+    },
+    {
+      "manual": "k3446x",
+      "cmd": ":CAPacitance:SECondary{\"OFF\"|\"CALCulate:DATA\"}? MAX"
+    }
+  ],
+  "C_whitelist_missing": [
+    {
+      "list": "sds_control.MEAS_TYPES",
+      "manual": "sds",
+      "missing": [
+        "RISE20T90"
+      ]
+    },
+    {
+      "list": "rigol_scope.DHO.trigger_types",
+      "manual": "dho",
+      "missing": [
+        "IIS",
+        "FLEXray",
+        "M1554"
+      ]
+    }
+  ],
+  "C_whitelist_extra": []
+}

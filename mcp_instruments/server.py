@@ -485,9 +485,13 @@ def usb_reset(kind: str | None = None, resource: str | None = None,
     比"拔插 USB"省事，**不要**直接给仪器断电（那是最后手段）。
 
     参数：kind（解析层设备类 sds/sdg/dmm/dho/mho/dg/psu，地址走解析层）或 resource（USB 资源串）
-    二选一；confirm=True 必填（该仪器所有会话会中断 2~3 秒）；escalate=True 时若进程无管理员
-    权限会**弹 UAC** 提权；verify_idn=True 复位后轮询 *IDN? 确认设备回来。
-    仅支持 USB 资源——LAN 卡死请先重连/换协议（inst0 ↔ raw socket），不属本工具场景。"""
+    二选一；confirm=True 必填（该仪器所有会话会中断 2~3 秒）；verify_idn=True 复位后轮询
+    *IDN? 确认设备回来。仅支持 USB 资源——LAN 卡死请先重连/换协议（inst0 ↔ raw socket）。
+
+    ⚠ 权限：改设备节点必须管理员权限，**MCP 进程自身无法提权（不会弹 UAC）**。
+    本进程已是管理员 → 直接可用；否则一律拒绝并给出出路（`escalate` 参数保留仅为
+    兼容旧调用，MCP 内无提权能力）——真提权走 CLI（会弹 UAC）：
+    `python common/usb_reset.py --kind <kind> --allow-reset --escalate --verify-idn`。"""
     if not confirm:
         return _err("confirm_required",
                     "usb_reset 会重启该仪器的 USB 设备节点（会话中断约 2~3 秒），需 confirm=True",
@@ -507,9 +511,14 @@ def usb_reset(kind: str | None = None, resource: str | None = None,
         inst = find_instance(vid, pid, serial)
         if not inst:
             raise RuntimeError(f"未找到 VID=0x{vid} PID=0x{pid} 的 PnP 设备（设备可能已掉线，需拔插）")
-        if not is_admin() and not escalate:
-            raise RuntimeError("改动设备节点需要管理员权限：加 escalate=True（弹 UAC），"
-                               f'或在管理员终端执行 pnputil /restart-device "{inst}"')
+        if not is_admin():
+            # 非管理员下 pnputil 必然失败（提权只能由 MCP 之外的进程发起）——
+            # 这里直接给可执行的出路，不要让它以一句 pnputil 权限错误收场。
+            raise RuntimeError(
+                "改动设备节点需要管理员权限，MCP 进程无法自行提权。二选一："
+                f'① 在管理员终端执行 pnputil /restart-device "{inst}"；'
+                "② 退出 MCP 走 CLI 提权（弹 UAC）："
+                f"python common/usb_reset.py --kind <kind> --allow-reset --escalate --verify-idn")
         ok, out = restart_device(inst)
         verified = None
         if ok and verify_idn:

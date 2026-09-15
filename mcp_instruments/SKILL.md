@@ -212,9 +212,12 @@ DH1766 与 SDS 不同：**任何远程会话都会把电源置为 `REM`**——�
 
 `*IDN?` 超时 / `VI_ERROR_TMO` / `VI_ERROR_SYSTEM_ERROR` 时：**先重连一次**（多数即恢复）；
 仍不行 → `usb_reset(kind="dg", confirm=True, verify_idn=True)`（**重启该仪器的 USB
-PnP 设备节点**：USB 重新枚举，**固件不重启、通道设定/输出/保护全部保留**，实测 2.4s；
-无管理员权限时加 `escalate=True` 会弹 UAC）。**不要**让人去拔插 USB，更不要给仪器断电
-（那是最后手段）。LAN 设备卡死不属此场景（重连或换协议 inst0 ↔ raw socket）。
+PnP 设备节点**：USB 重新枚举，**固件不重启、通道设定/输出/保护全部保留**，实测 2.4s）。
+⚠ 该操作需**管理员权限**，而**MCP 进程不能自行提权、不会弹 UAC**：本机 zcode 里的
+MCP 进程通常已带管理员（可直接用）；若工具报"需要管理员权限"，退出 MCP 走 CLI 提权：
+`python common/usb_reset.py --kind dg --allow-reset --escalate --verify-idn`（弹 UAC）。
+**不要**让人去拔插 USB，更不要给仪器断电（那是最后手段）。LAN 设备卡死不属此场景
+（重连或换协议 inst0 ↔ raw socket）。
 
 ## 五、错误处理
 

@@ -103,6 +103,19 @@ SDS 侧同理（目前只有 `sds_auto_scale` 闭环改这些量，不能定点�
 5. 测试脚本侧同样适用：脚本若只记"我设过 offset=−3.5"，中间任何一次改档位都会让这个假设失效。
 6. 本条仅在 RIGOL MHO984D 上实测；SDS 是否同约定**未验证**，不要默认套用。
 
+### (b-2) 追加实测（2026-09-15 温度 DAC 测试）：**通道关闭时，档位/偏置写入被忽略**
+
+```
+:CHANnel4:DISPlay OFF; :CHANnel4:SCALe 0.05; :CHANnel4:OFFSet 0
+-> 回读 :CHANnel4:DISPlay?;SCALe?;OFFSet?  =  0;1.500000E+00;-5.000000E+00   # 没改！
+:CHANnel4:DISPlay ON;  :CHANnel4:SCALe 0.05; :CHANnel4:OFFSet 0; :CHANnel4:DISPlay OFF
+-> 回读                                   =  0;5.000000E-02;0.000000E+00   # 生效 ✓
+```
+
+- **`DISPlay OFF` 状态下写 `SCALe`/`OFFSet` 会被静默忽略**（无错误码，`syst_errors=[]`）。
+- 影响：设置类工具若"先关通道再设参数"，会得到一个**看似成功实则没改**的结果——正是 §4.1 那条"写后必须回读"的又一个实例（本次是靠回读发现的）。
+- 建议：新增的 `*_channel()` 设置工具里，参数设置与显示开关**解耦**，并在返回里回读全部四项（display/scale/offset/probe）。
+
 ### (c) 偏置有硬件量程上限：不是所有档位都能把波形置中
 
 实测（MHO984D / CH3 / 1X 探头）：

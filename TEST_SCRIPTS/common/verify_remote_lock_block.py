@@ -55,12 +55,16 @@ ALLOWED = (
     # 2026-09-15：锁定类的**纯查询**（含 MHO 的 LOCKed?）仍放行，用于诊断面板是否被锁
     "SYSTem:LOCKed?", "SYST:LOCKED?", "SYSTem:PSTatus?", "SYSTem:OPTion:STATus?",
 )
-# 2026-09-15：多命令走私 —— 查询口/回读口都必须整条为纯查询，且逐段查黑名单
+# 2026-09-15：多命令走私。**SCPI 里 `;` 分隔的是同一条消息内的多个命令单元，设备逐个执行**
+# （Keysight 手册明文："A semicolon separates commands within the same subsystem…"），
+# 实测 DG832 `:SOUR1:PHAS?;:SOUR1:PHAS 123` 的写单元真的生效——所以查询口必须限制成
+# **单条命令单元**（`_QUERY_MSG_RE`）。下面这些含 `;` 的消息一律拒。
 SMUGGLE = (
     "*RST;*IDN?", "*IDN?;*RST", ":SYSTem:LOCKed ON;*IDN?", "*IDN?;:SYST:RESE",
     ":SYSTem:REM ON;:SYSTem:ERRor?", "*CLS;*RST",
+    # 2026-09-15 判据简化后：**即使全是查询**的多单元消息也拒（每次调用一条命令）
+    "*IDN?;:SYSTem:ERRor?", ":OUTP1?;:OUTP2?",
 )
-SMUGGLE_OK = ("*IDN?;:SYSTem:ERRor?",)  # 全查询的多命令消息（真机路径才验，见 §4）
 
 print("=== §1 拦截用例（期望 error_type=forbidden，且不发起连接）===", flush=True)
 for cmd in BLOCKED:
@@ -91,18 +95,19 @@ for cmd in SMUGGLE:
     print(f"  [{'PASS' if ok_q and ok_w else 'FAIL'}] {cmd:32s} "
           f"query={r.get('error_type')} readback={rw.get('error_type')}", flush=True)
 
-print("\n=== §4 纯查询多命令消息（不得误伤；dummy 资源连接失败属预期）===", flush=True)
-for cmd in SMUGGLE_OK:
+print("\n=== §4 纯查询的**多单元**消息（含 `;`）也应拒——查询口每次只收一条命令单元 ===", flush=True)
+for cmd in ("*IDN?;:SYSTem:ERRor?", ":OUTP1?;:OUTP2?"):
     r = json.loads(server.instr_query(RES, cmd))
-    ok = r.get("error_type") != "forbidden"
+    ok = r.get("ok") is False and r.get("error_type") in ("forbidden", "param_validation")
     if not ok:
-        fails.append(f"pure-query:{cmd}")
-    print(f"  [{'PASS' if ok else 'FAIL'}] {cmd:32s} -> {r.get('error_type')}", flush=True)
+        fails.append(f"multi-unit-query:{cmd}")
+    print(f"  [{'PASS' if ok else 'FAIL'}] 拒 {cmd:32s} -> {r.get('error_type')}"
+          f"（拆成多次调用即可）", flush=True)
 
 print("\n=== §6 带参数的查询必须放行（SCPI 允许 `<header>? <param>`）===", flush=True)
 # 2026-09-15 用户报障：护栏曾按"整段以 ? 结尾"判查询，把 `:MEASure:ITEM? VPP,CHANnel1`
-# 这类**标准写法**一起拒了（两个 RIGOL 手册的实例都是这个形态）。现判据为
-# "命令头里的第一个 '?' 之前是合法助记符"；下面这组就是当时的漏网盲区。
+# 这类**标准写法**一起拒了（两个 RIGOL 手册的实例都是这个形态）。现判据：单条命令单元
+# + 命令头以 `?` 结尾（`_QUERY_MSG_RE`）；下面这组就是当时的漏网盲区。
 QUERY_WITH_PARAMS = (
     ":MEASure:ITEM? VPP,CHANnel1",          # RIGOL 手册实例形态
     ":MEASure:ITEM? OVERshoot,CHANnel2",
@@ -110,7 +115,6 @@ QUERY_WITH_PARAMS = (
     "SAMPle:COUNt? MAX",                    # Keysight 风格（无前导冒号）
     "MEAS:ITEM? VPP,CH4",                   # 短形式
     ":WAVeform:DATA?",
-    "*IDN?;:SYSTem:ERRor?",                 # 多段且都是查询
 )
 for cmd in QUERY_WITH_PARAMS:
     q, f = server._is_query_only(cmd), server._is_forbidden(cmd)
@@ -125,7 +129,8 @@ for cmd in QUERY_WITH_PARAMS:
     print(f"  [{'PASS' if ok2 else 'FAIL'}] instr_query 不拦 -> {r.get('error_type')}", flush=True)
 
 print("\n=== §7 参数里偷发命令仍须拦截（新增防御）===", flush=True)
-STILL_BLOCKED = (":MEASure:ITEM? VPP,*RST", ":OUTP1 ON;:OUTP1?", ':DISP:TEXT "why?"')
+STILL_BLOCKED = (":MEASure:ITEM? VPP,*RST", ":OUTP1 ON;:OUTP1?", ':DISP:TEXT "why?"',
+                 ":OUTP1?;:OUTP2?", "*IDN?;*RST")
 for cmd in STILL_BLOCKED:
     ok = server._is_forbidden(cmd) or not server._is_query_only(cmd)
     if not ok:

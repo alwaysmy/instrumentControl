@@ -332,7 +332,8 @@ def main() -> int:
     extra = {
         "dg832": ["TEST_SCRIPTS/dg832/verify_dg832.py",
                   "TEST_SCRIPTS/dg832/test_dg832_write_matrix.py",
-                  "TEST_SCRIPTS/dg832/verify_dg832_edge_cases.py"],
+                  "TEST_SCRIPTS/dg832/verify_dg832_edge_cases.py",
+                  "TEST_SCRIPTS/dg832/probe_semicolon_units.py"],
         "sds": ["TEST_SCRIPTS/common/sds_simple_meas.py", "TEST_SCRIPTS/common/sds_snap.py",
                 "TEST_SCRIPTS/common/sds_trace_analyze.py", "TEST_SCRIPTS/common/pixel_measure.py"],
         "mho": ["TEST_SCRIPTS/mho/verify_mho.py"],

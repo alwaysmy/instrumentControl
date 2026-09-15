@@ -178,3 +178,17 @@
   放宽到**整段搜索**作为纵深防御（参数位置偷发复位也拦）。回归
   `TEST_SCRIPTS/common/verify_remote_lock_block.py` 新增 §6（7 条带参数查询必须放行）
   与 §7（3 条偷发仍拦）——这两个盲区此前没有用例覆盖。
+- 2026-09-15（同日，规范核实轮）：**核实「分号能不能把写命令塞进查询」**。用户质疑该护栏是
+  无用代码（认为 SCPI 靠换行符划分命令）。结论：**护栏有效，但实现可简化一半**。
+  - 规范：Keysight Truevolt 手册（仓内）明文——`A semicolon ( ; ) separates commands within the same
+    subsystem… TRIG:SOUR EXT;COUNT 10 is equivalent to the following two commands`；换行符结束的是整条
+    **消息**，分号在消息内分隔**命令单元**。RIGOL/Siglent 手册无相关说明。
+  - **真机判定（DG832，空闲）**：① `:SOUR1:APPL?;:SOUR2:APPL?` → 同一行返回 `"DC,…";"SQU,…"`
+    （两个单元都被执行）；② `:SOUR1:PHAS?;:SOUR1:PHAS 123` → 查询应答 0，随后读 PHAS **= 123**：
+    **夹带的写命令确实生效**。留痕 `TEST_SCRIPTS/dg832/probe_semicolon_units.py` +
+    `TEST_DATA/dg832/semicolon_units_probe_20260915.json`。
+  - **据此简化**：查询口判据由「逐段解析助记符」改为**一条正则**（单条命令单元 + 命令头以 `?` 结尾、
+    问号后可带参数），`_segment_is_query`/`_MNEMONIC_HEAD_RE` 删除；多单元查询（即使全是查询）
+    现一律拒，调用方拆分即可（本仓库代码**从未**发过多单元消息）。写路径保留**逐单元**黑名单扫描
+    （写命令天然会用分号串联，Keysight 例子即如此）。
+  - 回归：`verify_remote_lock_block.py` 扩到 **67 用例**（§4 多单元查询须拒、§7 补两条），全 PASS。

@@ -538,41 +538,30 @@ def _classify_forbidden(cmd: str) -> str | None:
     return None
 
 
-# 合法助记符形状（命令头在 '?' 之前的部分）：`*IDN` / `:MEASure:ITEM` / `MEAS:ITEM`。
-# 注意前导冒号是 SCPI 根指示符，必须允许——漏掉它会把自己写的 `:MEASure:ITEM? VPP,CH4`
-# 反过来判成"非查询"（2026-09-15 改这条判据时当场踩到，回归用例已覆盖）。
-_MNEMONIC_HEAD_RE = re.compile(r"^[:*]?[A-Za-z][A-Za-z0-9:<>{}_.]*$")
-
-
-def _segment_is_query(segment: str) -> bool:
-    """单条命令是否为查询。
-
-    **问号后可以带参数**——`<header>? <param>` 是标准 SCPI 写法，两系列示波器手册的
-    实例都是这个形态（`:MEASure:ITEM? VPP,CHANnel2`、`:TRIGger:EDGE:LEVel?`…），
-    Keysight 也有 `SAMPle:COUNt? MAX` 这类。因此判据是"**命令头里的第一个 '?' 之前
-    是合法助记符**"，而**不是**"整段以 '?' 结尾"——后者会把带参数的查询一并拒掉
-    （2026-09-15 用户报障修正：`:MEASure:ITEM? VPP,CHANnel1` 曾被误判为 forbidden）。
-
-    仍能拦住写命令：写命令头里没有 '?'；而 `:DISP:TEXT"why?"` 这类**参数里恰好含 '?'**
-    的写法，因 '?' 之前出现了引号、不构成合法助记符，照样判为写。
-    """
-    seg = segment.strip()
-    if not seg:
-        return False
-    toks = seg.split()
-    head = toks[0] if toks else ""
-    q = head.find("?")
-    return q >= 0 and bool(_MNEMONIC_HEAD_RE.match(head[:q]))
+# 查询消息的形状：**单条命令单元**，命令头以 `?` 结尾，问号后可跟参数。
+#
+# `?` 后允许带参数是标准 SCPI 写法（`:MEASure:ITEM? VPP,CHANnel2`、`SAMPle:COUNt? MAX`），
+# 故不能按"整段以 ? 结尾"判（2026-09-15 曾因此把带参数查询全拒了，用户报障后修正）。
+#
+# 为什么**禁止 `;`**（即只允许一条命令单元）：
+#   ① SCPI 里 `;` 分隔的是同一条消息内的多个命令单元，设备会逐个执行——
+#      实测 DG832：`:SOUR1:PHAS?;:SOUR1:PHAS 123` 的应答是 0，随后读 PHAS 得 123，
+#      即**写单元真的执行了**（Keysight 手册也有明文：`TRIG:SOUR EXT;COUNT 10` 等价于两条命令）。
+#      所以"查询口"若放行 `;`，就等于开了一条夹带写的通道。
+#   ② 多单元查询的应答是合并成一行返回的（同一实测：`"DC,…";"SQU,…"`），
+#      对调用方本来就不友好；本仓库所有库代码**从未**发过多单元消息（全仓零 `;` 串联）。
+#   ③ 一条正则就能表达该规则，不必逐段解析助记符——少一半护栏代码，少一类边界情况。
+_QUERY_MSG_RE = re.compile(r"^[:*]?[A-Za-z][A-Za-z0-9:<>{}_.]*\?(?:\s[\s\S]*)?$")
 
 
 def _is_query_only(cmd: str) -> bool:
-    """整条消息是否"纯查询"：每个 `;` 分段都是查询（**问号后允许带参数**）。
+    """整条消息是否为**单条查询命令**（判据见 `_QUERY_MSG_RE` 上方注释）。
 
-    SCPI 允许在一条消息里用 `;` 串联多条命令，只查首尾会让 `"*IDN?;*RST"` 之类的
-    写命令从查询口溜进去；故逐段判"是不是查询"，而不是"整条以 ? 结尾"。
+    覆盖：`*IDN?` / `:SYSTem:ERRor?` / `:MEASure:ITEM? VPP,CHANnel1` / `SAMPle:COUNt? MAX`；
+    拦截：写命令（头里无 `?`）、多单元消息（含 `;`，如 `*IDN?;*RST`）、
+    参数里带引号含 `?` 的写命令（`:DISP:TEXT "why?"`）。
     """
-    parts = [p for p in (p.strip() for p in cmd.split(";")) if p]
-    return bool(parts) and all(_segment_is_query(p) for p in parts)
+    return bool(_QUERY_MSG_RE.match((cmd or "").strip()))
 
 
 def _is_forbidden(cmd: str) -> bool:

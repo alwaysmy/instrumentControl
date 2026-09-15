@@ -31,7 +31,21 @@ python TEST_SCRIPTS/common/verify_rigol_scope_shared.py    # 期望：全部 PAS
 python TEST_SCRIPTS/common/verify_audit_extractor.py       # 期望：全部 PASS
 ```
 
-## 二、必须复验的 6 项（合并带来的 DHO 行为变更）
+## 二、推荐做法：一条命令跑完（脚本已写好）
+
+```bash
+python TEST_SCRIPTS/dho/verify_dho_after_merge.py                # 默认只读
+python TEST_SCRIPTS/dho/verify_dho_after_merge.py --allow-write  # 追加会改设定的 2 项（自动恢复）
+python TEST_SCRIPTS/dho/verify_dho_after_merge.py --allow-stop   # 追加 RAW（短暂冻结采集）
+```
+
+脚本逐项判定并写留痕 `TEST_DATA/dho/verify_dho_after_merge_<stamp>.json`；
+**哪一项不符，脚本会直接在输出里告诉你改 `rigol_scope/families.py` 的哪个字段**（见 §三）。
+把该 JSON 按 §四 回填即可；地址没找到时它会打印定位设备的命令，而不是抛栈。
+
+下面的 6 项明细就是它检查的内容，想手工核对时按此表逐步做。
+
+## 二·附、6 项检查明细（合并带来的 DHO 行为变更）
 
 > 这些是合并后 **DHO 侧行为有变化** 的地方。逐条跑、逐条记结果；任何一条不符，
 > 按 §三 的说明改 `rigol_scope/families.py` 一个字段即可，不必改内核。

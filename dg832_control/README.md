@@ -57,6 +57,14 @@ gen.set_voltage_limit(2, state=False)     # CH2 保护 OFF
 
 现成的写路径回归（会改设定并自动恢复）：`TEST_SCRIPTS/dg832/test_dg832_write_matrix.py --allow-write`。
 
+### 写回顺序（2026-09-15 真机实测教训）
+
+**先把保护窗口放回/放宽，再写波形参数**，最后才按备份收窄窗口。顺序反了会被设备的
+"offset ± amp/2 必须落在 [low,high] 内"规则**钳制**：实测恢复 CH2 时先写
+`:SOUR2:APPL:SQU 5e4,3.3,1.65,0`（当时保护窗口还是测试留下的 `high=3`），
+设备把 offset 从 1.65 钳成 **1.35**（= 3 − 3.3/2），而只比"波形名"的断言会看着像成功。
+`verify_dg832_edge_cases.py` 已按此顺序实现，并把断言改成**全参数比对**（含容差）。
+
 ## 安全约定（与 AGENTS.md 一致）
 
 - 输出开关（MCP `dg_output`）**需 `confirm=True`**：关断同样可能打断正在进行的测试；

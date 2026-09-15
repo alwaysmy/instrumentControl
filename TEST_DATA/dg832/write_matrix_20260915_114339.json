@@ -1,0 +1,123 @@
+{
+  "timestamp": "2026-09-15T11:43:39",
+  "resource": "USB0::0x1AB1::0x0643::DG8A265103205::INSTR",
+  "channels": [
+    1,
+    2
+  ],
+  "authorized_write": true,
+  "backup": {
+    "1": {
+      "appl": "SIN,1.000000E+03,2.500000E+00,1.250000E+00,0.000000E+00",
+      "outp": "OFF",
+      "load": "9.900000E+37",
+      "voll": {
+        "state": "ON",
+        "high": "4.000000E+00",
+        "low": "-2.500000E+00"
+      }
+    },
+    "2": {
+      "appl": "SQU,5.000000E+04,3.300000E+00,1.650000E+00,0.000000E+00",
+      "outp": "OFF",
+      "load": "9.900000E+37",
+      "voll": {
+        "state": "ON",
+        "high": "3.300000E+00",
+        "low": "0.000000E+00"
+      }
+    }
+  },
+  "rows": [
+    {
+      "step": "CH1 备份完成",
+      "ok": true,
+      "detail": "{'appl': 'SIN,1.000000E+03,2.500000E+00,1.250000E+00,0.000000E+00', 'outp': 'OFF', 'load': '9.900000E+37', 'voll': {'sta"
+    },
+    {
+      "step": "CH2 备份完成",
+      "ok": true,
+      "detail": "{'appl': 'SQU,5.000000E+04,3.300000E+00,1.650000E+00,0.000000E+00', 'outp': 'OFF', 'load': '9.900000E+37', 'voll': {'sta"
+    },
+    {
+      "step": "CH1 保护窗口过窄，测试期间临时放宽到 ±6V",
+      "ok": true,
+      "detail": "原为 high=4.000000E+00 low=-2.500000E+00（结束恢复）"
+    },
+    {
+      "step": "CH2 保护窗口过窄，测试期间临时放宽到 ±6V",
+      "ok": true,
+      "detail": "原为 high=3.300000E+00 low=0.000000E+00（结束恢复）"
+    },
+    {
+      "step": "CH1 多参数一次设置 1kHz/1Vpp/0.2Vdc/90°",
+      "ok": true,
+      "detail": "读回 APPL? = \"SIN,1.000000E+03,1.000000E+00,2.000000E-01,9.000000E+01\""
+    },
+    {
+      "step": "CH1 单参数逐个设置",
+      "ok": true,
+      "detail": "freq={'value': '5.000000E+02', 'note': None} amp={'value': '2.500000E+00', 'note': None} offset={'value': '0.000000E+00', 'note': None} phase=4.500000E+01"
+    },
+    {
+      "step": "CH1 回读配置",
+      "ok": true,
+      "detail": "SIN @ 5.000000E+02Hz 2.500000E+00Vpp"
+    },
+    {
+      "step": "CH1 方波设置",
+      "ok": true,
+      "detail": "\"SQU,1.000000E+03,3.000000E+00,0.000000E+00,4.500000E+01\""
+    },
+    {
+      "step": "CH1 输出开关往返（原为 OFF，往返后仍 OFF）",
+      "ok": true,
+      "detail": "ON→ON OFF→OFF"
+    },
+    {
+      "step": "CH2 多参数一次设置 1kHz/1Vpp/0.2Vdc/90°",
+      "ok": true,
+      "detail": "读回 APPL? = \"SIN,1.000000E+03,1.000000E+00,2.000000E-01,9.000000E+01\""
+    },
+    {
+      "step": "CH2 单参数逐个设置",
+      "ok": true,
+      "detail": "freq={'value': '5.000000E+02', 'note': None} amp={'value': '2.500000E+00', 'note': None} offset={'value': '0.000000E+00', 'note': None} phase=4.500000E+01"
+    },
+    {
+      "step": "CH2 回读配置",
+      "ok": true,
+      "detail": "SIN @ 5.000000E+02Hz 2.500000E+00Vpp"
+    },
+    {
+      "step": "CH2 方波设置",
+      "ok": true,
+      "detail": "\"SQU,1.000000E+03,3.000000E+00,0.000000E+00,4.500000E+01\""
+    },
+    {
+      "step": "CH2 输出开关往返（原为 OFF，往返后仍 OFF）",
+      "ok": true,
+      "detail": "ON→ON OFF→OFF"
+    },
+    {
+      "step": ":COUN:MEAS? 读数",
+      "ok": true,
+      "detail": "0.000000000E+00,0.000000000E+00,0.000000000E+00,0.000000000E+00,0.000000000E+00"
+    },
+    {
+      "step": "错误队列",
+      "ok": true,
+      "detail": "查错干净"
+    },
+    {
+      "step": "CH1 恢复后比对",
+      "ok": true,
+      "detail": "{'appl': 'SIN,1.000000E+03,2.500000E+00,1.250000E+00,0.000000E+00', 'outp': 'OFF', 'load': '9.900000E+37', 'voll': {'state': 'ON', 'high': '4.000000E+00', 'low': '-2.500000E+00'}}"
+    },
+    {
+      "step": "CH2 恢复后比对",
+      "ok": true,
+      "detail": "{'appl': 'SQU,5.000000E+04,3.300000E+00,1.650000E+00,0.000000E+00', 'outp': 'OFF', 'load': '9.900000E+37', 'voll': {'state': 'ON', 'high': '3.300000E+00', 'low': '0.000000E+00'}}"
+    }
+  ]
+}

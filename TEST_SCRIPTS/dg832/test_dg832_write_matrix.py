@@ -71,9 +71,22 @@ def main() -> int:
 
     try:
         # ---- ② 强制流程：先开保护（否则带 amp/offset 的写入会被拒）----
+        # 注意：保护窗口可能是**紧贴当前电平**的窄窗（实测现场 CH2 = high 3.3 / low 0，
+        # 正好等于 offset ± amp/2）——测试用的幅度会被这种窄窗拒绝，故临时放宽到 ±6V，
+        # 结束按备份原值写回（finally 里的 VOLL 恢复）。
         for ch in CHANNELS:
             gen.set_voltage_limit(ch, state=True)
-        rec("CH1/CH2 电压保护已开（默认范围）", True)
+            v = gen.get_voltage_limit(ch)
+            try:
+                tight = abs(float(v["high"])) < 6 or abs(float(v["low"])) < 6
+            except (TypeError, ValueError):
+                tight = True
+            if tight:
+                gen.set_voltage_limit(ch, high=6.0, low=-6.0, state=True)
+                rec(f"CH{ch} 保护窗口过窄，测试期间临时放宽到 ±6V",
+                    True, f"原为 high={v['high']} low={v['low']}（结束恢复）")
+            else:
+                rec(f"CH{ch} 保护窗口足够宽", True, f"high={v['high']} low={v['low']}")
 
         for ch in CHANNELS:
             print(f"\n== CH{ch} 测试 ==", flush=True)
@@ -94,9 +107,13 @@ def main() -> int:
             gen.set_wave(ch, "square", 1000, 3)
             rec(f"CH{ch} 方波设置", gen.query(f":SOUR{ch}:APPL?").strip('"').startswith("SQU"),
                 gen.query(f":SOUR{ch}:APPL?"))
-            on = gen.output(ch, True)
-            off = gen.output(ch, False)
-            rec(f"CH{ch} 输出开关往返", True, f"ON→{on} OFF→{off}")
+            if backup[ch]["outp"] != "ON":
+                on = gen.output(ch, True)
+                off = gen.output(ch, False)
+                rec(f"CH{ch} 输出开关往返（原为 OFF，往返后仍 OFF）", True, f"ON→{on} OFF→{off}")
+            else:
+                rec(f"CH{ch} 输出开关往返", True,
+                    "跳过：该通道原本就在输出（不擅自关断，避免打断可能的实验）")
 
         print("\n== 频率计（无信号属正常）==", flush=True)
         try:

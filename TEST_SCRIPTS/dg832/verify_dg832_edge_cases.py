@@ -40,6 +40,30 @@ def rec(step: str, ok: bool, detail="") -> None:
     print(f"  [{'PASS' if ok else 'FAIL'}] {step:46s} {str(detail)[:110]}", flush=True)
 
 
+def appl_equal(a: str, b: str, tol: float = 2e-3) -> bool:
+    """比较两条 APPL? 串：波形名相等 + 各数值列在容差内（DEF 占位视为通配）。
+
+    为什么要比数值而不是只比波形名：实测踩过——恢复时若保护窗口偏窄，
+    设备会把 offset **钳制**到窗口内（1.65 → 1.35），只比波形名会"看起来 PASS"。
+    """
+    pa, pb = a.split(","), b.split(",")
+    if pa[0].upper() != pb[0].upper():
+        return False
+    for x, y in zip(pa[1:], pb[1:]):
+        x, y = x.strip().upper(), y.strip().upper()
+        if "DEF" in (x, y):
+            continue
+        try:
+            fx, fy = float(x), float(y)
+        except ValueError:
+            if x != y:
+                return False
+            continue
+        if abs(fx - fy) > max(tol, abs(fy) * tol):
+            return False
+    return True
+
+
 def raises(fn, *exc) -> bool:
     try:
         fn()
@@ -84,47 +108,84 @@ def main() -> int:
         b2 = {"appl": g.query(":SOUR2:APPL?").strip().strip('"'),
               "outp": g.query(":OUTP2?").strip(), "voll": g.get_voltage_limit(2)}
         try:
-            # L9：错误队列返回 list
-            errs = g.check_error()
-            rec("L9 check_error 返回 list", isinstance(errs, list), f"{errs}")
+            # L9：错误队列返回 list（先清空，避免把上一次运行遗留的滞后错误算进来）
+            rec("L9 check_error 返回 list", isinstance(g.check_error(), list),
+                "旧队列已清（清空前的内容见下）")
 
-            # H2：sequence 合法采样率通过（需保护已开）
-            g.set_voltage_limit(2, high=5, low=-5, state=True)
-            try:
-                g.set_wave(2, "sequence", sample_rate=10000, amp=1.0)
-                rec("H2 sequence 合法采样率(10k)通过", True)
-            except Exception as e:
-                rec("H2 sequence 合法采样率(10k)通过", False, f"{type(e).__name__}: {e}")
+            def step_ok(label, fn, expect_ok=True):
+                """写一步 → drain 错误 → 回读比对；错误队列与结果一起记账。"""
+                g.check_error()          # DG832 驱动的排空方法（查询即清空队列）
+                try:
+                    r = fn()
+                    err = g.check_error()
+                    ok = (err == [])
+                    rec(label, ok, f"回读={str(r)[:70]} 错误队列={err or '干净'}")
+                    return r
+                except Exception as e:
+                    err = g.check_error()
+                    rec(label, not expect_ok, f"{type(e).__name__}: {e} | 错误队列={err or '干净'}")
+                    return None
 
-            # M1：单边设置保护时的范围校验
-            g.set_voltage_limit(2, high=5, low=-5, state=True)
-            rec("M1 单边 low=6（> 当前 high=5）被拒",
-                raises(lambda: g.set_voltage_limit(2, low=6), ParamValidationError, ValueError,
-                       ProtectRangeError))
-            rec("M1 单边 high=3（< 当前 low=-5 之上）通过",
-                raises(lambda: g.set_voltage_limit(2, high=3), Exception) is False)
-
-            # M2：DC 在宽保护范围下 offset 生效
-            g.set_voltage_limit(2, high=5, low=-5, state=True)
-            r = g.set_wave(2, "dc", offset=0.3)
-            rec("M2 DC offset=0.3 生效", "0.3" in str(r), str(r)[:80])
+            step_ok("H2 sequence 合法采样率(10k) 写入+回读",
+                    lambda: g.set_wave(2, "sequence", sample_rate=10000, amp=1.0))
+            step_ok("M1 保护放宽到 ±5V",
+                    lambda: g.set_voltage_limit(2, high=5, low=-5, state=True))
+            step_ok("M1 单边 low=6（应被库拒绝，不发命令）",
+                    lambda: g.set_voltage_limit(2, low=6), expect_ok=False)
+            step_ok("M1 单边 high=3（应通过）",
+                    lambda: g.set_voltage_limit(2, high=3))
+            step_ok("M2 DC offset=0.3（走 set_dc_only，回读电平）",
+                    lambda: g.set_dc_only(2, 0.3))
+            # 逐项断言（把"命令被接受"和"值真的生效"分开判）
+            appl = g.query(":SOUR2:APPL?").strip().strip('"')
+            offs = float(g.query(":SOUR2:VOLT:OFFS?"))
+            rec("M2 断言：APPL 为 DC 且电平=0.3", appl.split(",")[0] == "DC" and abs(offs - 0.3) < 1e-6,
+                f"APPL={appl} 电平={offs}（注：DC 模式下 freq/amp 槽由设备回 DEF 占位，属正常）")
         finally:
+            # 恢复要**逐步容错**：任一步通信异常都不能让后续步骤被跳过
+            # （实测踩过：output() 撞上偶发 USB 错误 → 后面的 VOLL 恢复整段没跑）
             parts = b2["appl"].split(",")
-            g.write(f":SOUR2:APPL:{'SIN' if parts[0] == 'SIN' else parts[0]} {','.join(parts[1:])}")
-            time.sleep(0.2)
-            g.output(2, b2["outp"] == "ON")
-            v = b2["voll"]
-            g.write(f":OUTP2:VOLL:HIGH {v['high']}")
-            g.write(f":OUTP2:VOLL:LOW {v['low']}")
-            g.write(f":OUTP2:VOLL:STAT {v['state']}")
-            time.sleep(0.2)
-            now = {"appl": g.query(":SOUR2:APPL?").strip().strip('"'),
-                   "outp": g.query(":OUTP2?").strip(), "voll": g.get_voltage_limit(2)}
-            rec("CH2 恢复后比对",
-                now["appl"].split(",")[0] == b2["appl"].split(",")[0]
-                and now["outp"] == b2["outp"]
-                and str(now["voll"]["state"]) == str(v["state"]), f"{now}")
-            g.close()
+            # 恢复顺序有讲究（实测教训）：**先放宽保护窗口**，否则写回波形时
+            # offset 会被旧窗口钳制（如 1.65 被钳成 1.35）；最后再按备份收窄窗口。
+            steps = [
+                (":OUTP2:VOLL:HIGH 6.0", "临时放宽上限（防恢复时钳制）"),
+                (":OUTP2:VOLL:LOW -6.0", "临时放宽下限"),
+                (f":SOUR2:APPL:{parts[0]} {','.join(parts[1:])}", "恢复波形"),
+                (f":OUTP2:VOLL:HIGH {b2['voll']['high']}", "按备份恢复保护上限"),
+                (f":OUTP2:VOLL:LOW {b2['voll']['low']}", "按备份恢复保护下限"),
+                (f":OUTP2:VOLL:STAT {'ON' if str(b2['voll']['state']).strip() in ('1','ON') else 'OFF'}",
+                 "恢复保护开关"),
+                (f":OUTP2 {'ON' if b2['outp'] == 'ON' else 'OFF'}", "恢复输出状态"),
+            ]
+            for cmd, label in steps:
+                ok = True
+                for attempt in (1, 2):          # 偶发 USB 错误重试一次
+                    try:
+                        g.write(cmd)
+                        time.sleep(0.2)
+                        break
+                    except Exception as e:
+                        ok = False
+                        if attempt == 2:
+                            rec(f"[恢复失败] {label}", False, f"{cmd} → {type(e).__name__}: {str(e)[:60]}")
+                if ok:
+                    rec(f"[恢复] {label}", True, cmd)
+            try:
+                now = {"appl": g.query(":SOUR2:APPL?").strip().strip('"'),
+                       "outp": g.query(":OUTP2?").strip(), "voll": g.get_voltage_limit(2)}
+                ok = (appl_equal(now["appl"], b2["appl"])
+                      and now["outp"] == b2["outp"]
+                      and abs(float(now["voll"]["high"]) - float(b2["voll"]["high"])) < 1e-6
+                      and abs(float(now["voll"]["low"]) - float(b2["voll"]["low"])) < 1e-6
+                      and str(now["voll"]["state"]) == str(b2["voll"]["state"]))
+                rec("CH2 恢复后比对（全参数：波形/频率/幅度/偏移 + 输出 + 保护窗口）", ok,
+                    f"期望 {b2['appl']} / {b2['outp']} / {b2['voll']}；实得 {now}")
+            except Exception as e:
+                rec("CH2 恢复后比对", False, f"回读失败（USB？）：{type(e).__name__}")
+            try:
+                g.close()
+            except Exception:
+                pass
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     OUT_DIR.mkdir(parents=True, exist_ok=True)

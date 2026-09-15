@@ -1,0 +1,61 @@
+{
+  "timestamp": "2026-09-15T11:43:49",
+  "with_device": true,
+  "rows": [
+    {
+      "step": "dg_query 拒绝分号串联",
+      "ok": true,
+      "detail": "forbidden"
+    },
+    {
+      "step": "dg_query 拒绝 写命令;查询",
+      "ok": true,
+      "detail": "forbidden"
+    },
+    {
+      "step": "H2 sequence 非法采样率被拒",
+      "ok": true,
+      "detail": "1000 Sa/s 低于下限 2k"
+    },
+    {
+      "step": "M2 DC 下 set_amp 被明确拒绝",
+      "ok": true,
+      "detail": "直流电平应走 offset/set_dc_only"
+    },
+    {
+      "step": "参数校验：freq<=0 被拒",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "L9 check_error 返回 list",
+      "ok": true,
+      "detail": "['-220,\"Parameter error\"', '-220,\"Parameter error\"']"
+    },
+    {
+      "step": "H2 sequence 合法采样率(10k)通过",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "M1 单边 low=6（> 当前 high=5）被拒",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "M1 单边 high=3（< 当前 low=-5 之上）通过",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "M2 DC offset=0.3 生效",
+      "ok": false,
+      "detail": "\"DC,DEF,DEF,3.000000E-01\""
+    },
+    {
+      "step": "CH2 恢复后比对",
+      "ok": true,
+      "detail": "{'appl': 'SQU,5.000000E+04,3.300000E+00,1.650000E+00,0.000000E+00', 'outp': 'OFF', 'voll': {'state': 'ON', 'high': '3.300000E+00', 'low': '0.000000E+00'}}"
+    }
+  ]
+}

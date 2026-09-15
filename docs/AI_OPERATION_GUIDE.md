@@ -1,7 +1,8 @@
 # AI 仪器控制工具 — 使用与安全手册
 
 日期：2026-08-23
-最近更新：2026-09-13（文档漂移审计修正，见 `docs/doc_drift_audit_20260913.md`）
+最近更新：2026-09-15（设备表补 MHO/DG832/Emoe 行、加 DHO/MHO 共享内核说明；
+上一轮文档漂移审计见 `docs/doc_drift_audit_20260913.md`）
 适用：instrumentControl 全部设备库（AI/Agent 操作场景）
 
 ## 一、设备清单与连接
@@ -10,9 +11,15 @@
 |---|---|---|---|
 | DH1766A-1 电源 | dh1766_control | find_dh1766() | `resolve("psu")` |
 | RIGOL DHO924S | dho_control | find_dho() | `resolve("dho")` |
+| RIGOL MHO984D（MHO900 系列） | mho_control | find_mho() | `resolve("mho")` |
 | Siglent SDS824X HD | sds_control | find_sds() | `resolve("sds")` |
 | Siglent SDG2122X | sdg_control | find_sdg() | `resolve("sdg")` |
+| RIGOL DG832（DG800 系列） | dg832_control | `DG832()`（自动发现） | `resolve("dg")` |
 | Keysight 34465A | keysight_3446x | find_dmm() | `resolve("dmm")` |
+| Emoe 校准器（骨架） | emoe_control | find_emoe() | 串口漂移频繁，先 `instr_discover` |
+
+> DHO/MHO 共用内核 `rigol_scope/`（命令集 97% 重合，家族差异见 `rigol_scope/families.py`）；
+> MCP 工具前缀：`sds_/sdg_/dmm_/dho_/mho_/dg_/psu_`，工具清单见 `mcp_instruments/README.md`。
 
 > **不列具体地址**：仪器 IP 随 DHCP/换网段变化、USB 换口换资源串、ASRL 编号漂移，
 > 写死地址换环境即失效（严重时连到同网段其他设备并对它下发 SCPI）。

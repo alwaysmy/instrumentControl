@@ -131,8 +131,9 @@
             <td>拓扑声明（NORM/TRAC/SERI/PARA）；防 TRAC 联动下误操作</td></tr>
         <tr><td><code>sds_shutdown</code> / <code>mho_autoset</code></td><td><span class="tag gate">confirm</span></td>
             <td>关机需手动开机；autoset 是全局破坏性（重置所有通道/时基/触发）</td></tr>
-        <tr><td><code>usb_reset</code>（故障兜底）</td><td><span class="tag gate">confirm</span><span class="tag gate">escalate</span></td>
-            <td>重启该仪器的 USB 节点（会话中断 2~3s）；无管理员权限时需显式提权（弹 UAC）</td></tr>
+        <tr><td><code>usb_reset</code>（故障兜底）</td><td><span class="tag gate">confirm</span><span class="tag gate">admin</span></td>
+            <td>重启该仪器的 USB 节点（会话中断 2~3s）；需管理员权限，<b>MCP 进程不提权</b>——非管理员走 CLI
+                <code>usb_reset.py --allow-reset --escalate</code>（弹 UAC），MCP 内直接明确拒绝</td></tr>
       </tbody>
     </table>
 

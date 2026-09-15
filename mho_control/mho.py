@@ -8,6 +8,9 @@
 本系列 4 通道 12bit，1~2ch 4GSa/s / 3~4ch 1GSa/s，标准深度 100Mpts。
 命令来源：`docs/MHO900编程手册_output/`（480 页提取版）。
 
+复位族（`:SYSTem:RESet` 重启 / `*RST` 恢复出厂）**不在公开 API 里**——
+常量与语义说明见 `commands.py`，受控入口 `TEST_SCRIPTS/common/rigol_scope_reset.py --allow-reset`。
+
 用法：
     from mho_control import MHO, find_mho
 

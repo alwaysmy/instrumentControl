@@ -87,6 +87,21 @@ SYST_ERR = ":SYSTem:ERRor?"
 SYST_VERS = ":SYSTem:VERSion?"
 SYST_BEEP = ":SYSTem:BEEPer"
 
+# ================= 复位族：两个命令、两种语义（**故意不暴露为公开 API**）=================
+#
+# ⚠ 两者都属 AGENTS.md §二「禁止复位类命令」：MCP 通用写口已黑名单拦截，
+#    **库内不提供任何公开方法**（既没有 reset() 也没有 factory_reset()），
+#    需要时走受控脚本：`TEST_SCRIPTS/common/rigol_scope_reset.py --allow-reset`。
+#
+# 语义（**已按手册原文核对；MHO900 与 DHO800/900 两个系列一致**）：
+#   :SYSTem:RESet = 「使系统重新上电」——**重启仪器，不是恢复出厂设置**（手册 3.24.12）。
+#   *RST          = 「将仪器恢复至出厂默认状态」——**这才是恢复出厂**（手册 3.12.2）。
+#
+# 风险：重启会让设备离线数十秒（远程会话断开，需重连并核对 *IDN?，屏上采集全部丢失）；
+#       恢复出厂会清掉全部现场设定——共享实验台上均属破坏性操作，除显式授权外不做。
+SYST_RESET = ":SYSTem:RESet"     # 重启（重新上电），**非**恢复出厂
+RST = "*RST"                     # 恢复出厂默认（IEEE-488.2 公共命令）
+
 # :MEASure:ITEM 单信源测量项（手册 3.17.2 参数表逐字）
 MEAS_ITEMS_SINGLE = (
     "VMAX", "VMIN", "VPP", "VTOP", "VBASe", "VAMP", "VAVG", "VRMS",

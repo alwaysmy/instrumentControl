@@ -58,10 +58,14 @@
 - [DYN ] `state:{cmd}` @ TEST_SCRIPTS\dh1766\psu_remote_lock_probe.py:133（运行时拼接，静态不可核）
 - [DYN ] `OUTP:{mode}` @ TEST_SCRIPTS\dh1766\test_dh1766_full.py:177（运行时拼接，静态不可核）
 
-## dg832（32 HIT / 0 MISS / 1 DYN）
+## dg832（36 HIT / 0 MISS / 2 DYN）
 
 - [HIT ] `SOUR1:FREQ?` @ TEST_SCRIPTS\dg832\verify_dg832.py:113
 - [HIT ] `OUTP1?` @ TEST_SCRIPTS\dg832\verify_dg832.py:68
+- [HIT ] `SOUR2:APPL` @ TEST_SCRIPTS\dg832\verify_dg832_edge_cases.py:113
+- [HIT ] `OUTP2:VOLL:HIGH` @ TEST_SCRIPTS\dg832\verify_dg832_edge_cases.py:117
+- [HIT ] `OUTP2:VOLL:LOW` @ TEST_SCRIPTS\dg832\verify_dg832_edge_cases.py:118
+- [HIT ] `OUTP2:VOLL:STAT` @ TEST_SCRIPTS\dg832\verify_dg832_edge_cases.py:119
 - [HIT ] `SYST:ERR?` @ dg832_control\dg832.py:301
 - [HIT ] `*IDN?` @ dg832_control\dg832.py:309
 - [HIT ] `SOUR{ch}:APPL?` @ dg832_control\dg832.py:464
@@ -92,9 +96,10 @@
 - [HIT ] `SOUR{ch}:SWE:TRIG:IMM` @ dg832_control\dg832.py:829
 - [HIT ] `COUN:MEAS?` @ dg832_control\dg832.py:841
 - [HIT ] `*RST` @ dg832_control\dg832.py:852
+- [DYN ] `SOUR2:APPL:{x}` @ TEST_SCRIPTS\dg832\verify_dg832_edge_cases.py:113（运行时拼接，静态不可核）
 - [DYN ] `SOUR{ch}:APPL:{x}` @ dg832_control\dg832.py:457（运行时拼接，静态不可核）
 
-## dho（39 HIT / 0 MISS / 0 DYN）
+## dho（40 HIT / 0 MISS / 0 DYN）
 
 - [HIT ] `TRIGger:MODE` @ dho_control\commands.py:23
 - [HIT ] `TRIGger:STATus?` @ dho_control\commands.py:24
@@ -133,11 +138,14 @@
 - [HIT ] `WAVeform:YREFerence?` @ dho_control\commands.py:67
 - [HIT ] `SYSTem:ERRor?` @ dho_control\commands.py:70
 - [HIT ] `SYSTem:VERSion?` @ dho_control\commands.py:71
-- [HIT ] `SYSTem:RESet` @ dho_control\commands.py:72
-- [HIT ] `SYSTem:BEEPer` @ dho_control\commands.py:73
+- [HIT ] `SYSTem:BEEPer` @ dho_control\commands.py:72
+- [HIT ] `SYSTem:RESet` @ dho_control\commands.py:95
+- [HIT ] `*RST` @ dho_control\commands.py:96
 
-## mho（44 HIT / 0 MISS / 0 DYN）
+## mho（46 HIT / 0 MISS / 0 DYN）
 
+- [HIT ] `SYSTem:RESet` @ mho_control\commands.py:102
+- [HIT ] `*RST` @ mho_control\commands.py:103
 - [HIT ] `ACQuire:MDEPth` @ mho_control\commands.py:31
 - [HIT ] `ACQuire:TYPE` @ mho_control\commands.py:32
 - [HIT ] `ACQuire:BITS` @ mho_control\commands.py:33
@@ -321,8 +329,10 @@
 - [HIT ] `ACQ:MDEP?` @ TEST_SCRIPTS\common\probe_siglent.py:85
 - [DYN ] `resolve:{kind}` @ TEST_SCRIPTS\common\verify_all_devices.py:77（运行时拼接，静态不可核）
 
-## rigol_scope(共享内核，按两系列并集判)（37 HIT / 1 MISS / 0 DYN）
+## rigol_scope(共享内核，按两系列并集判)（39 HIT / 1 MISS / 1 DYN）
 
+- [HIT ] `SYSTem:RESet` @ TEST_SCRIPTS\common\rigol_scope_reset.py:38
+- [HIT ] `*RST` @ TEST_SCRIPTS\common\rigol_scope_reset.py:38
 - [**MISS**] `*OPT?` @ rigol_scope\families.py:126
 - [HIT ] `MEASure:CLEar` @ rigol_scope\families.py:55
 - [HIT ] `ACQuire:BITS` @ rigol_scope\families.py:87
@@ -361,3 +371,4 @@
 - [HIT ] `WAVeform:STOP` @ rigol_scope\scope.py:468
 - [HIT ] `WAVeform:DATA?` @ rigol_scope\scope.py:469
 - [HIT ] `DISPlay:DATA?` @ rigol_scope\scope.py:485
+- [DYN ] `send:{which}` @ TEST_SCRIPTS\common\rigol_scope_reset.py:108（运行时拼接，静态不可核）

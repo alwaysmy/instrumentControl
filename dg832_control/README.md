@@ -35,6 +35,28 @@
   合并时原样保留（比仓库其它信号源的 `expect_load` 声明更强）。
 - **DC 切换**：`set_dc_only()` 返回切换前快照，切回时要求**显式**传参，不做隐式恢复。
 
+## 台面基线（原工作区 `reset_baseline.py` 记录的现场状态）
+
+收工想把设备还原成"接手时那样"，就按这个来（原脚本已随工作区归档，值抄在这里）：
+
+| 通道 | 波形 | 参数 | 电压保护 |
+|---|---|---|---|
+| CH1 | DC | 电平 2 V | **ON** |
+| CH2 | SIN | 1 kHz / 5 Vpp | OFF |
+
+对应命令（先开保护再设波形，库内联锁）：
+
+```python
+gen.set_voltage_limit(1, state=True)      # CH1 保护 ON
+gen.set_wave(1, "dc", offset=2.0)         # DC 电平走 offset
+gen.set_wave(2, "sine", 1000, 5.0)        # 5 Vpp（保护 OFF 时设幅度会被拒 → 先开再关）
+gen.set_voltage_limit(2, high=5, low=-5, state=True)
+gen.set_wave(2, "sine", 1000, 5.0)
+gen.set_voltage_limit(2, state=False)     # CH2 保护 OFF
+```
+
+现成的写路径回归（会改设定并自动恢复）：`TEST_SCRIPTS/dg832/test_dg832_write_matrix.py --allow-write`。
+
 ## 安全约定（与 AGENTS.md 一致）
 
 - 输出开关（MCP `dg_output`）**需 `confirm=True`**：关断同样可能打断正在进行的测试；

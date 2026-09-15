@@ -159,6 +159,11 @@ with MHO(resolve("mho")) as scope:
 DHO 手册同样记载）、波形分片读取、points/RAW 前置校验、原生 PNG 截图；
 并修掉 DHO 旧实现的 ASCII 死分支（此前 `fmt="ASCii"` 恒抛异常）。
 
+**复位族不在公开 API 里**（AGENTS.md 禁发命令）：`:SYSTem:RESet` 是**重启**、
+`*RST` 才是**恢复出厂**（两系列手册一致；旧 dho.py 注释写反过）。常量保留在
+`commands.py` 供查语义，真要执行走 `TEST_SCRIPTS/common/rigol_scope_reset.py --allow-reset`
+（`--info` 可随时只查看说明）。
+
 **家族差异（改代码时唯一要查的地方）**：清测量 `:MEASure:CLEar`(DHO)/`:MEASure:DELete`(MHO)、
 采集第四态 `ULTRa`(DHO)/`HRESolution`(MHO)、`:ACQuire:BITS` 与 `:CHANnel<n>:Impedance` 仅 MHO。
 边沿第三态两系列**都是** `RFALl`（`RFail` 是旧 docstring 笔误）。

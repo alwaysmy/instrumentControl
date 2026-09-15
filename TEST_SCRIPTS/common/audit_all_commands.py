@@ -330,7 +330,9 @@ def main() -> int:
              ROOT / "TEST_SCRIPTS/common/verify_all_devices.py",
              ROOT / "TEST_SCRIPTS/common/verify_resolver.py"]
     extra = {
-        "dg832": ["TEST_SCRIPTS/dg832/verify_dg832.py"],
+        "dg832": ["TEST_SCRIPTS/dg832/verify_dg832.py",
+                  "TEST_SCRIPTS/dg832/test_dg832_write_matrix.py",
+                  "TEST_SCRIPTS/dg832/verify_dg832_edge_cases.py"],
         "sds": ["TEST_SCRIPTS/common/sds_simple_meas.py", "TEST_SCRIPTS/common/sds_snap.py",
                 "TEST_SCRIPTS/common/sds_trace_analyze.py", "TEST_SCRIPTS/common/pixel_measure.py"],
         "mho": ["TEST_SCRIPTS/mho/verify_mho.py"],
@@ -347,7 +349,8 @@ def main() -> int:
     # 共享内核：DHO800/900 与 MHO900 共用 rigol_scope/，其命令按**两手册并集**判
     # （共享命令两边都该有；差异分支里的专用拼写——如 :MEASure:CLEar / :MEASure:DELete——
     #  命中其一即可。逐家族的拼写仍由 dho/mho 各自的 TARGETS 按各自手册核对。）
-    rigol_files = sorted((ROOT / "rigol_scope").rglob("*.py"))
+    rigol_files = sorted((ROOT / "rigol_scope").rglob("*.py")) + [
+        ROOT / "TEST_SCRIPTS/common/rigol_scope_reset.py"]
     total_miss += _audit_group("rigol_scope(共享内核，按两系列并集判)",
                                rigol_files, indexes["dho"] | indexes["mho"], report)
 

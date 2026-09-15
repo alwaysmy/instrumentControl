@@ -10,7 +10,9 @@ DHO 驱动原有 40 条命令 100% 存在于 MHO 手册，故并到同一实现�
     ③ 波形分片读取（RAW 大深度不再单帧几十 MB）；
     ④ 新增 `measure_clear()`（DHO 命令是 `:MEASure:CLEar`）、`screenshot()`/`screenshot_png()`
        （`:DISPlay:DATA?`，手册 3.9.7）、双信源测量项（RRDelay/RRPHase 等，DHO 手册同样记载）；
-    ⑤ 删除 `reset()`（`:SYSTem:RESet`，属 AGENTS.md 禁发命令；需要复位走测试脚本+显式授权）。
+    ⑤ `reset()` 已从公开 API 移除（复位族属 AGENTS.md 禁发命令）：命令常量仍保留在
+       `commands.py`（`SYST_RESET` / `RST`，附两条命令的**语义区别**与风险说明），
+       万一要用走受控脚本 `TEST_SCRIPTS/common/rigol_scope_reset.py --allow-reset`。
 
 ⚠ **合并后尚未在 DHO 真机复验**：本实验台当前无 DHO（LAN 扫描只发现 MHO）。
 离线闭环见 `TEST_SCRIPTS/common/verify_rigol_scope_shared.py`；

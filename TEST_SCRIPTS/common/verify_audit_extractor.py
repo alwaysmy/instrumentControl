@@ -174,7 +174,9 @@ multi_files = [ROOT / p for p in (
     "TEST_SCRIPTS/common/probe_siglent.py", "TEST_SCRIPTS/common/verify_all_devices.py",
     "TEST_SCRIPTS/common/verify_resolver.py")]
 EXTRA_FILES = {
-    "dg832": ["TEST_SCRIPTS/dg832/verify_dg832.py"],
+    "dg832": ["TEST_SCRIPTS/dg832/verify_dg832.py",
+              "TEST_SCRIPTS/dg832/test_dg832_write_matrix.py",
+              "TEST_SCRIPTS/dg832/verify_dg832_edge_cases.py"],
     "sds": ["TEST_SCRIPTS/common/sds_simple_meas.py", "TEST_SCRIPTS/common/sds_snap.py",
             "TEST_SCRIPTS/common/sds_trace_analyze.py", "TEST_SCRIPTS/common/pixel_measure.py"],
     "mho": ["TEST_SCRIPTS/mho/verify_mho.py"],
@@ -194,7 +196,9 @@ groups: list[tuple[str, list[Path], set]] = [
     (tag, group_files(tag, code_dir), indexes[tag]) for tag, code_dir, _m in A.TARGETS]
 groups.append(("scripts", multi_files, set().union(*indexes.values())))
 # 共享内核按 dho ∪ mho 判（与 auditor 的 rigol_scope 组同口径）
-groups.append(("rigol_scope", sorted((ROOT / "rigol_scope").rglob("*.py")),
+groups.append(("rigol_scope",
+               sorted((ROOT / "rigol_scope").rglob("*.py"))
+               + [ROOT / "TEST_SCRIPTS/common/rigol_scope_reset.py"],
                indexes["dho"] | indexes["mho"]))
 
 for tag, files, idx in groups:

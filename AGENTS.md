@@ -96,6 +96,17 @@ AI/Agent 操作仪器必须遵守以下规范。
   `SYST:LOC`（`server.py::_psu_close`），使现场面板随时可用。
 - **禁止复位类命令**：`*RST`、`:SYST:RESet`、`:SYST:FACT`、DMM `*RCL/*SAV` 覆写。
   `*RST` 需用户显式授权（dh1766 用 `--allow-rst` 模式）。
+
+  **两条"复位"语义不同，别搞混**（2026-09-15 按手册原文核对，RIGOL DHO/MHO 两系列一致）：
+  `:SYSTem:RESet` = 「使系统重新上电」→ **重启**（DHO 3.24.11 / MHO 3.24.12）；
+  `*RST` = 「将仪器恢复至出厂默认状态」→ **恢复出厂**（两系列 3.12.2）。
+  旧 `dho.py` 把 `:SYSTem:RESet` 注释成"恢复出厂默认"，已按手册更正。
+
+  **处理方式（"保留但绝不顺手可用"）**：命令常量保留在各库 `commands.py`
+  （`SYST_RESET` / `RST`，附逐条语义与风险说明，审计器也据此核对出处）；
+  **库内不提供任何公开方法、MCP 不暴露工具**；万一要用走受控脚本
+  `TEST_SCRIPTS/common/rigol_scope_reset.py`（`--info` 只打印说明、不碰设备；
+  真发命令需 `--allow-reset` + 显式选 `--reboot`/`--factory`，并留痕）。
 - **输出/信号类操作**（SDG 输出开关、电源输出开关）需明确场景授权：
   MCP 的 `sdg_output`/`psu_output` **开与关都必须 confirm=True**——关闭同样
   可能打断正在进行的测试或他人实验（配合 expect_load/expect_mode 状态校验）。

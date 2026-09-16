@@ -166,6 +166,10 @@ AI/Agent 操作仪器必须遵守以下规范。
 - **护栏覆盖性审计**：`TEST_SCRIPTS/common/audit_guardrail_coverage.py`（改护栏/白名单后必跑）
   —— 用手册全部命令穷举黑名单与查询判据（查误伤），并把各工具入参白名单与手册枚举**双向**比对
   （查"手册有我们缺"= 会误拦）。首轮抓到 3 个真缺陷，见 `docs/review_20260915.md` §四.五
+- **发现层网络/分块验收（离线，只用 loopback）**：`TEST_SCRIPTS/common/verify_discovery_local.py`
+  —— `local_cidrs()` 必须用接口**真实掩码**（本机仪器网是 `192.168.1.100/16`，
+  按 /24 算会把同广播域但不在 /24 内的仪器**静默漏掉**）；`probe_open_ports` 分块防
+  大网段 MemoryError；宽网段预筛走异步分块（/16 ≈166s，线程版要 5 分钟）
 - **MCP 工具元信息验收（离线，只握手不碰仪器）**：`TEST_SCRIPTS/common/verify_mcp_tools_meta.py`
   —— 断言每个工具的 description 非空（取自 docstring）、inputSchema 完整、关键工具在列、
   stdout 无 print 污染；**新增工具后必跑**（漏写 docstring 会在客户端显示成"无描述"）

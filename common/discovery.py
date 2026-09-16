@@ -39,6 +39,9 @@ PROBE_WORKERS = 128
 # 端口预筛并发上限：不限并发会打满本机 TCP 栈导致**假阴性**（实测 1016 地址
 # 无限并发时连已知在线的 4 台仪器全部漏检；限流 256 后 4/4 命中）。
 PROBE_ALIVE_CONCURRENCY = 256
+# 大批量探测的**批大小**：一次性 gather 整个 /16（6.5 万协程）会 MemoryError，
+# 分块后峰值内存与块大小成正比（2026-09-16 实机踩到，见 probe_open_ports）。
+PROBE_CHUNK = 2048
 
 # 串口探测挂起硬超时（驱动层 open 可能不受 open_timeout 约束）。
 # 实测（9 口）：并发 8 会让子进程互相争抢串口资源、多数误报超时；并发 4 正常，
@@ -356,8 +359,8 @@ def _is_scannable(addr: "ipaddress.IPv4Address") -> bool:
             or addr in ipaddress.ip_network("192.168.0.0/16"))
 
 
-def local_cidrs() -> list[str]:
-    """本机所有接口所在的 RFC1918 /24 网段（按接口顺序去重，可能多个）。
+def local_cidrs(max_prefix: int = 16) -> list[str]:
+    """本机所有接口所在的私网网段（**按接口真实掩码**，按接口顺序去重，可能多个）。
 
     为什么不用「连 8.8.8.8 看出口 IP」（`detect_cidr` 的做法）：仪器可达与否
     取决于**本机是否有该网段的接口地址**，与「默认路由指向哪」是两回事。实测
@@ -368,6 +371,13 @@ def local_cidrs() -> list[str]:
     代理 TUN 模式下这个方法尤其重要：TUN 只加虚拟网卡 + 改默认路由，**不会删掉
     物理网卡的地址**——所以仪器网段仍在列表里，照常可扫；而出口 IP 会变成
     198.18.0.1（fake-IP），旧的 `detect_cidr` 会直接放弃扫描。
+
+    ⚠ **必须用接口真实掩码，不能假设 /24**（2026-09-16 实机踩到）：本机仪器网卡
+    是 `192.168.1.100/16`（掩码 255.255.0.0），而仪器可能在 `192.168.31.x`——
+    按 /24 算会把同一广播域里但不在 `/24` 内的仪器**静默漏掉**（扫描看起来正常、
+    结果却是"没有设备"，最难查的一种假阴性）。`max_prefix` 给网段大小兜底：
+    掩码比它更大（网段更宽）时按它收敛（默认 /16 = 最多 65534 台，保护扫描成本），
+    并在返回值里仍是**真实可扫范围与接口一致**的网段。
 
     依赖 psutil；不可用时退回 `detect_cidr()` 的单网段结果（行为不劣化）。
     """
@@ -384,7 +394,9 @@ def local_cidrs() -> list[str]:
                     continue
                 if not _is_scannable(ip):
                     continue
-                net = str(ipaddress.ip_network(f"{ip}/24", strict=False))
+                prefix = _netmask_to_prefix(getattr(a, "netmask", None)) or 24
+                prefix = max(prefix, max_prefix)          # 太宽的网段按 max_prefix 收敛
+                net = str(ipaddress.ip_network(f"{ip}/{prefix}", strict=False))
                 if net not in seen:
                     seen.append(net)
     except Exception:
@@ -394,6 +406,16 @@ def local_cidrs() -> list[str]:
         if single:
             seen.append(single)
     return seen
+
+
+def _netmask_to_prefix(netmask: Optional[str]) -> Optional[int]:
+    """把 `255.255.0.0` 这类掩码转成 prefix（16）；非法/缺失返回 None。"""
+    if not netmask:
+        return None
+    try:
+        return ipaddress.IPv4Network(f"0.0.0.0/{netmask}").prefixlen
+    except Exception:
+        return None
 
 
 def proxy_likely() -> bool:
@@ -481,13 +503,25 @@ async def _probe_alive_async(ip: str, ports: tuple[int, ...], timeout_s: float) 
     return any(r is True for r in results)
 
 
+def chunked(seq: list, size: int) -> "list[list]":
+    """把列表切成固定大小的块（大网段分批用；`size<=0` 视为不分块）。"""
+    if size and size > 0:
+        return [seq[i:i + size] for i in range(0, len(seq), size)]
+    return [seq]
+
+
 def probe_open_ports(ips: list[str], ports: tuple[int, ...] = SCAN_PROBE_PORTS,
                      timeout_s: float = PROBE_TIMEOUT_S,
-                     concurrency: int = PROBE_ALIVE_CONCURRENCY) -> dict[str, set[int]]:
+                     concurrency: int = PROBE_ALIVE_CONCURRENCY,
+                     chunk: int = PROBE_CHUNK) -> dict[str, set[int]]:
     """批量探测各地址**开放了哪些**预筛端口，返回 {ip: {port,...}}（只含通了的）。
 
     比 `probe_alive_many` 多返回端口明细——识别阶段据此**只试对应协议**，避免对
     每个候选把 4 个协议挨个超时试一遍（实测识别阶段 23s 主要就是这些空等）。
+
+    **内部按 `chunk` 分批**（2026-09-16 实机踩到）：一次性 `gather` 整个 /16 的
+    6.5 万个协程会直接 `MemoryError`（每协程 + 连接对象都是真内存）。分块后
+    峰值内存与块大小成正比，且实测 /16 单端口约 44s（800 并发）。
     """
     if not ips:
         return {}
@@ -511,7 +545,10 @@ def probe_open_ports(ips: list[str], ports: tuple[int, ...] = SCAN_PROBE_PORTS,
             return ip, {p for p, ok in pairs if ok}
 
     async def run_all() -> dict[str, set[int]]:
-        return dict(await asyncio.gather(*(guarded(ip) for ip in ips)))
+        out: dict[str, set[int]] = {}
+        for part in chunked(ips, chunk):
+            out.update(dict(await asyncio.gather(*(guarded(ip) for ip in part))))
+        return out
 
     try:
         return asyncio.run(run_all())
@@ -565,10 +602,17 @@ def scan_cidr(
 
     if prefilter:
         t0 = time.monotonic()
-        with ThreadPoolExecutor(max_workers=PROBE_WORKERS) as pool:
-            alive = [
-                a for a, ok in zip(addrs, pool.map(probe_alive, addrs)) if ok
-            ]
+        if len(addrs) > 1024:
+            # 大网段（掩码比 /24 宽，如本机仪器网 192.168.0.0/16）走**分块异步**探测：
+            # 线程版 128 并发 × 0.6s 超时对 6.5 万地址要约 5 分钟，会撞 MCP 的
+            # discover 预算（300s）；异步版实测单端口 /16 约 45s（2026-09-16）。
+            open_map = probe_open_ports(addrs, SCAN_PROBE_PORTS)
+            alive = [a for a in addrs if open_map.get(a)]
+        else:
+            with ThreadPoolExecutor(max_workers=PROBE_WORKERS) as pool:
+                alive = [
+                    a for a, ok in zip(addrs, pool.map(probe_alive, addrs)) if ok
+                ]
         print(
             f"[scan] 端口预筛({','.join(map(str, SCAN_PROBE_PORTS))}) "
             f"候选 {len(alive)}/{len(addrs)}，耗时 {time.monotonic() - t0:.1f}s",

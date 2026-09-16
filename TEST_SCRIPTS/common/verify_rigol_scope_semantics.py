@@ -26,7 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from rigol_scope import FAMILIES, RigolScope, snap_1_2_5, snap_up  # noqa: E402
+from rigol_scope import FAMILIES, RigolScope, snap_1_2_5, snap_down, snap_up  # noqa: E402
 from dho_control import DHO  # noqa: E402
 from mho_control import MHO  # noqa: E402
 
@@ -476,6 +476,10 @@ check("偏置超量程无法居中：如实报'钳制'，不静默失败",
 print("\n§6 档位序列工具函数（1-2-5）", flush=True)
 check("snap_1_2_5: 1.8→2 / 0.43→0.5 / 7.1→10",
       snap_1_2_5(1.8) == 2 and snap_1_2_5(0.43) == 0.5 and abs(snap_1_2_5(7.1) - 10) < 1e-9)
+check("snap_down: 2→1 / 1→0.5 / 5→2 / 0.2→0.1 / 到底→None",
+      snap_down(2.0) == 1.0 and snap_down(1.0) == 0.5 and snap_down(5.0) == 2.0
+      and abs(snap_down(0.2) - 0.1) < 1e-12 and snap_down(200e-6, min_scale=200e-6) is None,
+      f"2→{snap_down(2.0)}, 1→{snap_down(1.0)}")
 check("snap_up: 0.9→1.0（不是 2.0）/ 2→5 / 5→10 / 10→None(最大档)",
       snap_up(0.9) == 1.0 and snap_up(2.0) == 5.0 and abs(snap_up(5.0) - 10.0) < 1e-9
       and snap_up(10.0, max_scale=10.0) is None,

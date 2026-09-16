@@ -52,6 +52,26 @@ def snap_1_2_5(value: float) -> float:
     return 10 * base
 
 
+def snap_down(value: float, min_scale: Optional[float] = None) -> Optional[float]:
+    """档位序列 {1,2,5}×10ⁿ 里的**下一小档**（缩小一档）；到底返回 None。
+
+    与 `snap_up` 对称（1 → 0.5、5 → 2、0.2 → 0.1）。给 min_scale 时低于它即返回 None。
+    """
+    if value is None or value <= 0 or not math.isfinite(value):
+        return None
+    base = 10.0 ** math.floor(math.log10(value) + 1e-12)
+    for m in (5, 2, 1):
+        cand = m * base
+        if cand < value * (1 - 1e-9):
+            if min_scale is not None and cand < min_scale * (1 - 1e-9):
+                return None
+            return cand
+    nxt = 5.0 * base / 10.0          # 1×10ⁿ 的下一档是 5×10ⁿ⁻¹
+    if min_scale is not None and nxt < min_scale * (1 - 1e-9):
+        return None
+    return nxt
+
+
 def snap_up(value: float, max_scale: Optional[float] = None) -> Optional[float]:
     """档位序列 {1,2,5}×10ⁿ 里的**下一档**（放大一档）；已在最大档返回 None。
 

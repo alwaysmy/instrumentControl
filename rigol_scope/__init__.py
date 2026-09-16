@@ -8,7 +8,7 @@
 """
 from .families import DHO as DHO_FAMILY, FAMILIES, MHO as MHO_FAMILY, Family, family_of
 from .scope import (EDGE_DEPENDENT_ITEMS, INVALID_MEASURE, RigolScope, find_scope,
-                    snap_1_2_5, snap_up)
+                    snap_1_2_5, snap_down, snap_up)
 
 # 兼容旧引用（mho_control 曾从本模块名导出）
 __all__ = [
@@ -22,5 +22,6 @@ __all__ = [
     "family_of",
     "find_scope",
     "snap_1_2_5",
+    "snap_down",
     "snap_up",
 ]

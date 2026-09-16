@@ -259,3 +259,22 @@
     它给客户端的正是那 12 个无描述工具。处置：杀老进程 + 客户端重连（shim 已转发到统一服务器）。
   - 加固：`server.py` 启动自检增报"工具数 + description 缺口"；新增协议级测试
     `TEST_SCRIPTS/common/verify_mcp_tools_meta.py`（§1-§5，含 stdout 纯净性），全 PASS。
+
+- 2026-09-16（同日，MHO 实机尝试 + 发现层修复）：用户说 MHO 在线，让我改偏置/档位复现顶轨。
+  **实机不可达**，排查结论（全部实测）：
+  - `192.168.1.55` 的 5555/80/111 全超时；本机仪器网卡是 `192.168.1.100/**16**`，
+    `local_cidrs()` 只按 /24 扫 → 只覆盖 `192.168.1.0/24`；
+  - 遂手工扫干净：**192.168.0.0/16 全段**在 5555 / 80 / 111 / 4880 / 5025 五个端口上
+    **零主机应答**（ICMP 扫描 `192.168.1.0/24` 也只有本机；ARP 无邻居）；
+  - VISA 只枚举到 5 个串口（无 USB/LAN 仪器）；USB 侧无 RIGOL MHO，
+    只有 **DG832 的 USBTMC 节点处于 `Error` 状态**（`USB\VID_1AB1&PID_0643\DG8A26510320…`）；
+  - → 结论：**仪器网络当前不可达**（网口 link 是 Up/1Gbps，但段内没有 IP 主机），
+    需要现场核对面板 `Utility→I/O→LAN` 的 IP 与网线。
+  - 修复（本次顺带，均为实机踩到）：`local_cidrs()` 改用**接口真实掩码**
+    （`max_prefix` 兜底 /16）；`probe_open_ports()` **内部分块**（一次 gather 6.5 万协程会
+    MemoryError）；`scan_cidr` 宽网段（>1024 地址）预筛改走**分块异步**（/16 × 4 端口实测
+    **166s**，原线程版约 5 分钟）。新增离线回归 `verify_discovery_local.py`（13 项全 PASS）；
+    内核补 `snap_down`（与 `snap_up` 对称，供缩小档位用）。
+  - 待办：**MHO 可达后跑** `TEST_SCRIPTS/mho/verify_rails_live.py`（已写好：自动挑非触发源
+    通道 → 逐档缩小 scale 逼出顶轨 → 断言 `rails()` 分顶/底 + `fit_channel` 救回 →
+    `finally` 恢复原设定并留痕 `TEST_DATA/mho/rails_live_*.json`）。

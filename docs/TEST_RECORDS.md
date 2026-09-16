@@ -304,3 +304,28 @@
   回归：`verify_rigol_scope_semantics` **42 项全 PASS**（新增阶梯/抬档保持中心/单端出窗/
   重试等 12 项）；离线六套件 + 两套审计（§A-D 0 / MISS 29 基线）复跑全绿。
   留痕：`TEST_DATA/mho/rails_live_20260916_155042.json`（含 before/plan/trace/恢复记录）。
+
+- 2026-09-16（同日，**远端引入设计复核**）：对 `674038b`（单 worker 异步执行器）、`f55187b`
+  （多网段发现）、`0e6222f`（串口子进程隔离）、`7e28880`（隐私收敛）做设计层审查，
+  结论"方向对，三处实现有缺陷"，全部修掉并加回归：
+  - **D1（设计缺陷，已修）**：执行器用 `concurrent.futures.ThreadPoolExecutor`，其 worker
+    是非 daemon 且 `concurrent.futures.thread` 的 atexit 会 join 它们 → **驱动挂起时进程
+    退不出来**（离线实验：提交 sleep(600) 后 12s 不退；daemon 同场景 2s 秒退），
+    "重启 MCP 服务"这条恢复路径因此失效。改为 **daemon worker + queue**，语义逐条保留
+    （单线程封闭/BUSY 闸门/超时不取消 worker/结果与异常原样回填/_busy 只在事件循环写）。
+    回归：`TEST_SCRIPTS/common/verify_executor_exit.py`（11 项，含子进程退出证明）；另做
+    真机端到端 `mho_status` 调用（走新执行器，返回 CH3 2.0/−3.5 ✓）。
+  - **D2（实现不一致，已修）**：`scan_cidr` 识别阶段每台候选各自 `ResourceManager()`
+    ——正是 `identify_lan` 文档写明"会随机抛 VI_ERROR_INV_OBJECT 冲垮整轮扫描"的写法
+    （`instr_discover` 早已改共享单例，库路径漏了）。改走 `identify_lan_all`（共享 RM）
+    + 把预筛开放端口传下去定向协议。实机验证：扫 /24 命中 MHO ✓。
+  - **D3（成本取舍，已修）**：`local_cidrs` 改真实掩码后直接扫 /16 要 ~166s，而仪器通常在
+    同 /24。新增 `local_scan_segments()`：**由窄到宽**（近邻 /24 → 真实网段）。
+    实测 `find_device('MHO', allow_scan=True)` 从"扫不全/166s"变为 **8.3s 命中**。
+  - 复核确认合理的部分：单 worker 线程封闭与 BUSY 闸门语义、`device_tool` 返回原同步函数
+    （模块内互调不会自我死锁、schema 由 `_preserve_signature` 保持）、首次工具调用时才
+    重定向 stdout（时序论证成立）、串口子进程隔离（含挂起口缓存 + instr_discover 清缓存）、
+    隐私收敛（序列号 0 命中 + 夹具打桩）。AST 核对：56 处 `_call(` 全部经 `@device_tool`
+    工具体（含 `_guarded_call` 薄封装）→ 不存在"事件循环里跑设备 I/O"的路径。
+  - 设计文档 `docs/gpt_qa/20260915-mcp-async-refactor.md` 追加"复核更正"节（不改原文），
+    skill 补"为什么'重启 MCP'确实有效"的依据。回归：七套离线套件 + 两套审计全绿。

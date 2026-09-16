@@ -30,6 +30,7 @@ import re
 import sys
 import json
 import csv
+import queue
 import time
 import threading
 import typing
@@ -261,27 +262,60 @@ def _fix_stdout_once() -> None:
 class _DeviceExecutor:
     """单 worker 设备执行器：准入闸门 + 墙钟 deadline + 线程封闭。
 
-    - 所有设备 I/O 只在这一个 worker 线程里发生（thread confinement，比"多线程
-      抢一把锁"更容易推理）；
+    - 所有设备 I/O 只在这一个 **daemon** worker 线程里发生（thread confinement，
+      比"多线程抢一把锁"更容易推理）；
     - BUSY 期间新请求**立即**返回 device_busy，不排队、不白等；
     - deadline 到期只放弃等待，不清 BUSY（worker 还在跑，见模块级说明）。
+
+    为什么**不用** `concurrent.futures.ThreadPoolExecutor`（2026-09-16 设计复核，
+    实验证据见 `TEST_SCRIPTS/common/verify_executor_exit.py`）：
+    TPE 的 worker 线程是**非 daemon**，且 `concurrent.futures.thread` 注册了
+    `atexit` 钩子会 **join** 它们。这套设计要顶住的恰恰是"驱动挂起、worker 卡在
+    native 调用里"——那种情形下 TPE 会让**整个进程无法退出**（实测：提交一个
+    `sleep(600)` 任务后进程 12s 内不退出；同场景 daemon 线程秒退），
+    于是"重启 MCP 服务可恢复"这条恢复路径反而失效，只能 `taskkill /F`。
+    daemon worker + queue 保留全部既有语义（单线程封闭、BUSY 闸门、超时不取消
+    worker、结果/异常原样回填），但**进程随时可退**。
     """
 
     def __init__(self, default_budget_s: float):
-        self._pool = concurrent.futures.ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="visa")
         self._default_budget = default_budget_s
-        self._busy = False          # 只在事件循环线程读写（见 _on_done）
+        self._busy = False          # 只在事件循环线程读写（见 _finish_on_loop）
         self._started_at = 0.0
+        self._jobs: "queue.Queue" = queue.Queue()
+        threading.Thread(target=self._worker, daemon=True,
+                         name="visa-worker").start()
 
-    def _on_done(self, _fut) -> None:
-        """worker 的 Future 真正完成时清除 BUSY。
+    def _worker(self) -> None:
+        """唯一执行设备 I/O 的线程：取一个任务 → 跑 → 把结果/异常交回事件循环。"""
+        while True:
+            fn, done, loop = self._jobs.get()
+            try:
+                result = fn()
+            except BaseException as e:              # noqa: BLE001
+                self._finish_on_loop(loop, done, e, ok=False)
+            else:
+                self._finish_on_loop(loop, done, result, ok=True)
 
-        由 asyncio 在**事件循环线程**里调度，因此 `_busy` 全程只被同一个线程读写，
-        不需要跨线程同步（此前打算在 worker 的 finally 里清，会留下「BUSY=False
-        但 Future 未 done」的语义窗口，且引入跨线程共享状态）。
+    def _finish_on_loop(self, loop, done, payload, ok: bool) -> None:
+        """回填结果并清 BUSY——**在事件循环线程里执行**（保持 `_busy` 单线程写）。
+
+        顺序有意：先清 BUSY 再 set_result，调用方拿到结果后立刻重试时看到的是
+        "空闲"（与旧实现的语义一致）。事件循环已关闭（进程收尾）时静默放弃。
         """
-        self._busy = False
+        def _apply() -> None:
+            self._busy = False
+            if done.done() or done.cancelled():
+                return
+            if ok:
+                done.set_result(payload)
+            else:
+                done.set_exception(payload)
+
+        try:
+            loop.call_soon_threadsafe(_apply)
+        except RuntimeError:
+            pass
 
     def _budget_for(self, budget_s, args, kwargs) -> float:
         """预算解析：None→默认；数值→直接用；可调用→按本次入参算（通用工具的预算
@@ -314,17 +348,17 @@ class _DeviceExecutor:
         self._started_at = time.monotonic()
 
         loop = asyncio.get_running_loop()
+        done: "asyncio.Future" = loop.create_future()
         try:
-            fut = loop.run_in_executor(self._pool, fn)
+            self._jobs.put((fn, done, loop))
         except BaseException:
             self._busy = False
             raise
-        fut.add_done_callback(self._on_done)
 
         try:
-            # shield：wait_for 超时只取消"等待"，不取消底层 future——
-            # 保证 worker 继续跑完并把设备状态收干净（VISA 会话正常关闭）。
-            return await asyncio.wait_for(asyncio.shield(fut), timeout=budget)
+            # 超时只取消"等待"（daemon worker 继续跑完，把 VISA 会话收干净）——
+            # 与旧实现 `asyncio.shield(fut)` 的语义一致，但不受 atexit join 拖累。
+            return await asyncio.wait_for(done, timeout=budget)
         except asyncio.TimeoutError:
             elapsed = time.monotonic() - self._started_at
             _log(f"{label} 超过 deadline {budget:.0f}s（已运行 {elapsed:.0f}s）——"
@@ -546,6 +580,7 @@ def instr_discover(cidr: str | None = None) -> str:
         detect_cidr,
         forget_hanging_ports,
         local_cidrs,
+        local_scan_segments,
         proxy_likely,
         identify,
         identify_all,
@@ -600,7 +635,8 @@ def instr_discover(cidr: str | None = None) -> str:
         # 开启时出口 IP 还会变成 198.18.0.1 致整个 LAN 段被跳过——而仪器网段的接口
         # 地址其实一直都在（TUN 只加虚拟网卡、不改物理网卡地址）。
         # 任何异常都降级为警告，绝不拖垮 VISA 结果。
-        segs = [cidr] if cidr else local_cidrs()
+        # 由窄到宽：近邻 /24 先扫（~5s），未命中才放宽到真实网段（可能 ~166s）
+        segs = local_scan_segments([cidr] if cidr else None)
         lan, warn = {}, None
         try:
             if not segs:

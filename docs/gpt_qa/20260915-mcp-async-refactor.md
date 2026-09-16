@@ -1690,3 +1690,45 @@ def device_tool(budget_s=None):
 这里 `return fn` 我认为也是合理设计：Python 代码直接调用 `foo()` 时仍得到原同步实现，只有 MCP registry 持有 async wrapper。这样对现有代码侵入最小。
 
 最终判断：你的设计已经足够接近我会实际提交的版本。**我会改的核心只有 `_busy` 清理由 worker 写改成 Future done callback 在 event loop 写；timeout 策略采用你提出的宽裕统一值；stdout 优先考虑 public lifespan，无法证明其时序时就用第一次 tool call 的一次性懒重定向。**
+
+
+---
+
+## 复核更正（2026-09-16，本仓真机/离线实验）
+
+本节由后续复核追加，只记录**被实验推翻或补强**的结论，不改上文原话（保留评审过程）。
+
+### ① `ThreadPoolExecutor(max_workers=1)` 的 atexit 会让"重启 MCP"这条恢复路径失效
+
+上文多处（本文 `ThreadPoolExecutor(max_workers=1) + BUSY 状态，本质上就够了`、
+以及第 912 行"调用方除了重启 MCP 或 usb_reset 之外还能做什么"）把 **重启 MCP** 当作
+卡死后的最终恢复手段。实测发现这与 TPE 的性质冲突：
+
+- `concurrent.futures.ThreadPoolExecutor` 的 worker 是**非 daemon** 线程，且
+  `concurrent.futures.thread` 注册了 `atexit` 钩子会 **join** 它们；
+- 本设计要顶住的正是"驱动挂起、worker 卡在 native 调用里"——那种情形下进程
+  **退不出来**：离线实验（提交一个 `sleep(600)` 任务后让解释器退出）实测
+  **12s 内不退出**（`taskkill /F` 才能收场）；同场景换成 daemon 线程**2s 秒退**。
+
+**处置**：执行器改为 **daemon worker 线程 + `queue.Queue`**（语义逐条保留：单线程封闭、
+BUSY 闸门立即 `device_busy`、超时只放弃等待不取消 worker、结果/异常原样回填、
+`_busy` 仍只在事件循环线程写）。回归：`TEST_SCRIPTS/common/verify_executor_exit.py`
+（11 项：含"挂起任务在跑时子进程仍能退出"、BUSY 闸门不下发、超时后仍 BUSY、
+worker 结束后自动空闲、异常路径清 BUSY、预算解析），另加端到端 `mho_status` 真机调用。
+
+### ② `scan_cidr` 的识别阶段漏用了共享 ResourceManager（库路径与 MCP 路径不一致）
+
+`identify_lan` 的文档写明"多线程各自 `ResourceManager()` 并发 open 会随机抛
+`VI_ERROR_INV_OBJECT`，且该异常会从 `rm.close()` 里抛出、冲垮整轮扫描"，
+`instr_discover` 已改成共享单例——但**库路径的 `scan_cidr` 仍是每台候选自建 RM**
+（`pool.submit(identify_lan, a, timeout_ms)`），`find_device`/`resolve` 回退会踩到。
+**处置**：`scan_cidr` 改走 `identify_lan_all`（共享 RM），并把预筛到的**开放端口**
+传下去，识别只试对应协议。
+
+### ③ 扫描范围：`local_cidrs` 的 /24 假设与"宽网段直接扫"的代价
+
+- 原实现按 `/24` 硬编码（真实网卡是 `/16`）→ 同广播域但不在该 /24 的仪器被静默漏掉
+  （详见 `TEST_SCRIPTS/common/verify_discovery_local.py` 头部）；
+- 改成真实掩码后，直接扫 `/16` 要 ~166s/4 端口，而仪器通常在**同 /24** 里。
+  **处置**：`local_scan_segments()` 给出**由窄到宽**的顺序（近邻 /24 → 真实网段），
+  实测本机 `find_device` 从"扫不全/166s"变为 **8.3s 命中**。

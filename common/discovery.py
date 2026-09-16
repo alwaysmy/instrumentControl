@@ -408,6 +408,59 @@ def local_cidrs(max_prefix: int = 16) -> list[str]:
     return seen
 
 
+def local_scan_segments(cidrs: Optional[list[str]] = None) -> list[str]:
+    """把 `local_cidrs()` 的结果排成**由窄到宽**的扫描顺序（近邻 /24 优先）。
+
+    为什么要这一步（2026-09-16 设计复核）：`local_cidrs()` 现在按接口**真实掩码**
+    返回（本机仪器网卡是 /16）——直接扫 /16 要 ~166s/4 端口，而绝大多数情况下仪器
+    就在与 PC **同一个 /24** 里。先扫近邻 /24（~5s）命中即返回，未命中才放宽到
+    整个网段，兼顾"常见情形快"与"宽网段不漏"。显式传入 `cidrs` 时原样返回
+    （调用方自己指定了范围，不要替他改）。
+    """
+    nets = list(cidrs) if cidrs else local_cidrs()
+    out: list[str] = []
+    for net in nets:
+        try:
+            network = ipaddress.ip_network(net, strict=False)
+        except ValueError:
+            continue
+        if network.prefixlen >= 24:
+            if net not in out:
+                out.append(net)
+            continue
+        # 宽网段：把它包含的"接口所在 /24"排前面（用接口地址定位，而不是猜第一个 /24）
+        narrows = [str(n) for n in _interface_slash24s() if n.subnet_of(network)]
+        for n in narrows:
+            if n not in out:
+                out.append(n)
+        if net not in out:                       # 兜底：宽网段本身排最后
+            out.append(net)
+    return out
+
+
+def _interface_slash24s() -> list["ipaddress.IPv4Network"]:
+    """本机接口地址各自所在的 /24（psutil 不可用时返回空列表）。"""
+    nets: list["ipaddress.IPv4Network"] = []
+    try:
+        import psutil
+        for _name, addrs in psutil.net_if_addrs().items():
+            for a in addrs:
+                if a.family != socket.AF_INET or not a.address:
+                    continue
+                try:
+                    ip = ipaddress.ip_address(a.address)
+                except ValueError:
+                    continue
+                if not _is_scannable(ip):
+                    continue
+                net = ipaddress.ip_network(f"{ip}/24", strict=False)
+                if net not in nets:
+                    nets.append(net)
+    except Exception:
+        pass
+    return nets
+
+
 def _netmask_to_prefix(netmask: Optional[str]) -> Optional[int]:
     """把 `255.255.0.0` 这类掩码转成 prefix（16）；非法/缺失返回 None。"""
     if not netmask:
@@ -609,10 +662,10 @@ def scan_cidr(
             open_map = probe_open_ports(addrs, SCAN_PROBE_PORTS)
             alive = [a for a in addrs if open_map.get(a)]
         else:
+            open_map = {}
             with ThreadPoolExecutor(max_workers=PROBE_WORKERS) as pool:
-                alive = [
-                    a for a, ok in zip(addrs, pool.map(probe_alive, addrs)) if ok
-                ]
+                ok_flags = list(pool.map(probe_alive, addrs))
+            alive = [a for a, ok in zip(addrs, ok_flags) if ok]
         print(
             f"[scan] 端口预筛({','.join(map(str, SCAN_PROBE_PORTS))}) "
             f"候选 {len(alive)}/{len(addrs)}，耗时 {time.monotonic() - t0:.1f}s",
@@ -621,22 +674,29 @@ def scan_cidr(
         for a in alive:
             print(f"[scan] 候选: {a}", file=sys.stderr)
         addrs = alive
+    else:
+        open_map = {}
 
     needle = idn_contains.lower()
     hits: list[FindResult] = []
-    done = 0
-    with ThreadPoolExecutor(max_workers=SCAN_WORKERS) as pool:
-        futures = {pool.submit(identify_lan, a, timeout_ms): a for a in addrs}
-        for fut in as_completed(futures):
-            done += 1
-            addr = futures[fut]
-            found = fut.result()
-            if not found:
-                continue
-            res, idn = found
-            mark = "HIT" if needle in idn.lower() else "dev"
-            print(f"[scan {done}/{len(addrs)}] [{mark}] {res} -> {idn}", file=sys.stderr)
-            hits.append(FindResult(resource=res, idn=idn, source="scanned"))
+    if not addrs:
+        return hits
+
+    # 识别阶段走 `identify_lan_all`：**共享一个 ResourceManager**。
+    # 为什么（2026-09-16 设计复核）：这里原先 `pool.submit(identify_lan, a, timeout_ms)`
+    # 每台候选各自 `ResourceManager()`，正是 `identify_lan` 文档里写明"多线程各自建 RM
+    # 会随机抛 VI_ERROR_INV_OBJECT 并冲垮整轮扫描"的写法——`instr_discover` 早先已改成
+    # 共享单例，库路径（`find_device`/`resolve` 的回退）却漏了，两条路径行为不一致。
+    # 顺带把预筛到的开放端口传下去，让识别只试**对应协议**（省掉逐协议空等）。
+    found_map = identify_lan_all(addrs, timeout_ms=timeout_ms, open_ports=open_map or None)
+    for i, addr in enumerate(addrs, 1):
+        found = found_map.get(addr)
+        if not found:
+            continue
+        res, idn = found
+        mark = "HIT" if needle in idn.lower() else "dev"
+        print(f"[scan {i}/{len(addrs)}] [{mark}] {res} -> {idn}", file=sys.stderr)
+        hits.append(FindResult(resource=res, idn=idn, source="scanned"))
     return hits
 
 
@@ -728,7 +788,8 @@ def find_device(
     else:
         # 显式 cidr 优先；否则扫本机**所有**接口所在的私网网段（多网卡/挂 VPN 时
         # 只看默认路由那张网卡会选错网段，详见 local_cidrs 说明）。
-        segments = [cidr] if cidr else local_cidrs()
+        # 由窄到宽：近邻 /24 先扫（~5s），未命中才放宽到真实网段（可能 ~166s）
+        segments = local_scan_segments([cidr] if cidr else None)
         if not segments:
             attempts.append(("scanned", "-", "无法探测本机网段且未显式给 cidr"))
         else:

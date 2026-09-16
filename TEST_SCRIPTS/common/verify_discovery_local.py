@@ -104,6 +104,21 @@ check("20000 个地址（默认分块）跑完不爆内存", len(res4) == 1, f"{
 check("显式 chunk=5000 亦可", len(cd.probe_open_ports(big[:5000], ports=(1,),
                                                      timeout_s=0.05, chunk=5000)) == 1)
 
+print("\n§5 扫描顺序：先近邻 /24 再放宽（常见情形不为 /16 付 166s）", flush=True)
+sys.modules["psutil"] = _fake_psutil({"以太网": [_Addr("192.168.1.100", "255.255.0.0")]})
+segs = cd.local_scan_segments()
+check("真实网段是 /16，但扫描顺序**先给近邻 /24**",
+      segs[0] == "192.168.1.0/24" and "192.168.0.0/16" in segs,
+      str(segs))
+check("窄网段（/24）不重复", segs.count("192.168.1.0/24") == 1, str(segs))
+check("显式 cidr 原样返回（不替调用方改范围）",
+      cd.local_scan_segments(["10.1.2.0/24"]) == ["10.1.2.0/24"])
+check("/24 接口只给一条", cd.local_scan_segments(["172.16.80.0/24"]) == ["172.16.80.0/24"])
+if _saved is not None:
+    sys.modules["psutil"] = _saved
+else:
+    sys.modules.pop("psutil", None)
+
 print(f"\n== 结果: {'全部 PASS' if not fails else f'{len(fails)} 项 FAIL'} ==")
 for f in fails:
     print(f"  - {f}")

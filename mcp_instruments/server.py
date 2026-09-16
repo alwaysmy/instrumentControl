@@ -2032,4 +2032,18 @@ if __name__ == "__main__":
     except Exception as e:  # 自检失败不影响服务启动
         print(f"[instrumentControl] 启动自检失败：{type(e).__name__}: {e}",
               file=sys.stderr, flush=True)
+    # 工具元信息自检（2026-09-16 加）：**每个工具的 description 来自其函数 docstring**，
+    # 漏写 docstring 的工具会在客户端里显示成"无描述"（历史上退役的 DG832 独立服务器
+    # 13 个工具里就有 12 个没描述，被误当成"工具集缺文档"）。这里启动时报出总数与缺口。
+    # 同口径的协议级断言在 TEST_SCRIPTS/common/verify_mcp_tools_meta.py（离线可跑）。
+    try:
+        _tools = mcp._tool_manager.list_tools()
+        _no_desc = [t.name for t in _tools if not (t.description or "").strip()]
+        print(f"[instrumentControl] 启动自检 | 工具 {len(_tools)} 个，"
+              f"缺 description {len(_no_desc)} 个"
+              + (f"：{_no_desc}" if _no_desc else "（全部有）"),
+              file=sys.stderr, flush=True)
+    except Exception as e:
+        print(f"[instrumentControl] 工具元信息自检跳过：{type(e).__name__}: {e}",
+              file=sys.stderr, flush=True)
     mcp.run()

@@ -166,6 +166,9 @@ AI/Agent 操作仪器必须遵守以下规范。
 - **护栏覆盖性审计**：`TEST_SCRIPTS/common/audit_guardrail_coverage.py`（改护栏/白名单后必跑）
   —— 用手册全部命令穷举黑名单与查询判据（查误伤），并把各工具入参白名单与手册枚举**双向**比对
   （查"手册有我们缺"= 会误拦）。首轮抓到 3 个真缺陷，见 `docs/review_20260915.md` §四.五
+- **MCP 工具元信息验收（离线，只握手不碰仪器）**：`TEST_SCRIPTS/common/verify_mcp_tools_meta.py`
+  —— 断言每个工具的 description 非空（取自 docstring）、inputSchema 完整、关键工具在列、
+  stdout 无 print 污染；**新增工具后必跑**（漏写 docstring 会在客户端显示成"无描述"）
 - **审计器自测（离线闭环）**：`TEST_SCRIPTS/common/verify_audit_extractor.py`
   —— 提取/归一化/全仓 MISS 基线三层断言，改审计器后必跑（无仪器也能跑）
 - 审计报告：`docs/command_audit_full_20260823.md`（脚本自动生成，重跑即覆盖；

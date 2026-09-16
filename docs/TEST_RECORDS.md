@@ -247,3 +247,15 @@
   处理方向相反：顶贴→offset 调更负、底贴→offset 调更大）+ `mho/dho_measure_item(rails=True)`。
   **未用新工具实现**（并入既有测量工具，避免工具数膨胀）。回归补 7 项（顶贴/底贴/两端贴/
   无贴边/诊断分顶底/DHO 未标定不猜），`verify_rigol_scope_semantics` 共 **31 项全 PASS**。
+
+- 2026-09-16（同日，工具元信息核查）：用户报"instrument MCP 12 个工具缺 description
+  （49 个里 37 个有）"。逐版核对：**统一服务器 57/57 工具全有描述**（`tools/list` 实测），
+  49 工具那版（`44f957d`，DG832 并入时）也是 0 缺——**那 12 个来自已退役的 DG832 独立
+  服务器**（`instrument_*` 命名，13 工具里仅 `instrument_discover` 有 docstring；
+  代码在 `D:\ChatWorkspacerchive\DG832使用_archived_20260915\...\mcp_server.py`）。
+  37（旧 instruments 快照）+ 12 = 49 与观察吻合。
+  - 现场还有 **12 个跑在退役路径上的进程**（`~/.agents/skills/dg832-control/scripts/mcp_server.py`），
+    其中 PID 49548（2026-09-14 13:45 启动，早于 09-15 的转发 shim）仍跑着**旧代码**——
+    它给客户端的正是那 12 个无描述工具。处置：杀老进程 + 客户端重连（shim 已转发到统一服务器）。
+  - 加固：`server.py` 启动自检增报"工具数 + description 缺口"；新增协议级测试
+    `TEST_SCRIPTS/common/verify_mcp_tools_meta.py`（§1-§5，含 stdout 纯净性），全 PASS。

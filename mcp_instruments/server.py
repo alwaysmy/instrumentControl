@@ -1426,15 +1426,18 @@ def dho_status(resource: str | None = None) -> str:
 
 @device_tool()
 def dho_measure_item(item: str, ch: int = 1, ch2: int | None = None,
-                     samples: int = 1, resource: str | None = None) -> str:
+                     samples: int = 1, rails: bool = False,
+                     resource: str | None = None) -> str:
     """DHO 测量查询。item 枚举（RIGOL 表）: VPP/VMAX/VMIN/VAMP/VAVG/VRMS/
     PERiod/FREQuency/PWIDth/NWIDth/PDUTy/RTIMe/FTIMe 等；ch=1-4；
     双信源项（延迟/相位）需给 ch2。
     `samples>1` 时主机侧连读 N 次返回 mean/min/max/stddev（单次读数抖动大，用均值下结论）；
+    `rails=True` 额外读**顶轨/底轨**（VTOP/VBASe）并**上下分别**判断贴边
+    （`top_touching`/`bottom_touching`/`edges_touching` + `hints`）；
     无有效读数时分类报因（suspicious/hint：channel_off / off_screen / near_edge /
-    few_edges / no_signal）。
+    few_edges / no_signal；near_edge 另给 `edges_touching`/`edge_hints` 分顶/底）。
     ⚠ **DHO 不在本实验台**：读路径来自共享内核（离线验证 + 手册），写路径未实机验证；
-    离屏判据依赖"垂直格数/中心=−offset"标定，DHO 未标定 → 暂无窗口类判据。"""
+    离屏判据依赖"垂直格数/中心=−offset"标定，DHO 未标定 → 窗口/贴边类判据返回 None。"""
     def fn(s: DHO):
         if samples is None or int(samples) <= 1:
             try:
@@ -1445,7 +1448,10 @@ def dho_measure_item(item: str, ch: int = 1, ch2: int | None = None,
                 except Exception as de:
                     diag = {"diagnosis_error": f"{type(de).__name__}: {de}"}
                 raise ToolDiagnosis("device_error", str(e), diag)
-            return {"item": item, "value": val, "ch": ch, "probe_x": s.channel_probe(ch)}
+            out = {"item": item, "value": val, "ch": ch, "probe_x": s.channel_probe(ch)}
+            if rails:
+                out["rails"] = s.rails(ch)
+            return out
         st = s.measure_stats(item, ch, ch2, samples=int(samples))
         st["ch"] = ch
         return st
@@ -1502,7 +1508,8 @@ def mho_status(resource: str | None = None) -> str:
 
 @device_tool()
 def mho_measure_item(item: str, ch: int = 1, ch2: int | None = None,
-                     samples: int = 1, resource: str | None = None) -> str:
+                     samples: int = 1, rails: bool = False,
+                     resource: str | None = None) -> str:
     """MHO 测量查询（手册 3.17.2 参数表）。
 
     单信源 item: VMAX/VMIN/VPP/VTOP/VBASe/VAMP/VAVG/VRMS/OVERshoot/PREShoot/
@@ -1515,9 +1522,14 @@ def mho_measure_item(item: str, ch: int = 1, ch2: int | None = None,
     **samples>1**：主机侧连读 N 次（≤200）返回 mean/min/max/stddev/count/invalid——
     单次读数抖动明显，结论要用均值（现场实测同状态连读得 7.4747/7.4749/7.4749 V）；
     无效读数单独计数，不混进统计。
+    **rails=True**：额外读**顶轨/底轨**（VTOP/VBASe）并**上下分别**判断是否贴窗口边沿
+    （`top_touching` / `bottom_touching` / `edges_touching` + 各自 `hints`）；
+    顶贴与底贴处理方向相反（顶贴→offset 调更负；底贴→offset 调更大），故分开报。
+    未标定格数的家族不做贴边判定（`note` 说明，不猜）。
     **无有效读数时分类报因**（error_type=device_error，另带 suspicious/hint/window/
     evidence）：`channel_off` 通道显示关 / `off_screen` 迹线在窗口外 / `near_edge`
-    极值贴窗口边沿（**部分削顶时会给出"看着合理的假值"**，必须换档）/ `few_edges`
+    极值贴窗口边沿（**部分削顶时会给出"看着合理的假值"**，必须换档；附
+    `edges_touching` 与 `edge_hints` 分顶/底）/ `few_edges`
     屏内不足 2 个周期（时间/边沿类，给出时基建议）/ `no_signal`。
     `probe_x` 与 warnings：探头比非 1X 时幅度类读数为**探头端**电压（频率不受影响）。
     ⚠ 形态判断请用 mho_screenshot 看图（设备读数在超屏时不可信）。"""
@@ -1542,6 +1554,11 @@ def mho_measure_item(item: str, ch: int = 1, ch2: int | None = None,
                     warnings.append(
                         f"屏内约 {cycles:.2f} 个周期（时间窗 {hw['span_s']:.3g} s，"
                         f"{hw['note']}）：读数可能不可靠，建议放宽时基")
+            if rails:
+                out["rails"] = s.rails(ch)
+                if out["rails"].get("edges_touching"):
+                    warnings.append("顶/底轨有贴边（见 rails.edges_touching）——"
+                                    "幅度类读数可能被削顶，先按 edge_hints 换档再下结论")
             if warnings:
                 out["warnings"] = warnings
             return out

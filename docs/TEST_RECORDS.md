@@ -241,3 +241,9 @@
   - 复跑：`verify_rigol_scope_shared` / `verify_remote_lock_block(70)` / `verify_audit_extractor`
     全 PASS；`audit_all_commands` MISS 29（基线）；`audit_guardrail_coverage` §A-D 全 0；
     MCP 握手 57 工具 + 启动自检行（查询判据实测值打到 stderr）。
+
+- 2026-09-16（同日，补"顶/底轨分别提示"）：`rails()`（读 VTOP/VBASe + 分顶/底贴边判定）
+  + `diagnose_no_reading` 的 `near_edge` 拆成 `edges_touching`/`edge_hints`（顶贴与底贴
+  处理方向相反：顶贴→offset 调更负、底贴→offset 调更大）+ `mho/dho_measure_item(rails=True)`。
+  **未用新工具实现**（并入既有测量工具，避免工具数膨胀）。回归补 7 项（顶贴/底贴/两端贴/
+  无贴边/诊断分顶底/DHO 未标定不猜），`verify_rigol_scope_semantics` 共 **31 项全 PASS**。

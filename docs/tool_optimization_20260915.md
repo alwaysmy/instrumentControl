@@ -26,7 +26,7 @@ SDS 看波形）时逐条踩到的问题。**每条都附实测命令与回读�
 | P0-1 | **已完成** | 拒绝文案已与新规则对齐（`instr_query` 现在明说"问号后可带参数"）；新增**启动自检**：服务启动时把查询判据实测结果打一行到 stderr（`server.py::__main__`），根治"改了没生效"的静默。**注意：改代码仍需重启 MCP 才生效**（服务在客户端启动时拉起，不热重载） |
 | P1-2 | **已完成** | 新增 `mho_channel` / `mho_timebase` / `mho_trigger`（+ DHO 同三件套）。MCP 工具 50 → 57 |
 | P1-3 | **已完成** | `rigol_scope.RigolScope.configure_channel()`：固定 **scale→offset** 顺序、通道 OFF 自动先开、写后**回读比对**；设备没照做时返回 `adjusted` + `reasons`（钳制/吸附/等比缩放分行说明）。`*_status` 每通道附 `center_v = −offset` 与 `window_v` |
-| P1-4 | **已完成** | `diagnose_no_reading()`：无有效值分五类（`channel_off` / `off_screen` / `near_edge` / `few_edges` / `no_signal`）+ `hint` + `window` + `evidence`；经 `ToolDiagnosis` 与错误一起返回。频域读数成功时也会提示"屏内仅 ~N 个周期" |
+| P1-4 | **已完成** | `diagnose_no_reading()`：无有效值分五类（`channel_off` / `off_screen` / `near_edge` / `few_edges` / `no_signal`）+ `hint` + `window` + `evidence`；经 `ToolDiagnosis` 与错误一起返回。**`near_edge` 再分顶/底**（`edges_touching` + `edge_hints`：顶贴→offset 调更负、底贴→offset 调更大，方向相反）；`mho_measure_item(rails=True)` 直接给**顶轨/底轨**（VTOP/VBASe）与各自贴边结论。频域读数成功时也会提示"屏内仅 ~N 个周期" |
 | P2-5 | **已完成（主机侧）** | `mho_measure_item(samples=N)` 连读给 `mean/min/max/stddev/count/invalid`（≤200 次）。**设备侧** `:MEASure:STATistic:*` 未做——MHO 手册有该命令族，待需要更高精度时补 |
 | P2-6 | **已完成** | `instr_write` 多段回读新增 `readback_fields`（段↔值配对）；段数不符时如实说明，不硬配 |
 | P2-7 | **已完成** | 测量返回带 `probe_x`；探头比 ≠1 时附 `warnings` 说明"幅度类读数为探头端电压"；`*_status` 里给 `probe_note` |

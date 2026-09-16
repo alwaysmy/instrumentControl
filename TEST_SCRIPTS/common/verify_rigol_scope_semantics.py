@@ -193,6 +193,10 @@ class FakeTrapScope:
             return f"{cmax:E}"
         if key == "VMIN":
             return f"{cmin:E}"
+        if key == "VTOP":                     # 顶轨（顶端电平）——削顶时就是被切的那个值
+            return f"{cmax:E}"
+        if key == "VBASE":                    # 底轨（底端电平）
+            return f"{cmin:E}"
         if key == "VPP":
             return f"{cmax - cmin:E}"
         if key == "VAVG":
@@ -338,6 +342,58 @@ check("时基窗口容不下 2 个周期 → few_edges + 时基建议",
 s = scope_with({3: (0.0, 3.3)}, tdiv=1e-4, period_s=2e-4)
 check("放宽时基后频率可测（现场：100 µs/div 立刻读到 4.9993 kHz）",
       abs(s.measure_item("FREQuency", 3) - 5000.0) < 0.1)
+
+print("\n§3.5 顶轨/底轨**上下分别**提示（rails + near_edge 拆分）", flush=True)
+# 窗口 scale 0.9 / offset −3.5 → [−0.1, 7.1]，±8% 带（0.576 V）
+# 只在**顶**削：信号 (7.0, 7.6)，顶轨被钳到 7.1
+s = scope_with({3: (7.0, 7.6)}, scale=0.9, offset=-3.5)
+r = s.rails(3)
+check("顶贴：top_touching=True / bottom_touching=False，提示指向顶轨",
+      r["top_touching"] is True and r["bottom_touching"] is False
+      and r["edges_touching"] == ["top"] and "顶轨" in r["hints"][0]
+      and "更负" in r["hints"][0],
+      f"VTOP={r['vtop']:.4g} V（钳到窗口上沿 {r['window']['top_v']:.4g}）")
+check("顶贴时**没有**底端提示（上下不混在一起）",
+      len(r["hints"]) == 1 and "底轨" not in r["hints"][0])
+
+# 只在**底**削：信号 (−0.05, 0.1)
+s = scope_with({3: (-0.05, 0.1)}, scale=0.9, offset=-3.5)
+r = s.rails(3)
+check("底贴：bottom_touching=True / top_touching=False，提示指向底轨",
+      r["bottom_touching"] is True and r["top_touching"] is False
+      and r["edges_touching"] == ["bottom"] and "底轨" in r["hints"][0]
+      and "更大" in r["hints"][0],
+      f"VBASe={r['vbase']:.4g} V（钳到窗口下沿 {r['window']['bottom_v']:.4g}）")
+
+# **两端**都削：信号 (−0.05, 7.6)
+s = scope_with({3: (-0.05, 7.6)}, scale=0.9, offset=-3.5)
+r = s.rails(3)
+check("两端贴：edges_touching=['top','bottom'] 且两条提示分开给",
+      r["edges_touching"] == ["top", "bottom"] and len(r["hints"]) == 2,
+      f"顶={r['top_touching']} 底={r['bottom_touching']}")
+
+# 无贴边：信号安稳在窗内
+s = scope_with({3: (2.0, 4.0)}, scale=0.9, offset=-3.5)
+r = s.rails(3)
+check("无贴边：两端都 False、无提示", r["edges_touching"] == [] and r["hints"] == [],
+      f"VTOP={r['vtop']:.3g} VBASe={r['vbase']:.3g}")
+
+# 无有效值时的诊断也要分顶/底（near_edge 附带 edges_touching + edge_hints）
+# 注意：本信号 VAVG 可读（顶端被钳成"假值"），所以走的是 near_edge 分类而不是 off_screen
+s = scope_with({3: (7.0, 7.6)}, scale=0.9, offset=-3.5)
+d = s.diagnose_no_reading("VAVG", 3)
+check("near_edge 诊断也分顶/底（edges_touching + edge_hints + 顶轨字样）",
+      d.get("suspicious") == "near_edge" and d.get("edges_touching") == ["top"]
+      and "edge_hints" in d and "顶轨" in d["hint"],
+      f"suspicious={d.get('suspicious')} edges={d.get('edges_touching')}")
+
+# 未标定家族（DHO）：rails 不做贴边判定，明确说明而不是猜
+dho = DHO(model="DHO")
+dho.client = FakeTrapScope({3: (7.0, 7.6)})
+rr = dho.rails(3)
+check("DHO 未标定格数 → 只给轨值、不给贴边结论（note 说明）",
+      rr["top_touching"] is None and "未标定" in rr.get("note", ""),
+      f"vtop={rr['vtop'] if rr['vtop'] is None else round(rr['vtop'], 3)}")
 
 print("\n§4 主机侧统计（samples=N）", flush=True)
 

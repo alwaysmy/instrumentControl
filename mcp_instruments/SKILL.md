@@ -128,7 +128,7 @@ DG832 信号源（RIGOL DG800 系列）：
 | dmm_configure | range_v | 设定量程后 :CONF? 回读滞后一拍，以实测为准 |
 | dho_measure_item | item, ch, ch2?, samples? | RIGOL 长名：VPP/VMAX/VAVG/PERiod/FREQuency...；samples>1 给均值统计；无值分类报因（suspicious/hint）|
 | dho_channel / dho_timebase / dho_trigger | 同 mho_* 同名工具 | DHO 的设置类工具（同一套内核语义）；⚠ DHO 不在本台，未实机验证 |
-| mho_measure_item | item, ch, ch2?, samples? | 手册 3.17.2 表：单信源 VMAX/VMIN/VPP/VTOP/VBASe/VAMP/VAVG/VRMS/MARea/MPARea/PERiod/FREQuency/RTIMe/FTIMe/PWIDth/PDUTy/PPULses/PEDGes/ACRMs…；双信源 RRDelay/RRPHase 等需给 ch2；**samples=5** 连读给 mean/min/max/stddev；无有效值时 `suspicious` ∈ channel_off/off_screen/near_edge/few_edges/no_signal + `hint`；返回带 `probe_x`（探头比 ≠1 时幅度类读数是**探头端**电压）|
+| mho_measure_item | item, ch, ch2?, samples?, rails? | 手册 3.17.2 表：单信源 VMAX/VMIN/VPP/VTOP/VBASe/VAMP/VAVG/VRMS/MARea/MPARea/PERiod/FREQuency/RTIMe/FTIMe/PWIDth/PDUTy/PPULses/PEDGes/ACRMs…；双信源 RRDelay/RRPHase 等需给 ch2；**samples=5** 连读给 mean/min/max/stddev；无有效值时 `suspicious` ∈ channel_off/off_screen/near_edge/few_edges/no_signal + `hint`；返回带 `probe_x`（探头比 ≠1 时幅度类读数是**探头端**电压）；**`rails=True`** 额外读**顶轨/底轨**（VTOP/VBASe）并**上下分别**判断贴边——`edges_touching`（["top"]/["bottom"]/两者）+ 各自 `hints`（顶贴→offset 调更负；底贴→offset 调更大，方向相反故分开报）|
 | mho_channel | ch, scale?, offset?, coupling?, probe?, display? | **垂直设置**：固定 **scale→offset** 顺序（改 scale 会等比缩放 offset）；通道 OFF 时自动先开；偏置超量程（实测 ±20 V）→ `adjusted`+`reasons`；返回 `window`=[bottom, top]（**中心 = −offset**）。只动指定通道 |
 | mho_timebase | scale?, offset? | 时基（s/div、位移）**两者都回读**；**全局项**。屏内 <2 个周期时频率读不到（20 µs/div ↔ 100 µs/div 实测）|
 | mho_trigger | source?, level?, slope?, mode?, sweep? | 边沿源/电平/斜率 + 模式/扫描（枚举对照手册）；**全局项**；电平受限时 reasons 带该通道窗口范围 |
@@ -241,7 +241,7 @@ MCP 进程通常已带管理员（可直接用）；若工具报"需要管理员
 - `device_error`：设备拒绝/测量超时（读 error 文本，多为信号/触发问题）。
   **示波器"无有效值"会额外带诊断字段**（`mho_measure_item`/`dho_measure_item`）：
   `suspicious` = `channel_off`（通道显示关）/ `off_screen`（迹线在窗口外，附当前窗口与建议）/
-  `near_edge`（极值贴窗口边沿，**可能是削顶后的假值**，必须换档）/ `few_edges`（屏内不足
+  `near_edge`（极值贴窗口边沿，**可能是削顶后的假值**，必须换档；附 `edges_touching`/`edge_hints` **分顶/底**）/ `few_edges`（屏内不足
   2 个周期，附时基建议）/ `no_signal`；另有 `hint`、`window`、`evidence`（逐条原始响应）。
   先看 `suspicious` 再决定下一步，不要一律"检查信号接入"。
 - `communication`：IO 异常（重试一次，仍失败检查连接）

@@ -661,14 +661,65 @@ class RigolScope:
                 "values": vals[:12], "values_truncated": len(vals) > 12,
                 "probe_x": self.channel_probe(int(src)) if str(src).strip().isdigit() else None}
 
+    def rails(self, ch: int, band: float = 0.08) -> dict:
+        """读**顶轨/底轨**（VTOP/VBASe）并分别判断是否贴窗口边沿（削顶）。
+
+        现场依据（tool_optimization §P1-4 / §2.7）：部分削顶时测量值可能是"看着合理的
+        假值"，而**顶轨与底轨要分开看**——只顶上削 vs 只底下削，处理方式不同
+        （顶贴：偏置调更负或放大 scale；底贴：偏置调更大或放大 scale）。
+        `band` 是"贴边判定带"（占窗口高度的比例，默认 8%）。
+        返回 {vtop, vbase, vmax, vmin, vpp, top_touching, bottom_touching,
+              edges_touching, window, hints}；无窗口标定的家族不给贴边判定（None）。
+        """
+        n = self._check_ch(ch)
+        out: dict = {"ch": n, "window": self.vertical_window(n),
+                     "top_touching": None, "bottom_touching": None,
+                     "edges_touching": [], "hints": []}
+        for key, it in (("vtop", "VTOP"), ("vbase", "VBASe"),
+                        ("vmax", "VMAX"), ("vmin", "VMIN")):
+            try:
+                out[key] = self.measure_item(it, n)
+            except ValueError:
+                out[key] = None
+        if out["vtop"] is not None and out["vbase"] is not None:
+            out["vpp"] = out["vtop"] - out["vbase"]
+        w = out["window"]
+        if not w:
+            out["note"] = "该家族未标定垂直格数/中心约定 → 不做贴边判定（不猜）"
+            return out
+        half_band = band * w["height_v"]
+        top_val = out["vmax"] if out["vmax"] is not None else out["vtop"]
+        bot_val = out["vmin"] if out["vmin"] is not None else out["vbase"]
+        if top_val is not None and top_val >= w["top_v"] - half_band:
+            out["top_touching"] = True
+            out["edges_touching"].append("top")
+            out["hints"].append(
+                f"**顶轨贴/出窗口上沿**（VMAX {top_val:.4g} V ≥ 上沿 {w['top_v']:.4g} − 8% 带）："
+                "顶端可能被削——把 offset 调**更负**（中心 −offset 上移）"
+                f"或放大 scale（当前 {w['scale_v_div']:g} V/div）")
+        else:
+            out["top_touching"] = False
+        if bot_val is not None and bot_val <= w["bottom_v"] + half_band:
+            out["bottom_touching"] = True
+            out["edges_touching"].append("bottom")
+            out["hints"].append(
+                f"**底轨贴/出窗口下沿**（VMIN {bot_val:.4g} V ≤ 下沿 {w['bottom_v']:.4g} + 8% 带）："
+                "底端可能被削——把 offset 调**更大**（中心 −offset 下移）"
+                f"或放大 scale（当前 {w['scale_v_div']:g} V/div）")
+        else:
+            out["bottom_touching"] = False
+        return out
+
     def diagnose_no_reading(self, item: str, src: Union[int, str] = 1) -> dict:
         """无有效值（9.9E37）时的**原因分类**——不把三种原因混成一句话。
 
         suspicious 取值：channel_off（通道显示关）/ off_screen（迹线在窗口外）/
-        near_edge（极值贴窗口上下沿 → 可能是"看着合理的假值"，必须换档）/
+        near_edge（极值贴窗口边沿 → 可能是"看着合理的假值"，必须换档）/
         few_edges（屏内不足 2 个周期，时间/边沿类测量）/ no_signal。
-        返回里带 window（由 scale/offset/格数算出）与 evidence（逐条原始响应）。
-        ⚠ 诊断会临时打开 VMAX/VMIN 测量项（与 mho_measure_item 的行为一致）。
+        返回里带 window（由 scale/offset/格数算出）与 evidence（逐条原始响应）；
+        `near_edge` 时另给 **`edges_touching`（["top"]/["bottom"]/两者）与 `hints`**——
+        顶轨/底轨分开提示，因为处理方向相反。
+        ⚠ 诊断会临时打开 VMAX/VMIN/VTOP/VBASe 测量项（与 mho_measure_item 的行为一致）。
         """
         n: Optional[int] = None
         s = self._norm_source(src)
@@ -696,12 +747,33 @@ class RigolScope:
                     vmin = val
         if window and vmax is not None and vmin is not None:
             band = 0.08 * window["height_v"]
-            if vmax >= window["top_v"] - band or vmin <= window["bottom_v"] + band:
+            top_touch = vmax >= window["top_v"] - band
+            bot_touch = vmin <= window["bottom_v"] + band
+            if top_touch or bot_touch:
+                which = ("顶轨与底轨**两端**" if (top_touch and bot_touch)
+                         else ("**顶轨**（上沿）" if top_touch else "**底轨**（下沿）"))
+                hints: list[str] = []
+                if top_touch:
+                    hints.append(
+                        f"顶端：VMAX {vmax:.4g} V 贴/出窗口上沿 {window['top_v']:.4g} V → "
+                        "offset 调**更负**（中心 −offset 上移）或放大 scale")
+                if bot_touch:
+                    hints.append(
+                        f"底端：VMIN {vmin:.4g} V 贴/出窗口下沿 {window['bottom_v']:.4g} V → "
+                        "offset 调**更大**（中心 −offset 下移）或放大 scale")
+                # 顶/底轨读数一并放进证据（顶轨=VTOP、底轨=VBASe；削顶时它们才是"被切掉的那一端"）
+                for key, it in (("vtop", "VTOP"), ("vbase", "VBASe")):
+                    try:
+                        evidence[key] = self.measure_item(it, n)
+                    except ValueError as e:
+                        evidence[key + "_error"] = str(e)[:80]
                 return {"suspicious": "near_edge", "channel": n, "window": window,
-                        "hint": ("极值贴到窗口边沿（±8% 带内）：**部分削顶时测量值可能是"
+                        "edges_touching": [e for e, t in (("top", top_touch),
+                                                          ("bottom", bot_touch)) if t],
+                        "edge_hints": hints,
+                        "hint": (f"{which}极值贴到窗口边沿（±8% 带内）：**部分削顶时测量值可能是"
                                  f"\"看着合理的假值\"**，必须换档重测（当前窗口 "
-                                 f"[{window['bottom_v']:.3g}, {window['top_v']:.3g}] V，"
-                                 f"建议放大 scale 或调整 offset）"),
+                                 f"[{window['bottom_v']:.3g}, {window['top_v']:.3g}] V）"),
                         "evidence": evidence}
         if window and vmax is None and vmin is None:
             return {"suspicious": "off_screen", "channel": n, "window": window,

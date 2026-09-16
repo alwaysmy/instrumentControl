@@ -278,3 +278,29 @@
   - 待办：**MHO 可达后跑** `TEST_SCRIPTS/mho/verify_rails_live.py`（已写好：自动挑非触发源
     通道 → 逐档缩小 scale 逼出顶轨 → 断言 `rails()` 分顶/底 + `fit_channel` 救回 →
     `finally` 恢复原设定并留痕 `TEST_DATA/mho/rails_live_*.json`）。
+
+- 2026-09-16（同日，**MHO 真机复现顶轨** + 三条实机更正）：MHO 插上网线后可达
+  （`192.168.1.55`，`RIGOL TECHNOLOGIES,MHO984D,MHO9B282003181,00.01.00`）。
+  用 `TEST_SCRIPTS/mho/verify_rails_live.py --ch 3` 在 CH3（3.29 V 直流 + 0.07 V 纹波，
+  非触发源）复现并验证：
+  - ① 把窗口上沿对准 VMAX → `rails()` 报 `edges_touching=['top']`（顶轨贴边）**PASS**；
+  - ② 再把上沿压进信号里 → 设备把**极值与顶/底轨全部回 9.9E37**（且 VAVG 仍给
+    2.4855 V 的"看着合理的假值"，真实 3.29 V——**文档 §2.7 的现象实测确认**）→
+    `rails()` 新增 `unreadable=True` + "不要采信 VAVG" 提示，`diagnose` 报 `off_screen`；
+  - ③ `fit_channel` 自动救回（读数有效、margin_ok）；④ `finally` 恢复原设定（CH3 2.0/−3.5）。
+  **实机更正三条**（都影响工具语义，已改进内核并写回文档）：
+  1. **偏置量程随档位变**（此前记的"±20 V 与档位无关"只在 scale 0.5/2 上测过）：
+     写 −1000 V 探真值 → 0.05→±1 V、0.1/0.2→±10 V、0.5/1/2→±20 V、5/10→**±100 V**
+     （写 ±50 回读 ±50 只说明"≥50"，是**假上限**）。→ `fit_channel` 遇钳制改为
+     **闭环抬档**；`configure_channel` 的 reasons 写明阶梯。
+  2. **抬档必须保持窗口中心**：只写 SCALe 时设备按比例放大 offset（保持波形屏幕位置），
+     窗口会随档位"漂走"——实机把中心 1 V/信号 3.3 V 一路抬到 10 V/div 反而跑到中心
+     100 V、误报"超出可测范围"。→ 搜索循环抬档后把偏置写回原值。
+  3. **极值不可测 ≠ 钳制假值**（对"直流+小纹波"）：顶端出窗时 VMAX/VMIN 直接失效，
+     而 VAVG 仍"有值"。→ `rails()/diagnose` 支持**单端出窗**（`top_out_of_window`）与
+     **两端都不可测**（`unreadable`）两种明确状态。
+  另新增 `measure_retry()`：现场 §2.9 的"偶发无有效值、重读即正常"实测复现（恢复设定后
+  第一读即 9.9E37），fit/rails 的读数改走重试。
+  回归：`verify_rigol_scope_semantics` **42 项全 PASS**（新增阶梯/抬档保持中心/单端出窗/
+  重试等 12 项）；离线六套件 + 两套审计（§A-D 0 / MISS 29 基线）复跑全绿。
+  留痕：`TEST_DATA/mho/rails_live_20260916_155042.json`（含 before/plan/trace/恢复记录）。

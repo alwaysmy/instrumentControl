@@ -345,10 +345,15 @@
 - [HIT ] `MEASure:DELete` @ rigol_scope\families.py:110
 - [**MISS**] `*OPT?` @ rigol_scope\families.py:149
 - [HIT ] `MEASure:CLEar` @ rigol_scope\families.py:63
-- [HIT ] `WAVeform:STARt` @ rigol_scope\scope.py:1013
-- [HIT ] `WAVeform:STOP` @ rigol_scope\scope.py:1014
-- [HIT ] `WAVeform:DATA?` @ rigol_scope\scope.py:1015
-- [HIT ] `DISPlay:DATA?` @ rigol_scope\scope.py:1031
+- [HIT ] `WAVeform:PREamble?` @ rigol_scope\scope.py:1030
+- [HIT ] `WAVeform:SOURce` @ rigol_scope\scope.py:1069
+- [HIT ] `WAVeform:MODE` @ rigol_scope\scope.py:1070
+- [HIT ] `WAVeform:FORMat` @ rigol_scope\scope.py:1071
+- [HIT ] `WAVeform:POINts` @ rigol_scope\scope.py:1074
+- [HIT ] `WAVeform:STARt` @ rigol_scope\scope.py:1105
+- [HIT ] `WAVeform:STOP` @ rigol_scope\scope.py:1106
+- [HIT ] `WAVeform:DATA?` @ rigol_scope\scope.py:1107
+- [HIT ] `DISPlay:DATA?` @ rigol_scope\scope.py:1123
 - [HIT ] `*IDN?` @ rigol_scope\scope.py:167
 - [HIT ] `SYSTem:VERSion?` @ rigol_scope\scope.py:171
 - [HIT ] `SYSTem:ERRor?` @ rigol_scope\scope.py:175
@@ -371,11 +376,6 @@
 - [HIT ] `TRIGger:EDGE:SOURce` @ rigol_scope\scope.py:366
 - [HIT ] `TRIGger:EDGE:SLOPe` @ rigol_scope\scope.py:368
 - [HIT ] `TRIGger:EDGE:LEVel` @ rigol_scope\scope.py:382
-- [HIT ] `MEASure:SOURce` @ rigol_scope\scope.py:595
-- [HIT ] `MEASure:ITEM` @ rigol_scope\scope.py:622
-- [HIT ] `WAVeform:PREamble?` @ rigol_scope\scope.py:938
-- [HIT ] `WAVeform:SOURce` @ rigol_scope\scope.py:977
-- [HIT ] `WAVeform:MODE` @ rigol_scope\scope.py:978
-- [HIT ] `WAVeform:FORMat` @ rigol_scope\scope.py:979
-- [HIT ] `WAVeform:POINts` @ rigol_scope\scope.py:982
+- [HIT ] `MEASure:SOURce` @ rigol_scope\scope.py:596
+- [HIT ] `MEASure:ITEM` @ rigol_scope\scope.py:623
 - [DYN ] `send:{which}` @ TEST_SCRIPTS\common\rigol_scope_reset.py:108（运行时拼接，静态不可核）

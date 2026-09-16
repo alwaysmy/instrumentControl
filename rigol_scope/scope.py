@@ -436,7 +436,8 @@ class RigolScope:
             if abs(got) < abs(want_v) - 1e-9:
                 reasons.append(
                     f"偏置被设备钳制：要求 {want_v:g} V，回读 {got:g} V"
-                    "（偏置有硬件量程上限，实测本机 ±20 V 且与档位无关）")
+                    "（偏置量程**随档位变**——MHO984D 实测：0.05 V/div→±1 V、"
+                    "0.1~0.2→±10 V、0.5~2→±20 V、5~10→±100 V；要更大偏置得先抬档位）")
             else:
                 reasons.append(f"偏置未生效：要求 {want_v:g} V，回读 {got:g} V")
         elif key == "scale":
@@ -703,6 +704,12 @@ class RigolScope:
                 out[key] = None
         if out["vtop"] is not None and out["vbase"] is not None:
             out["vpp"] = out["vtop"] - out["vbase"]
+        elif out["vmax"] is not None or out["vmin"] is not None:
+            # 电平类测量（VTOP/VBASe）需要可辨识的顶端/底端——对"带噪声的直流"设备
+            # 会给 9.9E37（2026-09-16 实机：CH3 的 3.29 V 直流，VTOP/VBASe 恒无值，
+            # 而 VMAX/VMIN 稳得很）。贴边判定已按 VMAX/VMIN 做，这里如实说明。
+            out["note_vtop"] = ("VTOP/VBASe 无有效值（电平类测量需顶端/底端可辨识），"
+                                "贴边判定已用极值 VMAX/VMIN")
         w = out["window"]
         if not w:
             out["note"] = "该家族未标定垂直格数/中心约定 → 不做贴边判定（不猜）"
@@ -710,25 +717,66 @@ class RigolScope:
         half_band = band * w["height_v"]
         top_val = out["vmax"] if out["vmax"] is not None else out["vtop"]
         bot_val = out["vmin"] if out["vmin"] is not None else out["vbase"]
-        if top_val is not None and top_val >= w["top_v"] - half_band:
+        # 单端**极值完全不可测** = 该端已在窗外（2026-09-16 实机行为：把窗口上沿压进
+        # 信号里时 VMAX 直接回 9.9E37 而不是给"钳制假值"，同时 VMIN 仍有效）——
+        # 这比"贴边"更强：不是"可能被削"，而是"这一端已经看不到"。
+        top_out = out["vmax"] is None and (out["vmin"] is not None or out["vbase"] is not None)
+        bot_out = out["vmin"] is None and (out["vmax"] is not None or out["vtop"] is not None)
+        if top_out or (top_val is not None and top_val >= w["top_v"] - half_band):
             out["top_touching"] = True
             out["edges_touching"].append("top")
+            if top_out:
+                out["top_out_of_window"] = True
+            got = (f"顶端极值不可测（VMAX 回 9.9E37）→ **顶端已在窗外**"
+                   if top_out else f"VMAX {top_val:.4g} V 贴住上沿 {w['top_v']:.4g} V")
             out["hints"].append(
-                f"**顶轨贴/出窗口上沿**（VMAX {top_val:.4g} V ≥ 上沿 {w['top_v']:.4g} − 8% 带）："
-                "顶端可能被削——把 offset 调**更负**（中心 −offset 上移）"
+                f"**顶轨出窗/贴边**（{got}）：把 offset 调**更负**（中心 −offset 上移）"
                 f"或放大 scale（当前 {w['scale_v_div']:g} V/div）")
         else:
             out["top_touching"] = False
-        if bot_val is not None and bot_val <= w["bottom_v"] + half_band:
+        if bot_out or (bot_val is not None and bot_val <= w["bottom_v"] + half_band):
             out["bottom_touching"] = True
             out["edges_touching"].append("bottom")
+            if bot_out:
+                out["bottom_out_of_window"] = True
+            got = (f"底端极值不可测（VMIN 回 9.9E37）→ **底端已在窗外**"
+                   if bot_out else f"VMIN {bot_val:.4g} V 贴住下沿 {w['bottom_v']:.4g} V")
             out["hints"].append(
-                f"**底轨贴/出窗口下沿**（VMIN {bot_val:.4g} V ≤ 下沿 {w['bottom_v']:.4g} + 8% 带）："
-                "底端可能被削——把 offset 调**更大**（中心 −offset 下移）"
+                f"**底轨出窗/贴边**（{got}）：把 offset 调**更大**（中心 −offset 下移）"
                 f"或放大 scale（当前 {w['scale_v_div']:g} V/div）")
         else:
             out["bottom_touching"] = False
+        if out["top_touching"] is False and out["bottom_touching"] is False                 and out["vmax"] is None and out["vmin"] is None and out["vtop"] is None                 and out["vbase"] is None:
+            # 实机（2026-09-16 CH3）：把窗口上沿压进信号里后，**极值与轨值全回 9.9E37**
+            # （而 VAVG 仍给 2.4855 V 的"看着合理的假值"，真实 3.29 V）——这种状态必须
+            # 明确报"无法判定"，不能给出空的 edges 让人以为"没问题"。
+            out["top_touching"] = out["bottom_touching"] = None
+            out["unreadable"] = True
+            out["hints"].append(
+                "极值与顶/底轨**全部不可测**（9.9E37）：迹线很可能已整体出窗或被削顶，"
+                "无法分端判定——先放大 scale 让窗口变宽（或调 offset）再看；"
+                "⚠ 此时 VAVG 等读数可能是**看着合理的假值**，不要采信")
+            if w:
+                out["hint_window"] = (f"当前窗口 [{w['bottom_v']:.4g}, {w['top_v']:.4g}] V，"
+                                      f"中心 −offset = {w['center_v']:.4g} V")
         return out
+
+    def measure_retry(self, item: str, src: Union[int, str] = 1,
+                      src2: Optional[Union[int, str]] = None,
+                      tries: int = 3, delay: float = 0.25) -> float:
+        """测量重试——**现场实测**：偶发返回 9.9E37 而面板其实有值，重读即正常
+        （`docs/tool_optimization_20260915.md` §2.9；2026-09-16 复现：恢复设定后
+        第一次读 VAVG 就是 9.9E37，紧接着再读有效）。全部失败才抛最后一次的异常。
+        """
+        last: Optional[Exception] = None
+        for i in range(max(1, tries)):
+            try:
+                return self.measure_item(item, src, src2)
+            except ValueError as e:
+                last = e
+                if i != tries - 1:
+                    time.sleep(delay)
+        raise last  # type: ignore[misc]
 
     def diagnose_no_reading(self, item: str, src: Union[int, str] = 1) -> dict:
         """无有效值（9.9E37）时的**原因分类**——不把三种原因混成一句话。
@@ -765,22 +813,36 @@ class RigolScope:
                     vmax = val
                 else:
                     vmin = val
-        if window and vmax is not None and vmin is not None:
+        # 两端都不可测 → 离屏（先判，避免被下面的"单端出窗"抢走）
+        if window and vmax is None and vmin is None:
+            return {"suspicious": "off_screen", "channel": n, "window": window,
+                    "hint": (f"极值与 {item} 均无有效值：迹线很可能在屏幕外。当前窗口 "
+                             f"[{window['bottom_v']:.3g}, {window['top_v']:.3g}] V"
+                             f"（中心 −offset = {window['center_v']:.3g} V）——"
+                             "放大 scale 让窗口变宽，或调 offset 把信号移进窗"),
+                    "evidence": evidence}
+        if window and (vmax is not None or vmin is not None):
             band = 0.08 * window["height_v"]
-            top_touch = vmax >= window["top_v"] - band
-            bot_touch = vmin <= window["bottom_v"] + band
+            # 单端极值不可测 = 该端已在窗外（实机行为，见 rails() 同款说明）
+            top_touch = (vmax is None) or (vmax >= window["top_v"] - band)
+            bot_touch = (vmin is None) or (vmin <= window["bottom_v"] + band)
             if top_touch or bot_touch:
                 which = ("顶轨与底轨**两端**" if (top_touch and bot_touch)
                          else ("**顶轨**（上沿）" if top_touch else "**底轨**（下沿）"))
                 hints: list[str] = []
                 if top_touch:
-                    hints.append(
-                        f"顶端：VMAX {vmax:.4g} V 贴/出窗口上沿 {window['top_v']:.4g} V → "
-                        "offset 调**更负**（中心 −offset 上移）或放大 scale")
+                    # 单端极值不可测 = 该端已在窗外（实机行为，别拿 None 去格式化）
+                    got = ("顶端极值不可测（VMAX 回 9.9E37）→ 顶端已在窗外"
+                           if vmax is None else
+                           f"VMAX {vmax:.4g} V 贴/出窗口上沿 {window['top_v']:.4g} V")
+                    hints.append(f"顶端：{got} → "
+                                 "offset 调**更负**（中心 −offset 上移）或放大 scale")
                 if bot_touch:
-                    hints.append(
-                        f"底端：VMIN {vmin:.4g} V 贴/出窗口下沿 {window['bottom_v']:.4g} V → "
-                        "offset 调**更大**（中心 −offset 下移）或放大 scale")
+                    got = ("底端极值不可测（VMIN 回 9.9E37）→ 底端已在窗外"
+                           if vmin is None else
+                           f"VMIN {vmin:.4g} V 贴/出窗口下沿 {window['bottom_v']:.4g} V")
+                    hints.append(f"底端：{got} → "
+                                 "offset 调**更大**（中心 −offset 下移）或放大 scale")
                 # 顶/底轨读数一并放进证据（顶轨=VTOP、底轨=VBASe；削顶时它们才是"被切掉的那一端"）
                 for key, it in (("vtop", "VTOP"), ("vbase", "VBASe")):
                     try:
@@ -795,13 +857,6 @@ class RigolScope:
                                  f"\"看着合理的假值\"**，必须换档重测（当前窗口 "
                                  f"[{window['bottom_v']:.3g}, {window['top_v']:.3g}] V）"),
                         "evidence": evidence}
-        if window and vmax is None and vmin is None:
-            return {"suspicious": "off_screen", "channel": n, "window": window,
-                    "hint": (f"极值与 {item} 均无有效值：迹线很可能在屏幕外。当前窗口 "
-                             f"[{window['bottom_v']:.3g}, {window['top_v']:.3g}] V"
-                             f"（中心 −offset = {window['center_v']:.3g} V）——"
-                             "放大 scale 让窗口变宽，或调 offset 把信号移进窗"),
-                    "evidence": evidence}
         if item in EDGE_DEPENDENT_ITEMS:
             hw = self.horizontal_window()
             need = (f"（时间窗 {hw['span_s']:.3g} s/屏，{hw['note']}）" if hw else "")
@@ -850,8 +905,8 @@ class RigolScope:
             scale_now = self.channel_scale(n)
             err = None
             try:
-                vmax = self.measure_item("VMAX", n)
-                vmin = self.measure_item("VMIN", n)
+                vmax = self.measure_retry("VMAX", n)
+                vmin = self.measure_retry("VMIN", n)
             except ValueError as e:
                 err = str(e)[:100]
             win = self.vertical_window(n)
@@ -868,11 +923,22 @@ class RigolScope:
                         "note": "逐档放大到最大档仍不可测——信号超出量程或没有信号；"
                                 "物理上无法从被削掉的波形里恢复真实幅度",
                         "before": before, "after": self._chan_state(n),
+                        "reasons": [], "adjusted": None, "measurements": None,
+                        "occupancy": None, "margin_ok": None,
                         "trace": trace, "warnings": self._probe_warning(n)}
+            # 保持**窗口中心不变**地变宽：只写 SCALe 时设备会等比缩放 offset
+            # （保持波形屏幕位置），那会让窗口随档位一起"漂走"、永远追不上信号——
+            # 2026-09-16 实机踩到：中心 1 V、信号 3.3 V，一路抬到 10 V/div 反而跑到
+            # 中心 100 V，最后误报"超出可测范围"。故抬档后把偏置写回原值。
+            off_keep = self.channel_offset(n)
             self.channel_scale(n, nxt)
+            if off_keep is not None:
+                self.channel_offset(n, off_keep)
         if not converged:
             return {"ch": n, "ok": False, "reason": f"未收敛（迭代上限 {max_iter}）",
-                    "before": before, "after": self._chan_state(n), "trace": trace,
+                    "before": before, "after": self._chan_state(n), "reasons": [],
+                    "adjusted": None, "measurements": None, "occupancy": None,
+                    "margin_ok": None, "trace": trace,
                     "warnings": self._probe_warning(n)}
         win = self.vertical_window(n)
         lsb = (win["height_v"] / float(2 ** fam.adc_bits)) if (win and fam.adc_bits) else 0.0
@@ -885,20 +951,42 @@ class RigolScope:
                     "需要更细量程请显式设 scale）")
         else:
             target_scale = snap_1_2_5(span / (float(occupancy) * vdivs))
-        applied = self.configure_channel(n, scale=target_scale,
-                                         offset=-(float(vmax) + float(vmin)) / 2.0)
+        offset_target = -(float(vmax) + float(vmin)) / 2.0
+        applied = self.configure_channel(n, scale=target_scale, offset=offset_target)
+        # 偏置量程**随档位变**（2026-09-16 实机实测：0.05 V/div 只允许 ±1 V）——
+        # 目标偏置放不下时把档位**逐档抬高**（窗口与偏置量程同时变大），闭环探测，
+        # 不写死阶梯表（换句话说：以设备回读为准，而不是以我们的假设为准）。
+        raised = 0
+        while ((applied.get("adjusted") or {}).get("offset")) and raised < 6:
+            cur = applied["actual"]["scale_v_div"]
+            nxt = snap_up(cur, fam.scale_range[1] if fam.scale_range else None)
+            if nxt is None or nxt <= cur:
+                break
+            print(f"[fit_channel] 偏置被钳制（{offset_target:g} V 放不下 {cur:g} V/div）"
+                  f"→ 抬档到 {nxt:g} V/div 重试", file=sys.stderr)
+            applied = self.configure_channel(n, scale=nxt, offset=offset_target)
+            raised += 1
+        applied["scale_raised_for_offset_limit"] = raised
+        if (applied.get("adjusted") or {}).get("offset"):
+            got = applied["adjusted"]["offset"]["actual"]
+            applied["offset_limit_v"] = abs(got)
+            applied["reasons"].append(
+                f"偏置量程不足：该档位只能设到 {got:g} V，"
+                "已抬档仍放不下目标偏置——请改用更大的 scale 或接受偏移的窗口")
         time.sleep(0.2)                              # 等设备重算测量
         out: dict = {"ch": n, "flat": flat, "before": before,
                      "requested": applied["requested"], "after": applied["actual"],
                      "adjusted": applied["adjusted"], "reasons": applied["reasons"],
+                     "scale_raised_for_offset_limit": applied.get("scale_raised_for_offset_limit"),
+                     "offset_limit_v": applied.get("offset_limit_v"),
                      "window": self.vertical_window(n), "trace": trace,
                      "warnings": self._probe_warning(n)}
         if note:
             out["note"] = note
         occ = margin_ok = None
         try:
-            vmax2 = self.measure_item("VMAX", n)
-            vmin2 = self.measure_item("VMIN", n)
+            vmax2 = self.measure_retry("VMAX", n)
+            vmin2 = self.measure_retry("VMIN", n)
             w2 = self.vertical_window(n)
             out["measured"] = {"vmax": vmax2, "vmin": vmin2, "vpp": vmax2 - vmin2}
             if w2 and w2["height_v"]:
@@ -912,8 +1000,12 @@ class RigolScope:
             out["ok"] = False
             out["verify_error"] = str(e)[:140]
         if not out["ok"] and "reason" not in out:
-            out["reason"] = ("定标后仍未达标（贴边或占屏率不在 [0.4,0.9]）：可能是偏置超出量程"
-                             "无法居中，或信号本身超出量程")
+            detail = (f"占屏率 {occ:.3g}" if occ is not None else "无有效读数")
+            if out.get("scale_raised_for_offset_limit"):
+                detail += (f"；因偏置量程已抬档 {out['scale_raised_for_offset_limit']} 次"
+                           f"（当前档位上限 ±{(out.get('offset_limit_v') or 0):g} V）")
+            out["reason"] = (f"定标后仍未达标（{detail}；目标 [0.4,0.9]）——偏置量程限制了"
+                             "可居中范围，或信号本身占不满屏（平直/小纹波）")
         return out
 
     # ---------- 波形读取 ----------

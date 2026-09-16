@@ -46,14 +46,23 @@ class FakeTrapScope:
        —— 实测：`:CHANnel4:DISPlay OFF; :CHANnel4:SCALe 0.05` → 回读仍是 1.5
     ② 写 SCALe 会**等比缩放 offset**（设备主动改写，保持波形屏幕位置）
        —— 实测：offset −3.5 上写 SCALe 0.85（scale 原 2.0）→ 回读 −1.49 ≈ −3.5×0.85/2
-    ③ offset 超量程被**钳制**（本机 ±20 V，与档位无关）—— 实测：写 −50 → 回读 −20
+    ③ offset 超量程被**钳制**，且**量程随档位变**（2026-09-16 实机阶梯：
+       0.05 V/div→±1 V、0.1/0.2→±10 V、0.5/1/2→±20 V、5/10→±100 V）——
+       实测：scale 0.05 写 −50 → 回读 −1；scale 2.0 写 −50 → 回读 −20
     另：测量可测性由"迹线是否落在竖窗内"决定；**部分出窗时极值被钳到窗沿**，
     这正是文档里"看着合理的假值（0.9216 V vs 真实 ±10 V）"的来源。
     """
 
     VDIVS = 8.0          # 与 Family.vdivs 一致（本机实测标定）
     HDIVS = 10.0
-    OFFSET_LIMIT = 20.0  # 实测 ±20 V
+    # 偏置量程随档位的阶梯（(scale ≤ 此值, 上限)），2026-09-16 实机逐个档位实测
+    OFFSET_LIMITS = ((0.05, 1.0), (0.2, 10.0), (2.0, 20.0))   # 5/10 → 100（默认）
+
+    def offset_limit(self, scale: float) -> float:
+        for sc, lim in self.OFFSET_LIMITS:
+            if scale <= sc * (1 + 1e-9):
+                return lim
+        return 100.0
 
     def __init__(self, signal: dict[int, tuple[float, float]],
                  scale: float = 2.0, offset: float = 0.0,
@@ -134,7 +143,7 @@ class FakeTrapScope:
             c, v = int(m.group(1)), float(m.group(2))
             if not self.disp[c]:
                 return
-            self.offset[c] = math.copysign(min(abs(v), self.OFFSET_LIMIT), v)
+            self.offset[c] = math.copysign(min(abs(v), self.offset_limit(self.scale[c])), v)
             return
         m = re.fullmatch(r":CHANnel(\d):PROBe\s+([\d.eE+-]+)", u, re.I)
         if m:
@@ -467,11 +476,114 @@ check("超出量程：ok=False + reason='超出可测范围'（不假装成功�
       r["ok"] is False and r["reason"] == "超出可测范围",
       f"逐档到 {r['trace'][-1]['scale_v_div']:g} V/div 仍不可测")
 
-# 场景 7：偏置需超量程才能居中 → reasons 里出现"钳制"（设计文档 §6-7）
-s = scope_with({3: (30.0, 30.01)}, scale=10.0, offset=0.0)   # 中心 30 V > 20 V 量程
+# 场景 7：偏置**超出最大档的量程**才能居中 → 如实报"偏置量程不足"，不静默失败
+#   注意（2026-09-16 实机更正）：偏置量程随档位变（±1/±10/±20/±100 V 阶梯），
+#   所以"30 V 信号在 10 V/div 上被钳"的旧用例不再成立——现在**抬档就能居中**。
+#   真正超限是"连最大档（10 V/div，±100 V）也放不下"：这里用 200 V 的信号。
+#   起始偏移已把 200 V 的信号放在窗内（可读、不贴边），但它的中心 200 V
+#   连最大档的量程（±100 V）都放不下 → 抬档也救不回 → 必须如实报
+s = scope_with({3: (200.0, 200.01)}, scale=10.0, offset=-200.0)
 r = s.fit_channel(3)
-check("偏置超量程无法居中：如实报'钳制'，不静默失败",
-      any("钳制" in x for x in r.get("reasons", [])), f"reasons={r.get('reasons')}")
+check("偏置连最大档都放不下：如实报'量程不足' + offset_limit_v（不假装成功）",
+      any("量程不足" in x for x in (r.get("reasons") or [])) and bool(r.get("adjusted")),
+      f"offset_limit_v={r.get('offset_limit_v')} reasons={(r.get('reasons') or [])[:1]}")
+
+print("\n§5.5 偏置量程随档位变（实机阶梯）与 fit_channel 自适应抬档", flush=True)
+# 实机实测（2026-09-16，MHO984D/CH3/1X）：0.05 V/div 只允许 ±1 V 偏置——
+# 小档位下"把波形居中"可能根本做不到，必须抬档位。
+s = scope_with({3: (3.21, 3.38)}, scale=0.05, offset=0.0)
+r = s.configure_channel(3, offset=-50.0)
+check("0.05 V/div → 偏置被钳到 ±1 V（阶梯最低档）",
+      abs(r["actual"]["offset_v"] + 1.0) < 1e-9 and any("钳制" in x for x in r["reasons"]),
+      f"回读 {r['actual']['offset_v']:g} V")
+s = scope_with({3: (3.21, 3.38)}, scale=2.0, offset=0.0)
+r = s.configure_channel(3, offset=-50.0)
+check("2 V/div → 偏置钳到 ±20 V（同一台仪器、不同档位上限不同）",
+      abs(r["actual"]["offset_v"] + 20.0) < 1e-9, f"回读 {r['actual']['offset_v']:g} V")
+s = scope_with({3: (3.21, 3.38)}, scale=10.0, offset=0.0)
+r = s.configure_channel(3, offset=-50.0)
+check("10 V/div → ±100 V（大档位偏置量程更宽；写 −50 时回读 −50 只证明 ≥50）",
+      abs(r["actual"]["offset_v"] + 50.0) < 1e-9 and abs(
+          scope_with({3: (3.21, 3.38)}, scale=10.0, offset=0.0).configure_channel(
+              3, offset=-1000.0)["actual"]["offset_v"] + 100.0) < 1e-9,
+      f"写 −50→{r['actual']['offset_v']:g}；写 −1000→−100")
+
+# 3.29 V 直流的信号：天真目标 scale=0.05/offset≈−3.29 会被钳（±1 V）→ 自适应抬档
+s = scope_with({3: (3.21, 3.38)}, scale=2.0, offset=-3.5)
+fit = s.fit_channel(3)
+check("fit_channel 遇偏置钳制会逐档抬到位（最终档位 ≥0.1 且偏置不再被钳）",
+      fit["after"]["scale_v_div"] >= 0.1 and not (fit.get("adjusted") or {}).get("offset"),
+      f"最终 scale={fit['after']['scale_v_div']:g} offset={fit['after']['offset_v']:g} "
+      f"抬档次数={fit.get('scale_raised_for_offset_limit')}")
+check("抬档后读数有效且不贴边（margin_ok）", fit.get("margin_ok") is True,
+      f"occupancy={fit.get('occupancy')}")
+check("占屏率被偏置量程限制时可不到 0.4 → ok=False + reason（如实报，不假装达标）",
+      fit["ok"] is False and "reason" in fit,
+      f"ok={fit['ok']} reason={str(fit.get('reason'))[:60]}")
+
+print("\n§5.6 抬档保持窗口中心（防\"窗口追着信号跑\"）+ 测量重试", flush=True)
+# 实机踩到：中心 1 V、信号 3.3 V 时**只写 SCALe**，设备为保持波形屏幕位置会把偏置
+# 等比放大 → 窗口一路漂到中心 100 V → 误报"超出可测范围"。修法：抬档后把偏置写回原值。
+s = scope_with({3: (3.3, 3.31)}, scale=0.05, offset=-1.0)      # 窗口 [0.8, 1.2]，信号在外
+r = s.fit_channel(3)
+check("远处信号能被捕获（窗口围绕原中心变宽，而非漂走）",
+      r.get("reason") != "超出可测范围" and r["after"]["scale_v_div"] >= 0.1,
+      f"ok={r['ok']} 最终 scale={r['after']['scale_v_div']:g} offset={r['after']['offset_v']:g}")
+
+
+class Flaky(FakeTrapScope):
+    """前两次读数返回 9.9E37（模拟现场"偶发无有效值，重读即正常"）。"""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.calls = 0
+
+    def _measure(self, item: str, ch: int) -> str:
+        if item.upper() in ("VMAX", "VMIN"):
+            self.calls += 1
+            if self.calls <= 2:
+                return "9.9000E+37"
+        return super()._measure(item, ch)
+
+
+s = MHO(model="MHO")
+s.client = Flaky({3: (3.3, 3.31)})
+check("measure_retry：前两次无值、第三次成功 → 拿到读数（现场 §2.9）",
+      abs(s.measure_retry("VMAX", 3) - 3.31) < 1e-6, "重试生效")
+
+print("\n§5.7 单端出窗：极值不可测 = 该端已在窗外（实机行为，非钳制假值）", flush=True)
+# 实机（2026-09-16 CH3）：把窗口上沿压进信号里 → VMAX 直接回 9.9E37，VMIN 仍有效。
+# 这比"贴边"更强：不是"可能被削"，而是"这一端已经看不到"。
+class TopOut(FakeTrapScope):
+    """顶端在窗外时 VMAX 回 9.9E37（复刻实机行为，而非钳到窗沿）。"""
+
+    def _measure(self, item: str, ch: int) -> str:
+        vmin, vmax = self.sig[ch]
+        top = -self.offset[ch] + self.VDIVS / 2 * self.scale[ch]
+        if item.upper() == "VMAX" and vmax > top:
+            return "9.9000E+37"
+        return super()._measure(item, ch)
+
+
+s = MHO(model="MHO")
+s.client = TopOut({3: (3.21, 3.38)}, scale=0.1, offset=-2.88)   # 上沿 3.28 < VMAX 3.38
+r = s.rails(3)
+check("顶端出窗：rails 报 top_touching + top_out_of_window，且不误报底端",
+      r["top_touching"] is True and r.get("top_out_of_window") is True
+      and r["bottom_touching"] is False and "顶端已在窗外" in r["hints"][0],
+      f"edges={r['edges_touching']} vmax={r['vmax']}")
+d = s.diagnose_no_reading("VAVG", 3)
+check("诊断同样分顶/底：near_edge + edges_touching=['top']",
+      d.get("suspicious") == "near_edge" and d.get("edges_touching") == ["top"],
+      f"suspicious={d.get('suspicious')} edges={d.get('edges_touching')}")
+
+s2 = MHO(model="MHO")
+s2.client = TopOut({3: (3.21, 3.38)}, scale=0.1, offset=-3.7)   # 两端都出窗 → 无有效值
+for_w = s2.vertical_window(3)
+s2.client.offset[3] = 0.0      # 把窗口挪到很远处，两端极值都不可测
+d2 = s2.diagnose_no_reading("VAVG", 3)
+check("两端都不可测 → off_screen（不与单端出窗混）", d2.get("suspicious") == "off_screen",
+      f"suspicious={d2.get('suspicious')}")
 
 print("\n§6 档位序列工具函数（1-2-5）", flush=True)
 check("snap_1_2_5: 1.8→2 / 0.43→0.5 / 7.1→10",

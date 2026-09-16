@@ -251,6 +251,21 @@ MCP 进程通常已带管理员（可直接用）；若工具报"需要管理员
   通常是上一个调用很慢或已超时但 worker 仍在跑——等它结束后重试即可；只有在长时间
   持续 BUSY（数十秒到数分钟以上）时才说明底层驱动真卡死，此时重启 MCP 服务恢复
 
+### ⚠ 串行化只在**单个 MCP 进程内**成立（多实例不互斥）
+
+设备锁与单 worker 执行器都是**进程内**的：同一台机器上若跑着多个 MCP 实例
+（不同客户端各起一个、或退役路径的转发 shim 又起一份），它们之间**不互斥**——
+两个客户端可以同时对同一台仪器下发命令，`device_busy` 拦不住。实测本机曾同时存在
+**14 个** instrument 相关实例（2 个统一服务器 + 11 个 shim 转发 + 1 个跑退役代码的旧进程）。
+
+- 纪律：**同一台仪器同一时间只由一个客户端操作**；交接前先收尾（关输出/恢复设定/
+  归还面板控制权）。
+- 排查（PowerShell）：
+  `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'instrumentControl|dg832-control' } | Select ProcessId,CreationDate,CommandLine`
+- 退役路径 `~/.agents/skills/dg832-control/scripts/mcp_server.py` 现在只是**转发 shim**；
+  启动时间早于 2026-09-15 13:06 的进程跑的是**旧代码**（工具名 `instrument_*`、
+  无 description），应杀掉让其客户端重连。
+
 ### 超时/卡死语义（所有工具一致）
 
 自 2026-09-15 起，所有工具经**统一异步调用边界**执行（单 worker 执行器；设计评审见

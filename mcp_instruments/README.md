@@ -13,7 +13,7 @@ MCP 注册（opencode/cursor 等）：command 用 python 全路径，args 为本
 
 ## 工具清单
 
-共 **50 个** = 46 个设备专用 + 3 个通用护栏（`instr_discover` / `instr_query` / `instr_write`）
+共 **57 个** = 53 个设备专用 + 3 个通用护栏（`instr_discover` / `instr_query` / `instr_write`）
 + 1 个**故障维护兜底**（`usb_reset`：USB-TMC 卡死时重启该仪器的 USB PnP 设备节点）。
 
 | 工具 | 说明 | 安全 |
@@ -39,9 +39,15 @@ MCP 注册（opencode/cursor 等）：command 用 python 全路径，args 为本
 | `dmm_nplc(value?)` | 电压 DC 积分时间 NPLC（0.02~100）| 改配置 |
 | `dmm_measure(function)` | 34465A 测量（10 种） | 只读 |
 | `dmm_status` / `dmm_configure` | 快照 / 配置 | 只读/改配置 |
-| `dho_status` / `dho_measure_item` | DHO 快照 / 测量 | 只读 |
-| `mho_status` | MHO 快照（触发/采集/采样率/四通道档位；本系列采样率随通道数下降） | 只读 |
-| `mho_measure_item(item, ch, ch2?)` | MHO 测量（手册 3.17.2 表：VPP/VMAX/VAVG/VRMS/PERiod/FREQuency/RTIMe…；双信源延迟·相位 RRDelay/RRPHase 需 ch2）；无有效值报错含 9.9E37 | 只读 |
+| `dho_status` / `dho_measure_item(item, ch, ch2?, samples?)` | DHO 快照 / 测量（samples>1 给 mean/min/max/stddev；无有效值分类报因） | 只读 |
+| `dho_channel(ch, scale?, offset?, coupling?, probe?, display?)` | DHO 通道垂直设置；**写后回读**，设备未照做则 `adjusted`+`reasons`（⚠ DHO 不在本台，未实机验证） | 改配置 |
+| `dho_timebase(scale?, offset?)` / `dho_trigger(source?, level?, slope?, mode?, sweep?)` | DHO 时基 / 触发（写后回读，枚举对照手册） | 改配置（**时基/触发是全局项**） |
+| `mho_status` | MHO 快照（触发/采集/采样率/四通道档位；每通道附 `center_v = −offset` 与 `window_v`） | 只读 |
+| `mho_measure_item(item, ch, ch2?, samples?)` | MHO 测量（手册 3.17.2 表：VPP/VMAX/VAVG/VRMS/PERiod/FREQuency/RTIMe…；双信源延迟·相位 RRDelay/RRPHase 需 ch2）。**samples>1** 连读 N 次给 `mean/min/max/stddev`（无效读数单独计数）；**无有效值分类报因**（`suspicious`/`hint`：channel_off / off_screen / near_edge / few_edges / no_signal）+ `probe_x` | 只读 |
+| `mho_channel(ch, scale?, offset?, coupling?, probe?, display?)` | **MHO 通道垂直设置**（现场最缺的一个）：固定 **scale→offset** 顺序；通道 OFF 时自动先开（OFF 下写入被静默忽略）；偏置被钳制时报 `adjusted`+`reasons`；返回 `window`=[bottom, top]（中心 = −offset）。**只动指定通道** | 改配置 |
+| `mho_timebase(scale?, offset?)` | 时基设置（**两个都回读**）；屏内不足 2 个周期时频率类测量读不到（现场：20 µs/div↔100 µs/div） | 改配置（**全局项**） |
+| `mho_trigger(source?, level?, slope?, mode?, sweep?)` | 边沿触发 + 模式/扫描设置；写后回读并对照手册校验枚举；电平受限时 reasons 带该通道窗口 | 改配置（**全局项**） |
+| `mho_fit_channel(ch, occupancy=0.7, margin=0.08, max_iter=12)` | **单通道自动定标/居中**（判据：可测/不贴边/占屏率 0.4~0.9）；平直信号判 `flat` 且**不猜档位**；超量程/未收敛如实报 `ok=false`+`reason`+`trace`。与 autoset 不同：**只动一个通道** | 改配置（单通道） |
 | `mho_screenshot` | MHO 截屏存 PNG 返回路径（`:DISPlay:DATA? PNG` 原生位图，**可直接 Read 读图**） | 只读 |
 | `mho_get_waveform(ch, points=1000, mode, fmt, save_csv)` | MHO 读波形（NORMal 1~1000 点 / RAW 需 STOP；BYTE·WORD·ASCii）；返回摘要 + 可选 CSV | 只读 |
 | `mho_acquisition(action)` | run/stop/single/force（**stop 冻结采集**，RAW 读内存前必须） | 改采集状态 |

@@ -13,7 +13,9 @@
 """
 from __future__ import annotations
 
+import math
 import sys
+import time
 from pathlib import Path
 from typing import Optional, Union
 
@@ -26,6 +28,49 @@ from .families import Family, family_of  # noqa: E402
 
 # RIGOL 对无效测量统一返回该哨兵值（实测 MHO984D：无有效读数即 9.9000E+37）
 INVALID_MEASURE = 9.9e37
+
+# 需要"屏内 ≥2 个边沿"才有值的测量项（时间/边沿类）——现场证据：20 µs/div 看 5 kHz
+# 读不到频率，放宽到 100 µs/div 立刻读到 4.9993 kHz：**是窗口不够，不是精度问题**。
+EDGE_DEPENDENT_ITEMS = frozenset({
+    "FREQuency", "PERiod", "PEDGes", "NEDGes", "PPULses", "NPULses",
+    "PDUTy", "NDUTy", "PWIDth", "NWIDth", "RTIMe", "FTIMe",
+    "PSLewrate", "NSLewrate",
+})
+
+
+def snap_1_2_5(value: float) -> float:
+    """把目标值吸附到 {1,2,5}×10ⁿ（示波器垂直/水平档位的标准序列）。
+
+    设备自身也会吸附，但先在主机侧吸附能让"目标档位"可解释（设计文档 §2 S3）。
+    """
+    if value <= 0 or not math.isfinite(value):
+        return value
+    base = 10.0 ** math.floor(math.log10(value))
+    for m in (1, 2, 5):
+        if value <= m * base * (1 + 1e-9):
+            return m * base
+    return 10 * base
+
+
+def snap_up(value: float, max_scale: Optional[float] = None) -> Optional[float]:
+    """档位序列 {1,2,5}×10ⁿ 里的**下一档**（放大一档）；已在最大档返回 None。
+
+    例：0.9 → 1.0（不是 2.0）、2 → 5、5 → 10、0.5 → 1。给 max_scale 时超过它即返回 None
+    （自动定标的"超出可测范围"判据用它，而不是靠迭代次数耗尽）。
+    """
+    if value is None or value <= 0 or not math.isfinite(value):
+        return None
+    base = 10.0 ** math.floor(math.log10(value) + 1e-12)
+    for m in (1, 2, 5):
+        cand = m * base
+        if cand > value * (1 + 1e-9):
+            if max_scale is not None and cand > max_scale * (1 + 1e-9):
+                return None
+            return cand
+    nxt = 10.0 * base
+    if max_scale is not None and nxt > max_scale * (1 + 1e-9):
+        return None
+    return nxt
 
 
 class RigolScope:
@@ -317,6 +362,212 @@ class RigolScope:
         self.write(f":TRIGger:EDGE:LEVel {level}")
         return None
 
+    # ---------- 垂直窗口 / 设置语义 ----------
+    # 本节把 2026-09-15 现场踩到的设备行为固化成代码语义（证据与实测原文见
+    # `docs/tool_optimization_20260915.md` §P1-3，设计判据见
+    # `docs/示波器自动定标设计-2026-09-15.md`）：
+    #   ① 屏幕中心电压 = **−offset**（不是 +offset）；
+    #   ② 改 SCALe 会**等比缩放 offset**（设备主动改写以保持波形屏幕位置）→ 必须先 scale 后 offset；
+    #   ③ 通道 OFF 时写 SCALe/OFFSet 被**静默忽略**（无错误码）→ 要写垂直参数先开通道；
+    #   ④ offset 有量程上限（本机实测 ±20 V）→ 写后回读比对，钳制时如实上报。
+    # 这些坑的共同形态是"看起来成功、其实没生效"，所以本节的方法一律**回读验证**、
+    # 并把"设备没照做"翻译成 adjusted + reasons，而不是混成 ok。
+
+    def _chan_state(self, n: int) -> dict:
+        """单通道垂直状态一次性回读（display/scale/offset/coupling/probe）。"""
+        return {"display": self.channel_display(n),
+                "scale_v_div": self.channel_scale(n),
+                "offset_v": self.channel_offset(n),
+                "coupling": self.channel_coupling(n),
+                "probe_x": self.channel_probe(n)}
+
+    def vertical_window(self, ch: int) -> Optional[dict]:
+        """当前档位下的屏幕竖窗（**中心 = −offset**）。
+
+        格数取 `Family.vdivs`；**未实测标定的家族返回 None**（宁可没有该能力，
+        也不猜——填错格数会让离屏判据得出自信的错误结论）。
+        """
+        if self.family.vdivs is None:
+            return None
+        n = self._check_ch(ch)
+        scale, offset = self.channel_scale(n), self.channel_offset(n)
+        if scale is None or offset is None:
+            return None
+        half = self.family.vdivs / 2.0 * scale
+        return {"ch": n, "scale_v_div": scale, "offset_v": offset,
+                "center_v": -offset, "bottom_v": -offset - half, "top_v": -offset + half,
+                "height_v": self.family.vdivs * scale, "vdivs": self.family.vdivs}
+
+    def horizontal_window(self) -> Optional[dict]:
+        """屏内时间窗（水平格数未标定的家族返回 None）——"边沿够不够"判据用。"""
+        if self.family.hdivs is None:
+            return None
+        tdiv = self.timebase_scale()
+        if tdiv is None:
+            return None
+        return {"t_div_s": tdiv, "span_s": self.family.hdivs * tdiv,
+                "hdivs": self.family.hdivs,
+                "note": f"按 {self.family.hdivs} 格估算（未单独标定）"}
+
+    @staticmethod
+    def _explain(key: str, want_v: float, got: float, reasons: list) -> None:
+        """给"设备没照做"配一句原因（钳制 / 吸附 / 未生效）。"""
+        if key == "offset":
+            if abs(got) < abs(want_v) - 1e-9:
+                reasons.append(
+                    f"偏置被设备钳制：要求 {want_v:g} V，回读 {got:g} V"
+                    "（偏置有硬件量程上限，实测本机 ±20 V 且与档位无关）")
+            else:
+                reasons.append(f"偏置未生效：要求 {want_v:g} V，回读 {got:g} V")
+        elif key == "scale":
+            if abs(got - snap_1_2_5(want_v)) < 1e-9:
+                reasons.append(f"档位被设备吸附到 {got:g} V/div（合法序列 {{1,2,5}}×10ⁿ）")
+            else:
+                reasons.append(f"档位未生效：要求 {want_v:g} V/div，回读 {got:g} V/div")
+        else:
+            reasons.append(f"{key} 未生效：要求 {want_v:g}，回读 {got:g}")
+
+    def configure_channel(self, ch: int, scale: Optional[float] = None,
+                          offset: Optional[float] = None, coupling: Optional[str] = None,
+                          probe: Optional[float] = None, display: Optional[bool] = None,
+                          tol: float = 0.02) -> dict:
+        """设置通道垂直参数并**回读验证**（返回 requested/before/actual/adjusted/reasons/window）。
+
+        执行顺序按设备行为固定：需要写垂直参数而通道为 OFF → **先开启**（否则写入被
+        静默忽略）；垂直参数固定 **scale → offset**（反序必错，见类内说明②）；`display`
+        在参数写完之后再应用。`adjusted` 非空即"设备没照做"，附原因。
+        """
+        n = self._check_ch(ch)
+        want = {k: v for k, v in (("scale", scale), ("offset", offset),
+                                  ("coupling", coupling), ("probe", probe),
+                                  ("display", display)) if v is not None}
+        before = self._chan_state(n)
+        if not want:
+            return {"ch": n, "requested": {}, "before": before, "actual": before,
+                    "adjusted": None, "reasons": [], "window": self.vertical_window(n)}
+        reasons: list[str] = []
+        vertical = scale is not None or offset is not None
+        if vertical and not before["display"] and display is not False:
+            self.channel_display(n, True)   # ① 否则后续 SCALe/OFFSet 写入被静默忽略
+            reasons.append("通道原为 OFF，已先开启"
+                           "（OFF 状态下 SCALe/OFFSet 写入会被设备静默忽略）")
+        if coupling is not None:
+            self.channel_coupling(n, coupling)
+        if probe is not None:
+            self.channel_probe(n, probe)
+        if scale is not None:
+            self.channel_scale(n, scale)    # ② 必须先 scale：设备会按新档位等比缩放旧 offset
+        if offset is not None:
+            self.channel_offset(n, offset)
+        if display is not None:
+            self.channel_display(n, bool(display))
+
+        actual = self._chan_state(n)
+        adjusted: dict = {}
+        # ③ 回读比对（设备会量化/吸附/钳制，容差比较）
+        for key, got, want_v in (("scale", actual["scale_v_div"], scale),
+                                 ("offset", actual["offset_v"], offset),
+                                 ("probe", actual["probe_x"], probe)):
+            if want_v is None or got is None:
+                continue
+            if abs(float(got) - float(want_v)) > max(tol, abs(float(want_v)) * 0.02):
+                adjusted[key] = {"requested": want_v, "actual": got}
+                self._explain(key, float(want_v), float(got), reasons)
+        if coupling is not None and actual["coupling"]:
+            if not str(actual["coupling"]).upper().startswith(str(coupling).upper()[:3]):
+                reasons.append(f"耦合未生效：要求 {coupling}，回读 {actual['coupling']}")
+        if display is not None and actual["display"] != bool(display):
+            reasons.append(f"显示开关未生效：要求 {bool(display)}，回读 {actual['display']}")
+        if (scale is not None and offset is None
+                and before["offset_v"] is not None and actual["offset_v"] is not None
+                and abs(actual["offset_v"] - before["offset_v"]) > tol):
+            reasons.append(
+                f"偏置被设备等比缩放：{before['offset_v']:g} → {actual['offset_v']:g} V"
+                "（改 SCALe 会按新档位缩放 offset 以保持波形屏幕位置，属设备行为；"
+                "要固定偏置请在写档位后**显式再写 offset**）")
+        return {"ch": n, "requested": want, "before": before, "actual": actual,
+                "adjusted": adjusted or None, "reasons": reasons,
+                "window": self.vertical_window(n)}
+
+    def configure_timebase(self, scale: Optional[float] = None,
+                           offset: Optional[float] = None) -> dict:
+        """设置水平时基并回读（**两个都回读**——只回读被写的那一个等于没回读）。"""
+        before = {"scale_s_div": self.timebase_scale(), "offset_s": self.timebase_offset()}
+        if scale is not None:
+            self.timebase_scale(scale)
+        if offset is not None:
+            self.timebase_offset(offset)
+        actual = {"scale_s_div": self.timebase_scale(), "offset_s": self.timebase_offset()}
+        adjusted, reasons = {}, []
+        for key, want_v in (("scale_s_div", scale), ("offset_s", offset)):
+            got = actual[key]
+            if want_v is None or got is None:
+                continue
+            if abs(got - float(want_v)) > max(1e-12, abs(float(want_v)) * 0.02):
+                adjusted[key] = {"requested": want_v, "actual": got}
+                reasons.append(f"{key} 未精确生效：要求 {want_v:g}，回读 {got:g}")
+        return {"requested": {k: v for k, v in (("scale_s_div", scale),
+                                               ("offset_s", offset)) if v is not None},
+                "before": before, "actual": actual,
+                "adjusted": adjusted or None, "reasons": reasons,
+                "window_t": self.horizontal_window()}
+
+    @staticmethod
+    def _same_mnemonic(a: Optional[str], b: str) -> bool:
+        """SCPI 短/长形式对比（设备回短格式：NORM 对 NORMal、CHAN1 对 CHANnel1）。"""
+        if not a:
+            return False
+        x, y = a.strip().upper(), b.strip().upper()
+        return x.startswith(y[:4]) or y.startswith(x[:4]) or x[:4] == y[:4]
+
+    def configure_trigger(self, source: Optional[int] = None, slope: Optional[str] = None,
+                          level: Optional[float] = None, mode: Optional[str] = None,
+                          sweep: Optional[str] = None) -> dict:
+        """设置触发（源/斜率/电平/模式/扫描）并回读；枚举非法值直接拒绝（对照手册）。"""
+        if mode is not None and mode.upper() not in [m.upper() for m in self.family.trigger_types]:
+            raise ValueError(f"invalid trigger mode: {mode!r}（可选 {self.family.trigger_types}）")
+        if sweep is not None and sweep.upper() not in [s.upper() for s in self.family.trigger_sweeps]:
+            raise ValueError(f"invalid sweep: {sweep!r}（可选 {self.family.trigger_sweeps}）")
+        if slope is not None and slope.upper() not in [s.upper() for s in self.family.edge_slopes]:
+            raise ValueError(f"invalid slope: {slope!r}（可选 {self.family.edge_slopes}）")
+        src_name = f"CHANnel{self._check_ch(source)}" if source is not None else None
+        before = {"mode": self.trigger_mode(), "sweep": self.sweep(),
+                  "edge_source": self.edge_source(), "edge_slope": self.edge_slope(),
+                  "edge_level_v": self.edge_level()}
+        if mode is not None:
+            self.trigger_mode(mode)
+        if sweep is not None:
+            self.sweep(sweep)
+        self.edge_trigger(source=source, slope=slope, level=level)
+        actual = {"mode": self.trigger_mode(), "sweep": self.sweep(),
+                  "edge_source": self.edge_source(), "edge_slope": self.edge_slope(),
+                  "edge_level_v": self.edge_level()}
+        adjusted, reasons = {}, []
+        if mode is not None and not self._same_mnemonic(actual["mode"], mode):
+            adjusted["mode"] = {"requested": mode, "actual": actual["mode"]}
+            reasons.append(f"触发模式未生效：要求 {mode}，回读 {actual['mode']}")
+        if sweep is not None and not self._same_mnemonic(actual["sweep"], sweep):
+            adjusted["sweep"] = {"requested": sweep, "actual": actual["sweep"]}
+            reasons.append(f"触发扫描未生效：要求 {sweep}，回读 {actual['sweep']}")
+        if source is not None and not self._same_mnemonic(actual["edge_source"], src_name):
+            adjusted["source"] = {"requested": src_name, "actual": actual["edge_source"]}
+            reasons.append(f"触发源未生效：要求 {src_name}，回读 {actual['edge_source']}")
+        if slope is not None and not self._same_mnemonic(actual["edge_slope"], slope):
+            adjusted["slope"] = {"requested": slope, "actual": actual["edge_slope"]}
+            reasons.append(f"触发斜率未生效：要求 {slope}，回读 {actual['edge_slope']}")
+        if (level is not None and actual["edge_level_v"] is not None
+                and abs(actual["edge_level_v"] - float(level)) > max(0.02, abs(float(level)) * 0.02)):
+            adjusted["level"] = {"requested": level, "actual": actual["edge_level_v"]}
+            win = self.vertical_window(source) if source is not None else None
+            extra = (f"；该通道窗口 [{win['bottom_v']:.3g}, {win['top_v']:.3g}] V"
+                     if win else "")
+            reasons.append(f"触发电平未生效：要求 {level:g} V，回读 {actual['edge_level_v']:g} V{extra}")
+        return {"requested": {k: v for k, v in (("source", src_name), ("slope", slope),
+                                               ("level", level), ("mode", mode),
+                                               ("sweep", sweep)) if v is not None},
+                "before": before, "actual": actual,
+                "adjusted": adjusted or None, "reasons": reasons}
+
     # ---------- 测量 ----------
     def measure_source(self, source: Optional[str] = None) -> Optional[str]:
         if source is None:
@@ -369,6 +620,209 @@ class RigolScope:
         if isinstance(src, int) or (isinstance(src, str) and src.strip().isdigit()):
             return f"CHANnel{self._check_ch(int(src))}"
         return str(src).strip().upper()
+
+    # ---------- 读数可信度 / 自动定标 ----------
+    # 现场教训（tool_optimization §P1-4 / §P2-5）：单次读数抖动大、且"无有效值"
+    # 把三种完全不同的原因混成一句话，误导排查方向。这里把它们分开。
+
+    def measure_stats(self, item: str, src: Union[int, str] = 1,
+                      src2: Optional[Union[int, str]] = None, samples: int = 5,
+                      interval_s: float = 0.05) -> dict:
+        """主机侧连读 N 次给统计量（无设备侧统计命令时的通用做法）。
+
+        无效读数（9.9E37）单独计数、不混进统计；全无效时抛 ValueError（带最后一次原因）。
+        现场依据：同一状态连读三次 7.4747/7.4749/7.4749 V —— 结论要用均值，不是单次读数。
+        """
+        n = int(samples)
+        if not 1 <= n <= 200:
+            raise ValueError(f"samples 需在 1~200（给 {samples}）")
+        if n == 1:
+            return {"item": item, "source": self._norm_source(src), "samples": 1,
+                    "count": 1, "invalid": 0,
+                    "mean": self.measure_item(item, src, src2),
+                    "min": None, "max": None, "stddev": None, "values": None}
+        vals: list[float] = []
+        invalid, last_err = 0, None
+        for i in range(n):
+            try:
+                vals.append(self.measure_item(item, src, src2, open_measurement=(i == 0)))
+            except ValueError as e:
+                invalid += 1
+                last_err = str(e)[:120]
+            if i != n - 1:
+                time.sleep(max(0.0, interval_s))
+        if not vals:
+            raise ValueError(f"{item} 连续 {n} 次均无有效值（invalid={invalid}）：{last_err}")
+        mean = sum(vals) / len(vals)
+        var = (sum((v - mean) ** 2 for v in vals) / (len(vals) - 1)) if len(vals) > 1 else 0.0
+        return {"item": item, "source": self._norm_source(src), "samples": n,
+                "count": len(vals), "invalid": invalid, "mean": mean,
+                "min": min(vals), "max": max(vals), "stddev": math.sqrt(var),
+                "values": vals[:12], "values_truncated": len(vals) > 12,
+                "probe_x": self.channel_probe(int(src)) if str(src).strip().isdigit() else None}
+
+    def diagnose_no_reading(self, item: str, src: Union[int, str] = 1) -> dict:
+        """无有效值（9.9E37）时的**原因分类**——不把三种原因混成一句话。
+
+        suspicious 取值：channel_off（通道显示关）/ off_screen（迹线在窗口外）/
+        near_edge（极值贴窗口上下沿 → 可能是"看着合理的假值"，必须换档）/
+        few_edges（屏内不足 2 个周期，时间/边沿类测量）/ no_signal。
+        返回里带 window（由 scale/offset/格数算出）与 evidence（逐条原始响应）。
+        ⚠ 诊断会临时打开 VMAX/VMIN 测量项（与 mho_measure_item 的行为一致）。
+        """
+        n: Optional[int] = None
+        s = self._norm_source(src)
+        if s.upper().startswith("CHAN"):
+            digits = "".join(ch for ch in s if ch.isdigit())
+            n = int(digits) if digits else None
+        evidence: dict = {"item": item, "source": s}
+        window = self.vertical_window(n) if n else None
+        if n is not None and not self.channel_display(n):
+            return {"suspicious": "channel_off", "channel": n, "window": window,
+                    "hint": f"CH{n} 显示为 OFF——通道未开启时没有波形可测",
+                    "evidence": evidence}
+        vmax = vmin = None
+        if n is not None:
+            for key, it in (("vmax", "VMAX"), ("vmin", "VMIN")):
+                try:
+                    val = self.measure_item(it, n)
+                except ValueError as e:
+                    evidence[key + "_error"] = str(e)[:100]
+                    val = None
+                evidence[key] = val
+                if key == "vmax":
+                    vmax = val
+                else:
+                    vmin = val
+        if window and vmax is not None and vmin is not None:
+            band = 0.08 * window["height_v"]
+            if vmax >= window["top_v"] - band or vmin <= window["bottom_v"] + band:
+                return {"suspicious": "near_edge", "channel": n, "window": window,
+                        "hint": ("极值贴到窗口边沿（±8% 带内）：**部分削顶时测量值可能是"
+                                 f"\"看着合理的假值\"**，必须换档重测（当前窗口 "
+                                 f"[{window['bottom_v']:.3g}, {window['top_v']:.3g}] V，"
+                                 f"建议放大 scale 或调整 offset）"),
+                        "evidence": evidence}
+        if window and vmax is None and vmin is None:
+            return {"suspicious": "off_screen", "channel": n, "window": window,
+                    "hint": (f"极值与 {item} 均无有效值：迹线很可能在屏幕外。当前窗口 "
+                             f"[{window['bottom_v']:.3g}, {window['top_v']:.3g}] V"
+                             f"（中心 −offset = {window['center_v']:.3g} V）——"
+                             "放大 scale 让窗口变宽，或调 offset 把信号移进窗"),
+                    "evidence": evidence}
+        if item in EDGE_DEPENDENT_ITEMS:
+            hw = self.horizontal_window()
+            need = (f"（时间窗 {hw['span_s']:.3g} s/屏，{hw['note']}）" if hw else "")
+            return {"suspicious": "few_edges", "channel": n, "window": window,
+                    "window_t": hw,
+                    "hint": f"{item} 需要屏内 ≥2 个边沿{need}——放宽时基（增大 s/div）再测；"
+                            "现场实例：20 µs/div 看 5 kHz 读不到，100 µs/div 立刻读到 4.9993 kHz",
+                    "evidence": evidence}
+        return {"suspicious": "no_signal" if vmax is None else "unexplained",
+                "channel": n, "window": window,
+                "hint": "通道已开、读数无效：确认信号接在该通道、触发在跑（截图看形态最直观）",
+                "evidence": evidence}
+
+    def _probe_warning(self, n: int) -> list[str]:
+        """探头比是隐性口径（幅度类读数差 10×，频率不受影响）——非 1X 时提示。"""
+        x = self.channel_probe(n)
+        if x and abs(x - 1.0) > 1e-9:
+            return [f"CH{n} 探头比 {x:g}X：幅度/触发电平类读数为**探头端**电压，"
+                    "频率不受影响"]
+        return []
+
+    def fit_channel(self, ch: int, occupancy: float = 0.7, margin: float = 0.08,
+                    max_iter: int = 12) -> dict:
+        """单通道垂直自动定标/居中——**只动该通道的 scale/offset**（不是全局 AUToset）。
+
+        判据（设计文档 §1）：① 可测（非 9.9E37）② 不贴边（margin 带）③ 占屏率 ∈ [0.4, 0.9]。
+        算法（同文档 §2）：通道必须已开 → 不可测/贴边则沿 1-2-5 逐档放大 →
+        `scale = span/(occupancy×格数)`、`offset = −中心` → **先 scale 后 offset** 写回 →
+        重测验证。平直信号判"平直"并**保持档位**（不猜）；偏置超量程/未收敛如实报，不假装成功。
+        """
+        n = self._check_ch(ch)
+        fam = self.family
+        if fam.vdivs is None:
+            raise ValueError(f"{fam.label} 的垂直格数与中心约定未实测标定，不能自动定标"
+                             "（设计文档 §5：不要照抄别家族的值）")
+        if not self.channel_display(n):
+            raise RuntimeError(
+                f"CH{n} 显示为 OFF：通道关闭时档位/偏置写入会被静默忽略，"
+                f"请先开启（configure_channel(ch={n}, display=True)）再定标")
+        vdivs = fam.vdivs
+        before = self._chan_state(n)
+        trace: list[dict] = []
+        vmax = vmin = None
+        converged = False
+        for i in range(max(1, int(max_iter))):
+            scale_now = self.channel_scale(n)
+            err = None
+            try:
+                vmax = self.measure_item("VMAX", n)
+                vmin = self.measure_item("VMIN", n)
+            except ValueError as e:
+                err = str(e)[:100]
+            win = self.vertical_window(n)
+            trace.append({"iter": i + 1, "scale_v_div": scale_now, "vmax": vmax,
+                          "vmin": vmin, "error": err})
+            if err is None and win:
+                band = margin * win["height_v"]
+                if vmax < win["top_v"] - band and vmin > win["bottom_v"] + band:
+                    converged = True
+                    break
+            nxt = snap_up(scale_now, fam.scale_range[1] if fam.scale_range else None)
+            if nxt is None:
+                return {"ch": n, "ok": False, "reason": "超出可测范围",
+                        "note": "逐档放大到最大档仍不可测——信号超出量程或没有信号；"
+                                "物理上无法从被削掉的波形里恢复真实幅度",
+                        "before": before, "after": self._chan_state(n),
+                        "trace": trace, "warnings": self._probe_warning(n)}
+            self.channel_scale(n, nxt)
+        if not converged:
+            return {"ch": n, "ok": False, "reason": f"未收敛（迭代上限 {max_iter}）",
+                    "before": before, "after": self._chan_state(n), "trace": trace,
+                    "warnings": self._probe_warning(n)}
+        win = self.vertical_window(n)
+        lsb = (win["height_v"] / float(2 ** fam.adc_bits)) if (win and fam.adc_bits) else 0.0
+        span = float(vmax) - float(vmin)
+        flat = span < max(3.0 * lsb, 1e-12)
+        note = None
+        if flat:
+            target_scale = win["scale_v_div"]        # 平直：保持档位，不猜
+            note = ("平直/无信号：保持当前档位、按均值居中（**不猜档位**——猜了就是假精度；"
+                    "需要更细量程请显式设 scale）")
+        else:
+            target_scale = snap_1_2_5(span / (float(occupancy) * vdivs))
+        applied = self.configure_channel(n, scale=target_scale,
+                                         offset=-(float(vmax) + float(vmin)) / 2.0)
+        time.sleep(0.2)                              # 等设备重算测量
+        out: dict = {"ch": n, "flat": flat, "before": before,
+                     "requested": applied["requested"], "after": applied["actual"],
+                     "adjusted": applied["adjusted"], "reasons": applied["reasons"],
+                     "window": self.vertical_window(n), "trace": trace,
+                     "warnings": self._probe_warning(n)}
+        if note:
+            out["note"] = note
+        occ = margin_ok = None
+        try:
+            vmax2 = self.measure_item("VMAX", n)
+            vmin2 = self.measure_item("VMIN", n)
+            w2 = self.vertical_window(n)
+            out["measured"] = {"vmax": vmax2, "vmin": vmin2, "vpp": vmax2 - vmin2}
+            if w2 and w2["height_v"]:
+                occ = (vmax2 - vmin2) / w2["height_v"]
+                band = margin * w2["height_v"]
+                margin_ok = bool(vmax2 < w2["top_v"] - band and vmin2 > w2["bottom_v"] + band)
+            out["occupancy"] = occ
+            out["margin_ok"] = margin_ok
+            out["ok"] = bool(margin_ok and (flat or (occ is not None and 0.4 <= occ <= 0.9)))
+        except ValueError as e:
+            out["ok"] = False
+            out["verify_error"] = str(e)[:140]
+        if not out["ok"] and "reason" not in out:
+            out["reason"] = ("定标后仍未达标（贴边或占屏率不在 [0.4,0.9]）：可能是偏置超出量程"
+                             "无法居中，或信号本身超出量程")
+        return out
 
     # ---------- 波形读取 ----------
     @staticmethod
@@ -495,17 +949,30 @@ class RigolScope:
 
     # ---------- 快照 ----------
     def snapshot(self) -> dict:
-        """只读快照（不改动设备配置）。"""
+        """只读快照（不改动设备配置）。
+
+        每通道在档位/偏置之外**附算** `center_v = −offset` 与 `window_v`
+        （中心 = −offset 是实测标定的设备约定，见 `configure_channel` 类内说明）；
+        格数未标定的家族（DHO）不附算——宁可没有，不给错的。
+        """
         chans = {}
         for ch in range(1, self.family.channels + 1):
             try:
-                chans[f"ch{ch}"] = {
+                c = {
                     "display": self.channel_display(ch),
                     "coupling": self.channel_coupling(ch),
                     "scale_v_div": self.channel_scale(ch),
                     "offset_v": self.channel_offset(ch),
                     "probe_x": self.channel_probe(ch),
                 }
+                if self.family.vdivs and c["scale_v_div"] is not None and c["offset_v"] is not None:
+                    half = self.family.vdivs / 2.0 * c["scale_v_div"]
+                    c["center_v"] = -c["offset_v"]
+                    c["window_v"] = [round(-c["offset_v"] - half, 9),
+                                     round(-c["offset_v"] + half, 9)]
+                if c["probe_x"] not in (None, 1.0) and c["probe_x"] is not None:
+                    c["probe_note"] = f"探头比 {c['probe_x']:g}X（幅度类读数为探头端电压）"
+                chans[f"ch{ch}"] = c
             except Exception as e:  # 单通道查询失败不影响整机快照
                 chans[f"ch{ch}"] = {"error": str(e)}
         return {
@@ -518,6 +985,7 @@ class RigolScope:
             "sample_rate_hz": self.sample_rate(),
             "timebase_scale_s_div": self.timebase_scale(),
             "timebase_offset_s": self.timebase_offset(),
+            "timebase_window_t": self.horizontal_window(),
             "trigger_mode": self.trigger_mode(),
             "trigger_sweep": self.sweep(),
             "edge_source": self.edge_source(),

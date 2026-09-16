@@ -11,7 +11,7 @@
 AI 客户端（DSH / Codex / Claude / opencode …，经 MCP stdio）
         │
         ▼
-mcp_instruments/server.py ─── 50 工具（46 专用 + 3 通用护栏 + 1 故障兜底），无状态连接+全局锁串行化
+mcp_instruments/server.py ─── 57 工具（53 专用 + 3 通用护栏 + 1 故障兜底），无状态连接+全局锁串行化
         │
         ├─▶ sds_control       Siglent SDS800X HD 示波器（波形/截图/测量/触发诊断/auto_scale）
         ├─▶ sdg_control       Siglent SDG2000X 信号源（BSWV 键值对）

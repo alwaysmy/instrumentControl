@@ -113,6 +113,23 @@ from common.resolver import (  # noqa: E402
 )
 
 
+def _pair_readback(cmd: str | None, resp: str | None) -> list[dict] | None:
+    """多段回读的**字段配名**：':C1:SCALe?;:C1:OFFSet?' → [{cmd,value}, {cmd,value}]。
+
+    现场教训（docs/tool_optimization_20260915.md §P2-6）：`;` 串联的多条回读原先
+    只把响应原样拼成 "a;b" 返回——没有字段名，调用方要自己数字段、**写错顺序不报错**。
+    这里按查询段与返回段一一配对；段数不符时如实说明（不硬配）。
+    """
+    if not cmd or resp is None or ";" not in cmd:
+        return None
+    units = [u.strip() for u in cmd.split(";") if u.strip()]
+    vals = [v.strip() for v in resp.split(";")]
+    if len(units) != len(vals):
+        return [{"cmd": cmd, "value": resp,
+                 "note": f"段数不符（查询 {len(units)} 段 / 返回 {len(vals)} 段），未配对名"}]
+    return [{"cmd": u, "value": v} for u, v in zip(units, vals)]
+
+
 def _ok(model, result, resource=None):
     d = {"ok": True, "model": model, "result": result}
     if resource:
@@ -127,6 +144,21 @@ def _err(error_type, msg, model=None, resource=None):
     if resource:
         d["resource"] = resource
     return json.dumps(d, ensure_ascii=False, default=str)
+
+
+class ToolDiagnosis(Exception):
+    """带**结构化诊断字段**的工具异常：错误分类照旧（error_type），另把
+    suspicious/hint/window/evidence 等诊断键并进返回体。
+
+    现场教训（docs/tool_optimization_20260915.md §P1-4）："无有效值"把
+    **离屏 / 屏内边沿不足 / 没接信号** 三种完全不同的原因混成一句话，误导排查方向。
+    诊断字段让调用方直接看到判据、窗口和建议，不必先截图猜。
+    """
+
+    def __init__(self, error_type: str, message: str, details: dict | None = None):
+        super().__init__(message)
+        self.error_type = error_type
+        self.details = details or {}
 
 
 def _call(model_name, connect_fn, fn, close_fn=None, resource=None,
@@ -154,6 +186,11 @@ def _call(model_name, connect_fn, fn, close_fn=None, resource=None,
         res = _out_res(model_name, resource)
         try:
             return _ok(model_name, fn(dev), res)
+        except ToolDiagnosis as e:
+            # 诊断字段与错误一起返回：调用方一眼看到"为什么没读数 + 该改什么"
+            d = json.loads(_err(e.error_type, str(e), model_name, res))
+            d.update(e.details)
+            return json.dumps(d, ensure_ascii=False, default=str)
         except ValueError as e:
             return _err("param_validation", str(e), model_name, res)
         except RuntimeError as e:
@@ -896,7 +933,8 @@ def instr_query(resource: str, cmd: str, timeout_ms: int = 5000) -> str:
     if _is_forbidden(cmd) or not _is_query_only(cmd):
         _audit_scpi("instr_query", resource, cmd, refused="multi_or_forbidden")
         return _err("forbidden",
-                    f"instr_query 只接受纯查询消息（每个 ';' 分段都以 '?' 结尾）"
+                    f"instr_query 只接受纯查询消息：每个 ';' 分段都必须是查询单元"
+                    f"（命令头带 '?'，**问号后可带参数**，如 ':MEASure:ITEM? VPP,CHANnel1'），"
                     f"且不得含复位/锁定类命令: {cmd!r}", "instruments", resource)
 
     def fn(c):
@@ -948,7 +986,9 @@ def instr_write(resource: str, cmd: str, readback_cmd: str | None = None,
         rb = c.query(readback_cmd).strip() if readback_cmd else None
         return {"written": cmd, "pre_errors": pre or None, "syst_errors": post,
                 "readback": {"cmd": readback_cmd, "response": rb}
-                if readback_cmd else None}
+                if readback_cmd else None,
+                # 多段回读额外给"段↔值"配对（避免调用方自己数字段、写错顺序不报错）
+                "readback_fields": _pair_readback(readback_cmd, rb)}
 
     result = _guarded_call(resource, timeout_ms, fn)
     outcome = json.loads(result)
@@ -1385,11 +1425,69 @@ def dho_status(resource: str | None = None) -> str:
 
 
 @device_tool()
-def dho_measure_item(item: str, ch: int = 1, resource: str | None = None) -> str:
-    """DHO 单次测量查询。item 枚举（RIGOL 表）: VPP/VMAX/VMIN/VAMP/VAVG/VRMS/
-    PERiod/FREQuency/PWIDth/NWIDth/PDUTy/RTIMe/FTIMe 等；ch=1-4。
-    无有效测量（如通道无信号）报 param_validation 错误，文案含 9.9E37。"""
-    return _call("DHO", lambda: _dho(resource), lambda s: s.measure_item(item, ch))
+def dho_measure_item(item: str, ch: int = 1, ch2: int | None = None,
+                     samples: int = 1, resource: str | None = None) -> str:
+    """DHO 测量查询。item 枚举（RIGOL 表）: VPP/VMAX/VMIN/VAMP/VAVG/VRMS/
+    PERiod/FREQuency/PWIDth/NWIDth/PDUTy/RTIMe/FTIMe 等；ch=1-4；
+    双信源项（延迟/相位）需给 ch2。
+    `samples>1` 时主机侧连读 N 次返回 mean/min/max/stddev（单次读数抖动大，用均值下结论）；
+    无有效读数时分类报因（suspicious/hint：channel_off / off_screen / near_edge /
+    few_edges / no_signal）。
+    ⚠ **DHO 不在本实验台**：读路径来自共享内核（离线验证 + 手册），写路径未实机验证；
+    离屏判据依赖"垂直格数/中心=−offset"标定，DHO 未标定 → 暂无窗口类判据。"""
+    def fn(s: DHO):
+        if samples is None or int(samples) <= 1:
+            try:
+                val = s.measure_item(item, ch, ch2)
+            except ValueError as e:
+                try:
+                    diag = s.diagnose_no_reading(item, ch)
+                except Exception as de:
+                    diag = {"diagnosis_error": f"{type(de).__name__}: {de}"}
+                raise ToolDiagnosis("device_error", str(e), diag)
+            return {"item": item, "value": val, "ch": ch, "probe_x": s.channel_probe(ch)}
+        st = s.measure_stats(item, ch, ch2, samples=int(samples))
+        st["ch"] = ch
+        return st
+    return _call("DHO", lambda: _dho(resource), fn)
+
+
+@device_tool()
+def dho_channel(ch: int, scale: float | None = None, offset: float | None = None,
+                coupling: str | None = None, probe: float | None = None,
+                display: bool | None = None, resource: str | None = None) -> str:
+    """DHO 通道垂直参数设置（档位/偏置/耦合/探头比/显示）——**写后回读验证**。
+
+    与 mho_channel 同一套内核语义：中心 = −offset、固定 **scale → offset** 顺序、
+    通道 OFF 时写垂直参数会自动先开（OFF 下写入被静默忽略）、偏置被钳制时 adjusted + reasons。
+    ⚠ **DHO 不在本实验台**：本工具为共享内核的离线验证 + 手册核对，未实机验证。"""
+    def fn(s: DHO):
+        return s.configure_channel(ch, scale=scale, offset=offset, coupling=coupling,
+                                   probe=probe, display=display)
+    return _call("DHO", lambda: _dho(resource), fn)
+
+
+@device_tool()
+def dho_timebase(scale: float | None = None, offset: float | None = None,
+                 resource: str | None = None) -> str:
+    """DHO 水平时基设置（s/div 与水平位移），两者都回读。
+    ⚠ 时基是**全局**的（影响所有通道）；**DHO 不在本实验台**，未实机验证。"""
+    def fn(s: DHO):
+        return s.configure_timebase(scale=scale, offset=offset)
+    return _call("DHO", lambda: _dho(resource), fn)
+
+
+@device_tool()
+def dho_trigger(source: int | None = None, level: float | None = None,
+                slope: str | None = None, mode: str | None = None,
+                sweep: str | None = None, resource: str | None = None) -> str:
+    """DHO 触发设置（边沿源/电平/斜率、触发模式/扫描）——写后回读，枚举对照手册校验。
+    mode ∈ DHO 手册 3.27.1 的 17 项（**CAN/LIN 仅 DHO900**）；slope 第三态 RFALl；
+    ⚠ 触发模式/扫描是**全局**设定；**DHO 不在本实验台**，未实机验证。"""
+    def fn(s: DHO):
+        return s.configure_trigger(source=source, level=level, slope=slope,
+                                   mode=mode, sweep=sweep)
+    return _call("DHO", lambda: _dho(resource), fn)
 
 
 # ============ MHO 示波器（RIGOL MHO900 系列，实测基准 MHO984D） ============
@@ -1404,8 +1502,8 @@ def mho_status(resource: str | None = None) -> str:
 
 @device_tool()
 def mho_measure_item(item: str, ch: int = 1, ch2: int | None = None,
-                     resource: str | None = None) -> str:
-    """MHO 单次测量查询（手册 3.17.2 参数表）。
+                     samples: int = 1, resource: str | None = None) -> str:
+    """MHO 测量查询（手册 3.17.2 参数表）。
 
     单信源 item: VMAX/VMIN/VPP/VTOP/VBASe/VAMP/VAVG/VRMS/OVERshoot/PREShoot/
     MARea/MPARea/PERiod/FREQuency/RTIMe/FTIMe/PWIDth/NWIDth/PDUTy/NDUTy/
@@ -1413,10 +1511,117 @@ def mho_measure_item(item: str, ch: int = 1, ch2: int | None = None,
     PEDGes/NEDGes/ACRMs；ch=1-4。
     双信源 item（需同时给 ch2）: RRDelay/RFDelay/FRDelay/FFDelay（延迟）、
     RRPHase/RFPHase/FRPHase/FFPHase（相位，四组合=先 A 后 B 的沿型）。
-    无有效读数（如无信号测周期）报 device_error/param_validation，文案含 9.9E37。
-    ⚠ 信号超屏时读数被钳制在屏界不可信——形态判断请用 mho_screenshot 看图。"""
-    return _call("MHO", lambda: _mho(resource),
-                 lambda s: {"item": item, "value": s.measure_item(item, ch, ch2)})
+
+    **samples>1**：主机侧连读 N 次（≤200）返回 mean/min/max/stddev/count/invalid——
+    单次读数抖动明显，结论要用均值（现场实测同状态连读得 7.4747/7.4749/7.4749 V）；
+    无效读数单独计数，不混进统计。
+    **无有效读数时分类报因**（error_type=device_error，另带 suspicious/hint/window/
+    evidence）：`channel_off` 通道显示关 / `off_screen` 迹线在窗口外 / `near_edge`
+    极值贴窗口边沿（**部分削顶时会给出"看着合理的假值"**，必须换档）/ `few_edges`
+    屏内不足 2 个周期（时间/边沿类，给出时基建议）/ `no_signal`。
+    `probe_x` 与 warnings：探头比非 1X 时幅度类读数为**探头端**电压（频率不受影响）。
+    ⚠ 形态判断请用 mho_screenshot 看图（设备读数在超屏时不可信）。"""
+    def fn(s: MHO):
+        warnings = list(s._probe_warning(ch))
+        if samples is None or int(samples) <= 1:
+            try:
+                val = s.measure_item(item, ch, ch2)
+            except ValueError as e:
+                try:
+                    diag = s.diagnose_no_reading(item, ch)
+                except Exception as de:  # 诊断本身失败不能掩盖原错误
+                    diag = {"diagnosis_error": f"{type(de).__name__}: {de}"}
+                raise ToolDiagnosis("device_error", str(e), diag)
+            out = {"item": item, "value": val, "ch": ch,
+                   "probe_x": s.channel_probe(ch)}
+            hw = s.horizontal_window()
+            if item.strip().upper().startswith(("FREQ", "PER")) and hw and val:
+                cycles = hw["span_s"] * (val if item.strip().upper().startswith("FREQ")
+                                         else 1.0 / val)
+                if cycles < 2:
+                    warnings.append(
+                        f"屏内约 {cycles:.2f} 个周期（时间窗 {hw['span_s']:.3g} s，"
+                        f"{hw['note']}）：读数可能不可靠，建议放宽时基")
+            if warnings:
+                out["warnings"] = warnings
+            return out
+        st = s.measure_stats(item, ch, ch2, samples=int(samples))
+        st["ch"] = ch
+        if warnings:
+            st["warnings"] = warnings
+        return st
+    return _call("MHO", lambda: _mho(resource), fn)
+
+
+@device_tool()
+def mho_channel(ch: int, scale: float | None = None, offset: float | None = None,
+                coupling: str | None = None, probe: float | None = None,
+                display: bool | None = None, resource: str | None = None) -> str:
+    """MHO 通道垂直参数设置（档位/偏置/耦合/探头比/显示）——**写后回读验证**。
+
+    三条实测设备行为已在工具内处理（证据 docs/tool_optimization_20260915.md §P1-3）：
+    ① **屏幕中心电压 = −offset**（不是 +offset；按 +offset 理解会把波形顶出屏幕）；
+    ② 改 scale 会**等比缩放 offset**（设备行为，保持波形屏幕位置）→ 固定按
+       **scale → offset** 顺序写；只写 scale 时，偏置的变化会写进 reasons；
+    ③ 通道 OFF 时写 SCALe/OFFSet 被**静默忽略**（无错误码）→ 需要写垂直参数时自动
+       先开通道（reasons 里说明）；display=False 在参数写完后才关。
+    偏置有硬件量程上限（实测本机 ±20 V，与档位无关）：被钳制时 `adjusted` 非空 +
+    reasons 说明，不混成成功。
+    返回 {requested, before, actual, adjusted, reasons, window}，window=[bottom, top]。
+    **只影响指定通道**——多信号实验台上不动别人的通道。"""
+    def fn(s: MHO):
+        return s.configure_channel(ch, scale=scale, offset=offset, coupling=coupling,
+                                   probe=probe, display=display)
+    return _call("MHO", lambda: _mho(resource), fn)
+
+
+@device_tool()
+def mho_timebase(scale: float | None = None, offset: float | None = None,
+                 resource: str | None = None) -> str:
+    """MHO 水平时基设置（s/div 与水平位移）——**两者都回读**（只回读被写的那一个等于没回读）。
+
+    ⚠ 时基是**全局**的：影响所有通道的显示与"屏内几个周期"，共享实验台上会改变别人的观察。
+    屏内不足 2 个周期时频率类测量读不到（现场：20 µs/div 看 5 kHz 读不到，
+    100 µs/div 立刻读到 4.9993 kHz——是窗口不够，不是精度问题）。
+    返回 {requested, before, actual, adjusted, reasons, window_t}。"""
+    def fn(s: MHO):
+        return s.configure_timebase(scale=scale, offset=offset)
+    return _call("MHO", lambda: _mho(resource), fn)
+
+
+@device_tool()
+def mho_trigger(source: int | None = None, level: float | None = None,
+                slope: str | None = None, mode: str | None = None,
+                sweep: str | None = None, resource: str | None = None) -> str:
+    """MHO 触发设置（边沿源/电平/斜率、触发模式/扫描）——写后回读，枚举对照手册校验。
+
+    slope ∈ POSitive/NEGative/RFALl（第三态两系列都是 RFALl）；
+    mode ∈ 手册 3.27.1 的 20 项（EDGE/PULSe/…/IIS/FLEXray/M1553）；
+    sweep ∈ AUTO/NORMal/SINGle。下发顺序 mode → sweep → 源/斜率/电平。
+    ⚠ 触发模式/扫描是**全局**设定，共享实验台上会影响他人观察。
+    返回 {requested, before, actual, adjusted, reasons}；电平受限时 reasons 里带该通道窗口范围。"""
+    def fn(s: MHO):
+        return s.configure_trigger(source=source, level=level, slope=slope,
+                                   mode=mode, sweep=sweep)
+    return _call("MHO", lambda: _mho(resource), fn)
+
+
+@device_tool(budget_s=300.0)   # 逐档放大搜索最多 12 轮，每轮若干次测量
+def mho_fit_channel(ch: int, occupancy: float = 0.7, margin: float = 0.08,
+                    max_iter: int = 12, resource: str | None = None) -> str:
+    """MHO **单通道**垂直自动定标/居中——只动该通道的 scale/offset（不是全局 autoset）。
+
+    判据（docs/示波器自动定标设计-2026-09-15.md §1）：① 可测（读数非 9.9E37）
+    ② 不贴边（margin 带内）③ 占屏率 ∈ [0.4, 0.9]（目标 occupancy，默认 0.7）。
+    算法（同文档 §2）：通道必须已开 → 不可测/贴边则沿 1-2-5 逐档放大 →
+    scale = span/(occupancy×8 格)、offset = −中心 → **先 scale 后 offset** 写回 → 重测验证。
+    平直/无信号 → 判 `flat`：**保持档位**、按均值居中（不猜档位，猜了就是假精度）；
+    超出量程/未收敛 → ok=false + reason + trace 证据，不假装成功。
+    返回 before/after/measured/occupancy/margin_ok/adjusted/reasons/trace/warnings。
+    与 mho_autoset 的区别：autoset 是**全局破坏性**的；本工具只动一个通道、每步可读可解释。"""
+    def fn(s: MHO):
+        return s.fit_channel(ch, occupancy=occupancy, margin=margin, max_iter=max_iter)
+    return _call("MHO", lambda: _mho(resource), fn)
 
 
 @device_tool()
@@ -1794,4 +1999,20 @@ threading.Thread(target=_prewarm_visa_rm, daemon=True).start()
 
 
 if __name__ == "__main__":
+    # 启动自检（P0-1③，docs/tool_optimization_20260915.md）：把"查询式判据"的实测结果
+    # 打一行到 **stderr**。历史事故：磁盘代码已改、跑着的进程仍是旧规则，调用方被误导为
+    # "工具不支持参数化查询"，白绕一圈。stdout 是 JSON-RPC 协议通道，绝不能打印。
+    try:
+        print("[instrumentControl] 启动自检 | 参数化查询 "
+              f"':MEASure:ITEM? VPP,CHANnel1' → query_only="
+              f"{_is_query_only(':MEASure:ITEM? VPP,CHANnel1')} | "
+              "多段纯回读 ':CHANnel4:DISPlay?;:CHANnel4:SCALe?' → query_only="
+              f"{_is_query_only(':CHANnel4:DISPlay?;:CHANnel4:SCALe?')} | "
+              "夹带写 ':CHANnel4:DISPlay?;:OUTP4 ON' → query_only="
+              f"{_is_query_only(':CHANnel4:DISPlay?;:OUTP4 ON')}（False=会被拒） | "
+              f"复位 '*RST' → forbidden={_is_forbidden('*RST')}",
+              file=sys.stderr, flush=True)
+    except Exception as e:  # 自检失败不影响服务启动
+        print(f"[instrumentControl] 启动自检失败：{type(e).__name__}: {e}",
+              file=sys.stderr, flush=True)
     mcp.run()

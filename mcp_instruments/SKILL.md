@@ -5,7 +5,7 @@ description: instrument MCP 服务器使用指引 — 七台仪器（SDS 示波�
 
 # instrument MCP 使用指引
 
-MCP server：`mcp_instruments/server.py`（50 工具 = 46 专用 + 3 通用护栏 + 1 故障兜底，七台设备）。
+MCP server：`mcp_instruments/server.py`（57 工具 = 53 专用 + 3 通用护栏 + 1 故障兜底，七台设备）。
 本文是 AI 选择工具/参数时的决策依据。DG832 的详细 SOP/踩坑见 skill `dg832-control`。
 
 ## 一、工具选择决策树
@@ -37,12 +37,19 @@ MCP server：`mcp_instruments/server.py`（50 工具 = 46 专用 + 3 通用护�
   测量 → dmm_measure（先 dmm_configure 设功能/量程更稳）
   看配置 → dmm_status
 
-DHO 示波器 → dho_status / dho_measure_item
+DHO 示波器 → dho_status / dho_measure_item / dho_channel / dho_timebase / dho_trigger
+  （⚠ DHO 不在本实验台：读路径同共享内核，**写路径未实机验证**）
 
 MHO900 示波器（MHO984D 实测基准）：
-  全量状态 → mho_status（注意采样率随开启通道数下降：1~2ch 4GSa/s、3~4ch 1GSa/s）
+  全量状态 → mho_status（每通道附 `center_v = −offset` 与 `window_v`；采样率随开启通道数下降：
+    1~2ch 4GSa/s、3~4ch 1GSa/s）
   读测量值 → mho_measure_item（单信源 VPP/VMAX/VAVG/VRMS/FREQuency…；
     双信源延迟/相位 RRDelay/RFDelay/FRDelay/FFDelay、RRPHase/RFPHase/FRPHase/FFPHase 需 ch2）
+    **结论要用均值 → samples=5**（返回 mean/min/max/stddev，无效读数单独计数）
+  设档位/偏置/耦合/探头 → mho_channel（**先 scale 后 offset 已在工具内固定**；返回
+    requested/actual/adjusted/reasons/window；通道 OFF 时会自动先开——OFF 下写入被静默忽略）
+  把某通道波形弄"合适居中" → mho_fit_channel(ch)（只动该通道；平直信号判 flat 不猜档位）
+  改时基/触发 → mho_timebase / mho_trigger（**都是全局项**，共享实验台上会改变他人观察）
   判断削顶/居中/有无波形 → mho_screenshot（返回 PNG 路径，**直接 Read 看图**）
   读波形 → mho_get_waveform（NORMal 1~1000 点最常用；RAW 内存波形需先 mho_acquisition("stop")）
   无波形且确认"信号简单周期 + 无他人在用通道" → mho_autoset(confirm=True)（**全局破坏性**）
@@ -119,8 +126,13 @@ DG832 信号源（RIGOL DG800 系列）：
 | dmm_nplc | value? | 电压 DC 积分时间 NPLC（0.02/0.2/1/10/100，越大越准越慢）；无参查询，有参设置后回读 |
 | dmm_measure | function | volt_dc/volt_ac/curr_dc/curr_ac/res/fres/cont/cap/diod/freq |
 | dmm_configure | range_v | 设定量程后 :CONF? 回读滞后一拍，以实测为准 |
-| dho_measure_item | item | RIGOL 长名：VPP/VMAX/VAVG/PERiod/FREQuency...；无值报 param_validation 错误（文案含 9.9E37）|
-| mho_measure_item | item, ch, ch2? | 手册 3.17.2 表：单信源 VMAX/VMIN/VPP/VTOP/VBASe/VAMP/VAVG/VRMS/MARea/MPARea/PERiod/FREQuency/RTIMe/FTIMe/PWIDth/PDUTy/PPULses/PEDGes/ACRMs…；双信源 RRDelay/RRPHase 等需给 ch2；无有效值报错含 9.9E37（RIGOL 哨兵） |
+| dho_measure_item | item, ch, ch2?, samples? | RIGOL 长名：VPP/VMAX/VAVG/PERiod/FREQuency...；samples>1 给均值统计；无值分类报因（suspicious/hint）|
+| dho_channel / dho_timebase / dho_trigger | 同 mho_* 同名工具 | DHO 的设置类工具（同一套内核语义）；⚠ DHO 不在本台，未实机验证 |
+| mho_measure_item | item, ch, ch2?, samples? | 手册 3.17.2 表：单信源 VMAX/VMIN/VPP/VTOP/VBASe/VAMP/VAVG/VRMS/MARea/MPARea/PERiod/FREQuency/RTIMe/FTIMe/PWIDth/PDUTy/PPULses/PEDGes/ACRMs…；双信源 RRDelay/RRPHase 等需给 ch2；**samples=5** 连读给 mean/min/max/stddev；无有效值时 `suspicious` ∈ channel_off/off_screen/near_edge/few_edges/no_signal + `hint`；返回带 `probe_x`（探头比 ≠1 时幅度类读数是**探头端**电压）|
+| mho_channel | ch, scale?, offset?, coupling?, probe?, display? | **垂直设置**：固定 **scale→offset** 顺序（改 scale 会等比缩放 offset）；通道 OFF 时自动先开；偏置超量程（实测 ±20 V）→ `adjusted`+`reasons`；返回 `window`=[bottom, top]（**中心 = −offset**）。只动指定通道 |
+| mho_timebase | scale?, offset? | 时基（s/div、位移）**两者都回读**；**全局项**。屏内 <2 个周期时频率读不到（20 µs/div ↔ 100 µs/div 实测）|
+| mho_trigger | source?, level?, slope?, mode?, sweep? | 边沿源/电平/斜率 + 模式/扫描（枚举对照手册）；**全局项**；电平受限时 reasons 带该通道窗口范围 |
+| mho_fit_channel | ch, occupancy=0.7, margin=0.08, max_iter=12 | **单通道自动定标/居中**：判据 可测/不贴边/占屏率 0.4~0.9；平直信号 `flat=true` 且**保持档位不猜**；超量程/未收敛 → `ok=false`+`reason`+`trace` 证据。**不是 autoset**（只动一个通道）|
 | mho_get_waveform | ch, points=1000, mode, fmt, save_csv | NORMal **最多 1000 点**（超限报 param_validation）；RAW/MAXimum 可多但 RAW 必须已 STOP；fmt=BYTE/WORD/ASCii；voltage=(raw-YORigin-YREFerence)*YINCrement；RAW xinc 与采样率自洽（实测 5e-10s @2GSa/s） |
 | mho_screenshot | resource? | `:DISPlay:DATA? PNG` 原生 PNG（**无需转码**），存 TEST_DATA/mho/ 并返回路径，可直接 Read 读图 |
 | mho_acquisition | action=run\|stop\|single\|force | **stop 会冻结采集**（共享实验台上可能打断他人观察）；RAW 读内存波形前必须 stop，读完记得 run |
@@ -226,7 +238,12 @@ MCP 进程通常已带管理员（可直接用）；若工具报"需要管理员
 - `forbidden`：复位/存储覆写类，不可重试（不经 MCP，走测试脚本+显式授权）
 - `param_validation`：改参数（枚举/范围错、查询缺 `?`）
 - `connection`：设备离线（instr_discover 确认）
-- `device_error`：设备拒绝/测量超时（读 error 文本，多为信号/触发问题）
+- `device_error`：设备拒绝/测量超时（读 error 文本，多为信号/触发问题）。
+  **示波器"无有效值"会额外带诊断字段**（`mho_measure_item`/`dho_measure_item`）：
+  `suspicious` = `channel_off`（通道显示关）/ `off_screen`（迹线在窗口外，附当前窗口与建议）/
+  `near_edge`（极值贴窗口边沿，**可能是削顶后的假值**，必须换档）/ `few_edges`（屏内不足
+  2 个周期，附时基建议）/ `no_signal`；另有 `hint`、`window`、`evidence`（逐条原始响应）。
+  先看 `suspicious` 再决定下一步，不要一律"检查信号接入"。
 - `communication`：IO 异常（重试一次，仍失败检查连接）
 - `timeout`：调用超墙钟上限（默认 150s，可用 `INSTRUMENT_CALL_BUDGET_S` 调）——
   设备离线/总线挂起；**命令可能已下发**（写操作请回读确认）
@@ -234,7 +251,7 @@ MCP 进程通常已带管理员（可直接用）；若工具报"需要管理员
   通常是上一个调用很慢或已超时但 worker 仍在跑——等它结束后重试即可；只有在长时间
   持续 BUSY（数十秒到数分钟以上）时才说明底层驱动真卡死，此时重启 MCP 服务恢复
 
-### 超时/卡死语义（所有 50 个工具一致）
+### 超时/卡死语义（所有工具一致）
 
 自 2026-09-15 起，所有工具经**统一异步调用边界**执行（单 worker 执行器；设计评审见
 `docs/gpt_qa/20260915-mcp-async-refactor.md`）：

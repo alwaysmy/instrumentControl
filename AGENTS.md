@@ -76,6 +76,22 @@ AI/Agent 操作仪器必须遵守以下规范。
     e. **auto_scale 两条路径**（默认 SCPI 闭环只动目标通道，多信号安全；
        `:AUToset` 是全局破坏性命令会重置所有通道——仅在确认"简单周期信号+
        无其他已调好通道"时才 `use_autoset=True` 显式启用）。
+16. **示波器垂直档位/偏置的三条设备行为**（MHO984D 现场实测 2026-09-15，
+    证据 `docs/tool_optimization_20260915.md`；已固化成
+    `rigol_scope` 的 `configure_channel/fit_channel` 语义 + 离线回归
+    `TEST_SCRIPTS/common/verify_rigol_scope_semantics.py`）：
+    a. **屏幕中心电压 = −offset**（不是 +offset；按 +offset 理解会把波形顶出屏幕，
+       读数变成垃圾值）；窗口 = `[−offset−4·scale, −offset+4·scale]`（MHO 实测 8 格）；
+    b. **改 `SCALe` 会等比缩放 `offset`**（设备主动改写以保持波形屏幕位置）→
+       任何设置序列**必须先 scale 后 offset**，且**两者一起回读**（只回读被写的那个
+       等于没回读）；
+    c. **通道 OFF 时写 `SCALe`/`OFFSet` 被静默忽略**（`syst_errors=[]` 无任何错误码）→
+       要设参数先开通道，设完再关；
+    d. 偏置有**量程上限**（实测 ±20 V，与档位无关）→ 不是所有档位都能把波形置中，
+       写后必须比对回读，"设备没照做"要如实报（`adjusted`+`reasons`），不许混成成功；
+    e. 部分削顶时测量值可能是**"看着合理的假值"**（曾读到 0.9216 V 而真实 ±10 V）→
+       极值贴窗口上下沿即不可信；无有效值（`9.9E37`）时按
+       `suspicious` 分类（离屏 / 边沿不足 / 通道关 / 无信号），不要只说"检查信号"。
 
 ## 二、安全红线
 
@@ -159,7 +175,7 @@ AI/Agent 操作仪器必须遵守以下规范。
 - 操作手册：`docs/AI_OPERATION_GUIDE.md`（API/固件特性/闭环范例）
 - **实测记录**：`docs/TEST_RECORDS.md`（历轮实测时间线；README 只放项目定位与用法）
 - 设备经验：`dh1766_control/docs/EXPERIENCE.md`（时序/固件差异/上电过渡态）
-- MCP 服务器：`mcp_instruments/server.py`（50 工具 = 46 专用 + 3 通用护栏 + 1 故障兜底
+- MCP 服务器：`mcp_instruments/server.py`（57 工具 = 53 专用 + 3 通用护栏 + 1 故障兜底
   instr_discover/instr_query/instr_write/usb_reset——新设备零代码接入；zcode 用户级 config 已注册
   `instruments`；工具选择/参数语义/安全门见 skill `instrument-mcp`）
 

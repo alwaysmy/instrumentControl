@@ -19,6 +19,28 @@ SDS 看波形）时逐条踩到的问题。**每条都附实测命令与回读�
 
 ---
 
+## 实施状态（2026-09-16 更新）
+
+| # | 状态 | 落地位置 / 证据 |
+| - | ---- | --------------- |
+| P0-1 | **已完成** | 拒绝文案已与新规则对齐（`instr_query` 现在明说"问号后可带参数"）；新增**启动自检**：服务启动时把查询判据实测结果打一行到 stderr（`server.py::__main__`），根治"改了没生效"的静默。**注意：改代码仍需重启 MCP 才生效**（服务在客户端启动时拉起，不热重载） |
+| P1-2 | **已完成** | 新增 `mho_channel` / `mho_timebase` / `mho_trigger`（+ DHO 同三件套）。MCP 工具 50 → 57 |
+| P1-3 | **已完成** | `rigol_scope.RigolScope.configure_channel()`：固定 **scale→offset** 顺序、通道 OFF 自动先开、写后**回读比对**；设备没照做时返回 `adjusted` + `reasons`（钳制/吸附/等比缩放分行说明）。`*_status` 每通道附 `center_v = −offset` 与 `window_v` |
+| P1-4 | **已完成** | `diagnose_no_reading()`：无有效值分五类（`channel_off` / `off_screen` / `near_edge` / `few_edges` / `no_signal`）+ `hint` + `window` + `evidence`；经 `ToolDiagnosis` 与错误一起返回。频域读数成功时也会提示"屏内仅 ~N 个周期" |
+| P2-5 | **已完成（主机侧）** | `mho_measure_item(samples=N)` 连读给 `mean/min/max/stddev/count/invalid`（≤200 次）。**设备侧** `:MEASure:STATistic:*` 未做——MHO 手册有该命令族，待需要更高精度时补 |
+| P2-6 | **已完成** | `instr_write` 多段回读新增 `readback_fields`（段↔值配对）；段数不符时如实说明，不硬配 |
+| P2-7 | **已完成** | 测量返回带 `probe_x`；探头比 ≠1 时附 `warnings` 说明"幅度类读数为探头端电压"；`*_status` 里给 `probe_note` |
+
+**回归**：`TEST_SCRIPTS/common/verify_rigol_scope_semantics.py`（24 项断言，离线）——把你这次踩到的三条设备行为
+（OFF 静默忽略 / 改 scale 等比缩放 offset / 偏置 ±20 V 钳制）做成了**设备模型**（`FakeTrapScope`），
+外加"离屏→逐档放大定标""平直不猜档位""超量程如实报"等场景；并复现了 scale 0.9/1.0 的标定证据。
+
+**仍未做**：① SDS 侧同样缺设置类工具（`sds_auto_scale` 只能闭环改，不能定点设）——SDS 的
+"中心=−offset/格数"约定**未实测**，按设计文档 §5 的要求先别照抄；② DHO 的格数未标定，故
+`dho_fit_channel` 未暴露（`dho_channel/timebase/trigger` 已可用，但未实机验证）。
+
+---
+
 ## P0-1 MCP 服务进程仍是旧代码——"已修"的护栏实际未生效
 
 **证据（今天实测，同一分钟）**

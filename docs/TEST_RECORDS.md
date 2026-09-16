@@ -220,3 +220,24 @@
     曾漏过 2 条）；item 枚举要合并"分页切成两块"的续块（曾误判 MHO 缺 `FFDelay`）。
   - 现状：§A 0 / §B 0 / §C 0 / §D 0（留痕 `TEST_DATA/common/guardrail_coverage_*.json`）；
     SDS 那侧的 item 表因提取形态是表格、§D 跳过（由 §C + 显式 diff 把关，已说明）。
+
+- 2026-09-16：**按现场文档补齐示波器"设置类"工具与读数诊断**（来源：E_distance 项目的
+  《示波器使用要点（MHO984D）》与其指向的两份设计文档 `tool_optimization_20260915.md` /
+  `示波器自动定标设计-2026-09-15.md`）：
+  - 新增 MCP 工具 `mho_channel` / `mho_timebase` / `mho_trigger` / `mho_fit_channel`
+    （+ DHO 的 channel/timebase/trigger），工具总数 50 → **57**；内核侧新增
+    `configure_channel/configure_timebase/configure_trigger/measure_stats/diagnose_no_reading/fit_channel`
+    与 `Family.vdivs/hdivs/adc_bits/scale_range`、`vertical_window/horizontal_window`。
+  - 把三条**现场实测设备行为**固化成代码语义：中心 = −offset（MHO 实测 8 格）、
+    改 `SCALe` 会等比缩放 `offset`（故固定 **scale→offset** 顺序）、通道 OFF 时写垂直参数
+    **被静默忽略**（故需要时自动先开）、偏置量程 ±20 V（越界报 `adjusted`+`reasons`，不混成成功）。
+  - 读数诊断：无有效值分五类（channel_off / off_screen / near_edge / few_edges / no_signal）
+    带 `hint`/`window`/`evidence`；`samples=N` 主机侧统计；测量返回带 `probe_x`。
+  - **离线回归**：`TEST_SCRIPTS/common/verify_rigol_scope_semantics.py`（24 项断言，全部 PASS）
+    —— 用设备模型 `FakeTrapScope` 复现三条陷阱 + "信号↔窗口"关系，并复现 scale 0.9/1.0 的
+    标定证据（上沿 7.1 V 读不到 / 7.5 V 读到）。
+  - 未做（已在设计文档 §5 说明）：SDS 侧设置类工具（其"中心/格数"约定未实测，不照抄）；
+    DHO 格数未标定 → `dho_fit_channel` 不暴露、`dho_*` 写路径未实机验证。
+  - 复跑：`verify_rigol_scope_shared` / `verify_remote_lock_block(70)` / `verify_audit_extractor`
+    全 PASS；`audit_all_commands` MISS 29（基线）；`audit_guardrail_coverage` §A-D 全 0；
+    MCP 握手 57 工具 + 启动自检行（查询判据实测值打到 stderr）。

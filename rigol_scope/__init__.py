@@ -7,16 +7,20 @@
     from rigol_scope import RigolScope, FAMILIES, family_of
 """
 from .families import DHO as DHO_FAMILY, FAMILIES, MHO as MHO_FAMILY, Family, family_of
-from .scope import INVALID_MEASURE, RigolScope, find_scope
+from .scope import (EDGE_DEPENDENT_ITEMS, INVALID_MEASURE, RigolScope, find_scope,
+                    snap_1_2_5, snap_up)
 
 # 兼容旧引用（mho_control 曾从本模块名导出）
 __all__ = [
     "FAMILIES",
     "INVALID_MEASURE",
+    "EDGE_DEPENDENT_ITEMS",
     "DHO_FAMILY",
     "MHO_FAMILY",
     "Family",
     "RigolScope",
     "family_of",
     "find_scope",
+    "snap_1_2_5",
+    "snap_up",
 ]

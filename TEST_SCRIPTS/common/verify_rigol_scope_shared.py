@@ -121,6 +121,19 @@ class FakeTransport:
                 return "DC"
         return "0"
 
+    def query_block(self, cmd: str) -> bytes:
+        """按 TMC 头长度取数据体（真实现会循环读到齐，见 VisaClient.query_block）。
+
+        假传输一次就给整块，所以这里只需按声明长度切出 body —— 保持与真实现
+        同一契约（`screenshot()` 走的就是这条路径）。
+        """
+        data = self.query_raw(cmd)
+        if data[:1] != b"#" or len(data) < 2 or not data[1:2].isdigit():
+            return data
+        ndigits = int(data[1:2])
+        length = int(data[2:2 + ndigits])
+        return data[2 + ndigits:2 + ndigits + length]
+
     def write(self, cmd: str) -> None:
         self.writes.append(cmd)
 

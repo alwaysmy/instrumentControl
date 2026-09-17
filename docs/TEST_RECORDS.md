@@ -329,3 +329,20 @@
     工具体（含 `_guarded_call` 薄封装）→ 不存在"事件循环里跑设备 I/O"的路径。
   - 设计文档 `docs/gpt_qa/20260915-mcp-async-refactor.md` 追加"复核更正"节（不改原文），
     skill 补"为什么'重启 MCP'确实有效"的依据。回归：七套离线套件 + 两套审计全绿。
+
+- 2026-09-17：**VISA 并发假设的实机论证**（MHO984D over LAN + DG832 over USB-TMC；
+  脚本 `TEST_SCRIPTS/common/verify_visa_concurrency.py`，只读查询；报告
+  `docs/visa_concurrency_20260917.md`）。结论：
+  - 共享单 RM + 并发访问**不同**设备 → **安全**（300 次并发 0 错误、真并行）；
+  - 同一资源并发 open 有**上限≈15~16**（其余 `VI_ERROR_ALLOC`）；
+  - "每线程各自 RM 会抛 VI_ERROR_INV_OBJECT"（对端现场说法）**本机未复现**（8/8 成功）；
+  - **同一设备两会话并发 → 静默串台**：USB-TMC 实测串台 100~115 次 + 丢响应约一半、
+    3 次复现；MHO 的 VXI-11/raw 两会话同样串台；串行化后 **0 串台 0 错误**（H5）；
+  - 并发超时未读会把 MHO 的 **VXI-11 通道搞成稳定滞后一条且不自愈**（新进程/新会话/
+    `clear()` 都解不开）→ 按仓库既有做法**换协议**恢复（`resolve("mho")` 已切 raw socket，
+    实测 raw 对齐、截图/波形/测量全可用）；VXI-11 需设备侧重置 LAN 或重启；
+  - 护栏有效：把地址指回错位通道，`_verify_idn` 以"地址校验失败（`*IDN?`='2.000000E+00'）"
+    **拒绝操作**，不会返回错值（`error_type=connection`）。
+  - 顺带修掉一个真 bug：**raw socket 无消息分帧**，整屏 PNG（97 471 字节）单次 `read_raw`
+    只拿到 6 字节 → 新增 `VisaClient.query_block()`（按 TMC 头长度读满）+ `screenshot()` 改用它。
+  - 纪律已写进 `AGENTS.md` 铁律 17/18 与 skill（含症状与恢复步骤）。

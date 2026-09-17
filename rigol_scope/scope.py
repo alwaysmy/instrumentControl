@@ -1116,12 +1116,18 @@ class RigolScope:
 
     # ---------- 截屏 ----------
     def screenshot(self, fmt: str = "PNG") -> bytes:
-        """`:DISPlay:DATA? <fmt>` 截屏原始字节（剥 TMC 头）；fmt: BMP|PNG|JPG。"""
+        """`:DISPlay:DATA? <fmt>` 截屏原始字节（剥 TMC 头）；fmt: BMP|PNG|JPG。
+
+        ⚠ 用 `query_block()` **把大块读完**（而不是单次 read_raw）：整屏 PNG 约 97 KB，
+        在 **raw socket** 上会按 TCP 分段到达，单次读只拿到几字节
+        （2026-09-17 实测：`TMC 数据不完整: 期望 97471 字节，实得 6`）；
+        VXI-11 因有消息分帧才一直没暴露这个问题。
+        """
         f = fmt.upper()
         if f not in [x.upper() for x in self.family.disp_formats]:
             raise ValueError(f"不支持的截图格式 {fmt!r}（{'|'.join(self.family.disp_formats)}）")
-        data = self.query_raw(f":DISPlay:DATA? {f}")
-        return self._parse_tmc(data) if data[:1] == b"#" else data
+        data = self._c().query_block(f":DISPlay:DATA? {f}")
+        return data
 
     def screenshot_png(self, save_path: Path) -> Path:
         """截屏存 PNG，返回路径（**该 PNG 可直接读图**，用于判断波形形态/削顶/居中）。"""

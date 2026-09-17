@@ -353,7 +353,7 @@
 - [HIT ] `WAVeform:STARt` @ rigol_scope\scope.py:1105
 - [HIT ] `WAVeform:STOP` @ rigol_scope\scope.py:1106
 - [HIT ] `WAVeform:DATA?` @ rigol_scope\scope.py:1107
-- [HIT ] `DISPlay:DATA?` @ rigol_scope\scope.py:1123
+- [HIT ] `DISPlay:DATA?` @ rigol_scope\scope.py:1129
 - [HIT ] `*IDN?` @ rigol_scope\scope.py:167
 - [HIT ] `SYSTem:VERSion?` @ rigol_scope\scope.py:171
 - [HIT ] `SYSTem:ERRor?` @ rigol_scope\scope.py:175

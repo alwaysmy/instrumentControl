@@ -62,3 +62,36 @@ USB-TMC 尤其严重；LAN 的 VXI-11 与 raw 两会话同样串台，且 VXI-11
    本机实测曾同时存在 14 个 instrument MCP 实例，这条能显著降低 H3/H4 的发生概率。
 2. **测试脚本纪律**：本文件的实验脚本默认只跑"安全子集"（T0/T1/T1b/T2b/T4/T5），
    LAN 两会话（T3）改为 `--lan-two-session` 显式开启——它**会**把设备 VXI-11 链路搞坏（本次实测代价）。
+
+## 六、跨进程**会话咨询锁**（2026-09-17 实施）
+
+动机：本机实测曾同时存在 **14 个** instrument MCP 实例；单进程内已有单 worker 串行化，
+但**跨进程不互斥**——正是 H3/H4 的场景。做法（`common/session_lock.py`）：
+
+- 每次设备工具调用刷新自己的锁文件 `<配置目录>/session_locks/<地址>_<哈希>__<PID>.json`；
+- **判重键 = VISA 地址**（用户指定口径）：同地址的活跃进程 → 返回体加 `warnings`
+  （"实测同一设备两会话并发会**响应串台**…"）；**只告警不阻塞**；
+- 同一台设备的**另一接口**（inst0 vs 5555 等，按 host/VID:PID:SN 归并）→ 单独一条
+  "**跨接口并发是否安全尚未验证**"的告警，**不参与判重**；
+- 活跃判据 = PID 存在（Windows 用 `OpenProcess` 探活——**绝不能用 `os.kill(pid,0)`**，
+  那在 Windows 上等于 `TerminateProcess`）**且** 时间戳新鲜（TTL 180s）；过期/死进程的锁自动清理。
+
+回归：`TEST_SCRIPTS/common/verify_session_lock.py`（离线 15 项，含"同地址两进程文件名不同也能
+互相看见"这条踩坑回归）+ `verify_session_lock_live.py`（实机：A 在用时 B 拿到告警、A 退出后
+告警消失，DG832 实测全 PASS）。
+
+## 七、本次实验的代价与善后（如实记录）
+
+- 并发风暴（20 线程并发 open 同一资源）**会污染仪器响应流**：MHO 的 VXI-11 先被打成
+  稳定滞后一条（`clear()`/新进程都解不开），随后 **raw 通道也被打成持续错位**
+  （实验后实测 **0/20 对齐**：`:ACQUIRE:TYPE?` 回 IDN、`:SRATe?` 回 `NORM`…）。
+  → **需在面板上重置一次 LAN（Utility→I/O→LAN 关开）或重启示波器**才能恢复；
+  处置建议已写进 skill。
+  为此实验脚本已把"同资源并发"（T1b/T2b）与"LAN 两会话"（T3）都改成**显式开启**
+  （`--same-res-storm` / `--lan-two-session`），默认只跑安全子集，并在结尾做对齐核查。
+- 顺带把这类"莫名解析错"变成**可执行的诊断**：
+  `RigolScope._float()`（数值项拿到非数值响应 → 报"响应错位 + 处置建议"）、
+  `RigolScope.align_session()`（用 `*IDN?` 判对齐并尝试排干）。
+- DG832 的 USBTMC 节点当日**两次**掉进 PnP `Error`（VISA 枚举不到）——
+  两次都用 `common/usb_reset.py --kind dg --allow-reset --verify-idn` 秒级恢复；
+  该 USB 节点的稳定性本身值得留意（硬件/驱动层面）。

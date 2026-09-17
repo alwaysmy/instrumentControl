@@ -346,3 +346,20 @@
   - 顺带修掉一个真 bug：**raw socket 无消息分帧**，整屏 PNG（97 471 字节）单次 `read_raw`
     只拿到 6 字节 → 新增 `VisaClient.query_block()`（按 TMC 头长度读满）+ `screenshot()` 改用它。
   - 纪律已写进 `AGENTS.md` 铁律 17/18 与 skill（含症状与恢复步骤）。
+
+- 2026-09-17（同日，**跨进程会话咨询锁** + 善后）：按用户口径实施"同设备判重**按 VISA 地址**、
+  跨接口（inst0/5555）只额外告警（未验证）"的咨询锁 `common/session_lock.py`：
+  - 每次设备工具调用刷新自己的锁文件（**文件名带 PID**——踩坑回归：按地址命名会让两个进程
+    互相覆盖/漏报）；活跃判据 = PID 存在（Windows 用 `OpenProcess`；**绝不能用
+    `os.kill(pid,0)`**，那在 Windows 上等于 TerminateProcess）+ 时间戳新鲜（TTL 180s）；
+  - 同地址占用 → 工具返回体加 `warnings`（只告警不阻塞）；同一台设备另一接口 → "跨接口
+    并发未验证"告警；进程退出 atexit 释放；
+  - 回归：`verify_session_lock.py`（离线 15 项）+ `verify_session_lock_live.py`
+    （实机 DG832：A 在用时 B 拿到含 PID 的告警、A 退出后告警消失，全 PASS）。
+  - 善后如实记录：本轮并发风暴把 MHO 的响应流打成**持续错位**（VXI-11 与 raw 都中招，
+    实验后 raw 实测 **0/20 对齐**）→ 需面板重置 LAN 或重启示波器；为此实验脚本把
+    "同资源并发（T1b/T2b）"与"LAN 两会话（T3）"都改为显式开启（`--same-res-storm` /
+    `--lan-two-session`），默认只跑安全子集 + 结尾对齐核查；并新增
+    `RigolScope._float()`（数值项拿到非数值响应 → "响应错位 + 处置建议"）与
+    `align_session()`（`*IDN?` 判对齐 + 尝试排干）。DG832 的 USBTMC 节点当日两次掉进
+    PnP Error，均用 `common/usb_reset.py --kind dg --allow-reset --verify-idn` 秒级恢复。

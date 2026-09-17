@@ -117,6 +117,44 @@ class RigolScope:
         self.client: Optional[VisaClient] = None
 
     # ---------- 连接管理 ----------
+    def align_session(self, max_drain: int = 4) -> bool:
+        """确认响应流**对齐**；错位则排干，仍不对齐抛错（附恢复建议）。
+
+        背景（2026-09-17 实测，`docs/visa_concurrency_20260917.md`）：同一台设备多个会话
+        并发、或**超时未读**之后，仪器侧响应流会变成"稳定滞后一条"——问 `:SCALe?` 回偏置、
+        问 `:PROBe?` 回耦合。此后**每个新会话**都读到错位数据，症状是各种"莫名其妙"的
+        解析错误（例如把 `NORM` 当数字转 float）。判据用最可靠的 `*IDN?`：它必须回 IDN 串。
+
+        排干做法：写一条 `*IDN?`、把可读到的响应**读到超时为止**（读得比写得多才能把
+        多出来的那条吃掉），重复几轮。排不干就抛错——让调用方去换协议/重置仪器 LAN，
+        而不是拿着一串错位数据继续算。
+        """
+        if self.client is None:
+            raise RuntimeError("未连接设备，请先 connect()")
+        last = ""
+        for i in range(max(1, max_drain)):
+            try:
+                resp = self.client.query("*IDN?").strip()
+            except Exception as e:                  # noqa: BLE001
+                last = f"{type(e).__name__}: {e}"
+                continue
+            if "RIGOL" in resp.upper():
+                return True
+            last = resp[:60]
+            # 不对齐：排干（读空一次，把多出来的响应吃掉）
+            try:
+                while True:
+                    if not self.client.inst.read_raw():
+                        break
+            except Exception:
+                pass
+            time.sleep(0.15)
+        raise RuntimeError(
+            "仪器响应流**错位**（*IDN? 回 " + repr(last) + "）且排干无效——"
+            "常见原因是同一台设备被多个会话并发访问（含超时未读的残留响应）。"
+            "处置：换协议（VXI-11 ↔ raw socket）或重置该仪器 LAN/重启后重试；"
+            "细节见 docs/visa_concurrency_20260917.md")
+
     def connect(self, resource: Optional[str] = None) -> str:
         """连接设备；resource 为空时经 common.find_device 发现（USB/LAN 均可）。"""
         if resource:
@@ -161,6 +199,22 @@ class RigolScope:
 
     def query_raw(self, cmd: str) -> bytes:
         return self._c().query_raw(cmd)
+
+    def _float(self, resp: str, cmd: str) -> float:
+        """把响应转 float；**转不动就是响应错位**，报可执行的错而不是裸 ValueError。
+
+        为什么单列（2026-09-17 实测）：仪器响应流错位时，问数值项会拿到上一条查询的
+        答案（如 `:ACQuire:SRATe?` 回 `NORM`），裸 `float()` 只会给出
+        "could not convert string to float: 'NORM'" —— 看不出是并发污染。
+        这里统一成"响应错位 + 处置建议"，见 `docs/visa_concurrency_20260917.md`。
+        """
+        try:
+            return float(resp)
+        except (TypeError, ValueError) as e:
+            raise RuntimeError(
+                f"响应错位：{cmd} 回 {resp!r}（不像该命令的答案）——仪器响应流可能被"
+                "并发会话/超时未读污染，数据不可信。处置：换协议（VXI-11 ↔ raw）或重置"
+                "该仪器 LAN/重启；细节见 docs/visa_concurrency_20260917.md") from e
 
     # ---------- 信息与系统 ----------
     def idn(self) -> str:
@@ -254,7 +308,7 @@ class RigolScope:
 
     def sample_rate(self) -> float:
         """当前采样率（MHO 实测随通道数下降：1~2ch 4GSa/s、3~4ch 1GSa/s）。"""
-        return float(self.query(":ACQuire:SRATe?"))
+        return self._float(self.query(":ACQuire:SRATe?"), ":ACQuire:SRATe?")
 
     # ---------- 通道 ----------
     def _check_ch(self, ch: int) -> int:
@@ -278,7 +332,7 @@ class RigolScope:
             self.channel_display(n, True)
         if scale is None:
             resp = self.query(f":CHANnel{n}:SCALe?")
-            return float(resp) if resp else None
+            return self._float(resp, ":CHANnel<n>:SCALe?") if resp else None
         self.write(f":CHANnel{n}:SCALe {scale}")
         return None
 
@@ -286,7 +340,7 @@ class RigolScope:
         n = self._check_ch(ch)
         if offset is None:
             resp = self.query(f":CHANnel{n}:OFFSet?")
-            return float(resp) if resp else None
+            return self._float(resp, ":CHANnel<n>:OFFSet?") if resp else None
         self.write(f":CHANnel{n}:OFFSet {offset}")
         return None
 
@@ -303,7 +357,7 @@ class RigolScope:
         n = self._check_ch(ch)
         if atten is None:
             resp = self.query(f":CHANnel{n}:PROBe?")
-            return float(resp) if resp else None
+            return self._float(resp, ":CHANnel<n>:PROBe?") if resp else None
         self.write(f":CHANnel{n}:PROBe {atten}")
         return None
 

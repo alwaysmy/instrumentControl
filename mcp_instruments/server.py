@@ -21,6 +21,7 @@ dho_control(示波器) / dh1766_control(电源)，经 common 统一发现层。
     - 每次调用连接→操作→关闭（无状态）+ 全局设备锁串行化。
 """
 import asyncio
+import atexit
 import concurrent.futures
 import contextlib
 import functools
@@ -84,6 +85,43 @@ _LOCK_WAIT_S = _env_float("INSTRUMENT_LOCK_WAIT_S", 30.0)
 _MODEL_KIND = {"SDS": "sds", "SDG": "sdg", "DMM": "dmm", "DHO": "dho", "MHO": "mho",
                "DG832": "dg", "DH1766": "psu"}
 _LAST_RESOLVED: dict[str, str] = {}  # kind -> 本次调用解析出的资源串（_DEVICE_LOCK 内更新）
+
+
+_SESSION_LOCKS: set = set()      # 本进程占用过的资源（供退出时释放）
+
+
+def _session_warnings(resource: str | None, model_name: str) -> list[str]:
+    """刷新跨进程会话锁并取回"别人正在用"的告警（**绝不抛异常**，锁不阻断工具）。
+
+    口径（用户指定 2026-09-17）：**判重按 VISA 地址**；同一台设备的**另一接口**
+    （如 MHO 的 inst0 与 5555）单独给一条"跨接口并发未验证"的告警，不参与判重。
+    详见 `common/session_lock.py` 与 `docs/visa_concurrency_20260917.md`。
+    """
+    if not resource:
+        return []
+    try:
+        from common import session_lock
+
+        _SESSION_LOCKS.add(resource)
+        info = session_lock.touch(resource, kind=model_name)
+        return list(info.get("warnings") or [])
+    except Exception as e:                      # noqa: BLE001
+        _log(f"会话锁检查跳过：{type(e).__name__}: {e}")
+        return []
+
+
+def _release_session_locks() -> None:
+    """进程退出时释放本进程占用的会话锁（失败也无妨：TTL/pid 判据会兜住）。"""
+    try:
+        from common import session_lock
+
+        for r in list(_SESSION_LOCKS):
+            session_lock.release(r)
+    except Exception:
+        pass
+
+
+atexit.register(_release_session_locks)
 
 
 def _out_res(model_name: str, resource: str | None) -> str | None:
@@ -185,19 +223,35 @@ def _call(model_name, connect_fn, fn, close_fn=None, resource=None,
         except Exception as e:
             return _err("connection", f"{type(e).__name__}: {e}", model_name, _out_res(model_name, resource))
         res = _out_res(model_name, resource)
+        # 跨进程**咨询锁**（2026-09-17）：本进程内已有单 worker 串行化，但**跨进程不互斥**——
+        # 同一台仪器被两个实例同时操作会**静默串台**（实测：互相读到对方的响应）。
+        # 这里刷自己的占用 + 把他人占用作为 warning 附在返回体里；只告警、不阻塞。
+        warns = _session_warnings(res, model_name)
+
+        def finish(payload: str) -> str:
+            """把会话告警挂到返回体上（不改动原有字段，新增 warnings 为可选键）。"""
+            if not warns:
+                return payload
+            try:
+                d = json.loads(payload)
+                d["warnings"] = list(d.get("warnings") or []) + warns
+                return json.dumps(d, ensure_ascii=False, default=str)
+            except Exception:
+                return payload
+
         try:
-            return _ok(model_name, fn(dev), res)
+            return finish(_ok(model_name, fn(dev), res))
         except ToolDiagnosis as e:
             # 诊断字段与错误一起返回：调用方一眼看到"为什么没读数 + 该改什么"
             d = json.loads(_err(e.error_type, str(e), model_name, res))
             d.update(e.details)
-            return json.dumps(d, ensure_ascii=False, default=str)
+            return finish(json.dumps(d, ensure_ascii=False, default=str))
         except ValueError as e:
-            return _err("param_validation", str(e), model_name, res)
+            return finish(_err("param_validation", str(e), model_name, res))
         except RuntimeError as e:
-            return _err("device_error", str(e), model_name, res)
+            return finish(_err("device_error", str(e), model_name, res))
         except Exception as e:
-            return _err("communication", f"{type(e).__name__}: {e}", model_name, res)
+            return finish(_err("communication", f"{type(e).__name__}: {e}", model_name, res))
         finally:
             try:
                 if close_fn is not None:

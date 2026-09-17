@@ -111,6 +111,12 @@ AI/Agent 操作仪器必须遵守以下规范。
        多实例并发仍是本仓已知风险；
     f. 同一资源并发**会话数**也有上限（实测 20 线程并发 open 只有 15~16 成功，
        其余 `VI_ERROR_ALLOC`）——别对一台设备开一堆会话。
+    g. **跨进程咨询锁**（`common/session_lock.py`，每次设备工具调用自动生效）：
+       判重**按 VISA 地址**，同地址的活跃进程会让工具返回体多一条 `warnings`
+       （只告警不阻塞）；同一台设备的**另一接口**（inst0/5555/HiSLIP）另给一条
+       "跨接口并发未验证"的告警。**并发风暴会污染仪器响应流**（实测：MHO 的
+       VXI-11 与 raw 都被打成持续错位，需面板重置 LAN）——诊断见
+       `RigolScope._float()` / `align_session()`（把"莫名解析错"变成"响应错位 + 处置建议"）。
 18. **raw socket（RIGOL 5555 等）没有消息分帧**：大二进制块必须**按 TMC 头长度循环读满**
     （`common/visa_client.py::VisaClient.query_block`；`screenshot()` 已改用它）。
     实测（2026-09-17）：MHO 整屏 PNG 97 471 字节，raw 上单次 `read_raw()` 只拿到 **6 字节**

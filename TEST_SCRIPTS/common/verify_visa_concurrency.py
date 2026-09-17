@@ -37,6 +37,9 @@ import pyvisa  # noqa: E402
 from common.resolver import resolve  # noqa: E402
 
 AP = argparse.ArgumentParser(description="VISA 并发假设实验")
+AP.add_argument("--same-res-storm", action="store_true",
+                help="额外跑'同一资源多线程并发 open'（T1b/T2b）——实测会污染仪器响应流"
+                     "（MHO 通道被打成持续错位，需面板重置 LAN），默认跳过")
 AP.add_argument("--lan-two-session", action="store_true",
                 help="额外跑 LAN 两会话实验（T3）——**会**把设备的 VXI-11 链路搞成粘滞错位"
                      "（2026-09-17 实测代价），仅在你愿意事后重置该仪器 LAN 时开启")
@@ -225,10 +228,12 @@ check("H1 成立：共享 RM 下两设备并发 300 次查询零错误",
       f"MHO {res_t1['mho']['errors']} / DG {res_t1['dg']['errors']}，墙钟 {res_t1['wall_s']}s")
 
 # ---------------------------------------------------------------- T1b 共享 RM 并发 open 同一资源
-print("\n§T1b 共享 RM + 20 线程并发 open **同一**资源（会话分配是否有上限）", flush=True)
+print("\n§T1b 共享 RM + N 线程并发 open **同一**资源（N=1 表示未开 --same-res-storm）", flush=True)
+
 res_t1b: dict = {"ok": 0, "errors": [], "kinds": []}
 rm_b = pyvisa.ResourceManager()
-bar2 = threading.Barrier(20)
+N_STORM = 20 if ARGS.same_res_storm else 1
+bar2 = threading.Barrier(N_STORM)
 
 
 def open_close(out):
@@ -243,19 +248,20 @@ def open_close(out):
         out["kinds"].append(type(e).__name__)
 
 
-ths = [threading.Thread(target=open_close, args=(res_t1b,)) for _ in range(20)]
+ths = [threading.Thread(target=open_close, args=(res_t1b,)) for _ in range(N_STORM)]
 [t.start() for t in ths]
 [t.join() for t in ths]
 rm_b.close()
 res_t1b["kinds"] = sorted(set(res_t1b["kinds"]))
 results["tests"]["T1b_shared_rm_parallel_open"] = res_t1b
-info("H1b 结果：并发会话分配上限", f"{res_t1b['ok']}/20 成功；错误类型 {res_t1b['kinds']}；"
+info("H1b 结果：并发会话分配上限", f"{res_t1b['ok']}/{N_STORM} 成功；错误类型 {res_t1b['kinds']}；"
      f"样例 {res_t1b['errors'][:1]}")
 
 # ---------------------------------------------------------------- T2b 每线程各自 RM（同资源并发）
-print("\n§T2b 每线程**各自** RM + 8 线程并发 open 同一资源（对端现场说会抛 VI_ERROR_INV_OBJECT）", flush=True)
+print("\n§T2b 每线程**各自** RM + N 线程并发 open 同一资源（N=1 表示未开 --same-res-storm）", flush=True)
 res_t2b: dict = {"ok": 0, "errors": [], "kinds": [], "close_errors": []}
-bar3 = threading.Barrier(8)
+N_OWN = 8 if ARGS.same_res_storm else 1
+bar3 = threading.Barrier(N_OWN)
 
 
 def own_rm_round(out):
@@ -278,12 +284,12 @@ def own_rm_round(out):
                 out["close_errors"].append(f"{type(e).__name__}: {str(e)[:60]}")
 
 
-th2b = [threading.Thread(target=own_rm_round, args=(res_t2b,)) for _ in range(8)]
+th2b = [threading.Thread(target=own_rm_round, args=(res_t2b,)) for _ in range(N_OWN)]
 [t.start() for t in th2b]
 [t.join() for t in th2b]
 res_t2b["kinds"] = sorted(set(res_t2b["kinds"]))
 results["tests"]["T2b_rm_per_thread_same_res"] = res_t2b
-info("H2 结果：各自 RM + 8 线程同资源", f"{res_t2b['ok']}/8 成功；错误类型 {res_t2b['kinds']}；"
+info("H2 结果：各自 RM + N 线程同资源", f"{res_t2b['ok']}/{N_OWN} 成功；错误类型 {res_t2b['kinds']}；"
      f"rm.close() 异常 {len(res_t2b['close_errors'])}；样例 {res_t2b['errors'][:1]}")
 
 # ---------------------------------------------------------------- T3/T4/T5 同一设备两会话

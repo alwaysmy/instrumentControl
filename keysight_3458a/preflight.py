@@ -149,9 +149,26 @@ def layer_session_and_answer(resource: str, do_id: bool, do_recover: bool) -> in
                 t.write("ID?")
                 val = t.read(timeout_s=6.0)
                 say(f"[5] 身份层 : ID? -> {val!r}")
-                say("            => **通路完全正常**" if "3458" in val.upper()
-                    else "            => 有响应但不像 3458A，注意地址/设备是否搞错")
-                return 0
+                if "3458" in val.upper():
+                    say("            => **通路完全正常**")
+                    return 0
+                # Talk Only（只讲不听）判别：手册 p.159 —— 前面板把 ADDRESS 设成 31 会进入
+                # 该模式（TALK 指示灯亮、地址存连续内存、断电不丢），此时表**只输出读数、
+                # 不理任何命令** → 每条查询都会"回"一个电压读数。
+                try:
+                    float(val.split()[-1])
+                    is_num = True
+                except (ValueError, IndexError):
+                    is_num = False
+                if is_num:
+                    say("            => **疑似 Talk Only 模式（只讲不听）**：手册 p.159 —— "
+                        "前面板 ADDRESS 被设成 31 时进入该模式（TALK 指示灯亮），"
+                        "表只输出读数、不理命令；**地址存连续内存，断电不丢**。")
+                    say("               处置（前面板）：把 **ADDRESS 改成 31 以外的值**（如 9）；"
+                        "或按 Reset 键（Reset 会一并回到开机测量配置）")
+                    return 5
+                say("            => 有响应但不像 3458A，注意地址/设备是否搞错")
+                return 1
             except Exception as e:                            # noqa: BLE001
                 say(f"[5] 身份层 : ID? 失败 -> {type(e).__name__}: {str(e)[:110]}")
                 return 1
@@ -163,8 +180,66 @@ def layer_session_and_answer(resource: str, do_id: bool, do_recover: bool) -> in
             pass
 
 
+def run_volts(args: argparse.Namespace) -> int:
+    """**最小电压测试**：只恢复总线/触发态 + 读 N 次 DCV + 回读当前设定。
+
+    不做任何配置变更：不发 `RESET`/`PRESET`、不设档位/NPLC/功能、不跑突发/ACV。
+    只发：clear + `TARM HOLD`/`TRIG HOLD` + 有界 drain + `END ALWAYS`/`INBUF ON`/`TRIG AUTO`
+    （都是总线/触发状态，不影响测量配置），然后 `TARM SGL,1` × N。
+    """
+    from keysight_3458a.transport import KeysightVisaTransport
+
+    t = KeysightVisaTransport(args.resource, timeout_s=10.0)
+    t.open()
+    say(f"  已开会话 {args.resource}")
+    # 恢复总线态（**不动测量配置**）
+    t.clear()
+    t.write("TARM HOLD")
+    t.write("TRIG HOLD")
+    t.drain(2, 250)
+    t.write("END ALWAYS")
+    t.write("INBUF ON")
+    t.write("TRIG AUTO")
+    say("  已恢复总线态（TARM/TRIG HOLD → END ALWAYS/INBUF ON/TRIG AUTO）")
+
+    def ask(cmd: str, tmo: float = 8.0) -> str:
+        t.write(cmd)
+        return t.read(timeout_s=tmo).strip()
+
+    print(f"  ID?      : {ask('ID?')!r}")
+    for q in ("FUNC?", "RANGE?", "NPLC?", "ARANGE?"):
+        try:
+            print(f"  {q:9s}: {ask(q)!r}")
+        except Exception as e:                                # noqa: BLE001
+            print(f"  {q:9s}: 读失败 {type(e).__name__}")
+    vals = []
+    for i in range(int(args.volts)):
+        try:
+            raw = ask("TARM SGL,1", 15.0)
+            v = float(raw.split()[-1]) if raw.split() else float("nan")
+            vals.append(v)
+            print(f"  read #{i + 1}  : {raw!r}  -> {v:.9e} V")
+        except Exception as e:                                # noqa: BLE001
+            print(f"  read #{i + 1}  : 失败 {type(e).__name__}: {str(e)[:90]}")
+    try:
+        print(f"  ERRSTR?  : {ask('ERRSTR?')!r}")
+    except Exception:                                         # noqa: BLE001
+        pass
+    try:
+        t.close()
+    except Exception:                                         # noqa: BLE001
+        pass
+    if vals:
+        say(f"== 电压功能正常：{len(vals)} 次读数，最近一次 {vals[-1]:.9e} V ==")
+        return 0
+    say("== 未能取到电压读数（见上）==")
+    return 1
+
+
 def run_child(args: argparse.Namespace) -> int:
     """在子进程里执行（--child），输出直接透传。"""
+    if args.volts:
+        return run_volts(args)
     info = layer_driver()
     gpib = layer_enum()
     if not info.get("ok") and info.get("verdict") in ("driver_missing", "iolib_missing"):
@@ -186,6 +261,8 @@ def main() -> int:
     ap.add_argument("--id", action="store_true", help="追加一条 ID?（写+读）")
     ap.add_argument("--recover", action="store_true",
                     help="下发文档化恢复（停流数据；不发 RESET）")
+    ap.add_argument("--volts", nargs="?", const=3, default=0, type=int,
+                    help="**最小电压测试**：恢复总线态 + 读 N 次 DCV（默认 3），不改任何设置")
     ap.add_argument("--watchdog", type=float, default=30.0, help="看门狗秒数（默认 30）")
     ap.add_argument("--no-watchdog", action="store_true", help="本进程直接跑（慎用）")
     ap.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
@@ -201,6 +278,8 @@ def main() -> int:
         cmd.append("--id")
     if args.recover:
         cmd.append("--recover")
+    if args.volts:
+        cmd += ["--volts", str(args.volts)]
     say(f"（看门狗 {args.watchdog:.0f}s；子进程执行，卡死即 kill）")
     p = subprocess.Popen(cmd, cwd=str(ROOT), stdout=subprocess.PIPE,
                          stderr=subprocess.STDOUT, text=True,

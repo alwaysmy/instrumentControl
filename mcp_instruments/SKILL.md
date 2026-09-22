@@ -170,7 +170,7 @@ DG832 信号源（RIGOL DG800 系列）：
 | dmm_nplc | value? | 电压 DC 积分时间 NPLC（0.02/0.2/1/10/100，越大越准越慢）；无参查询，有参设置后回读 |
 | dmm_measure | function | volt_dc/volt_ac/curr_dc/curr_ac/res/fres/cont/cap/diod/freq |
 | dmm_configure | range_v | 设定量程后 :CONF? 回读滞后一拍，以实测为准 |
-| ks3458a_status | resource? | `ID?`/`ERRSTR?`/`TEMP?` + **`device` 设备回读**（`FUNC?`/`RANGE?`/`NPLC?`/`APER?`/`TARM?`/`TRIG?`/`NRDGS?`/`INBUF?`/`END?`/`MEM?`/`AZERO?`/`OFORMAT?`/`MFORMAT?`/`ISCALE?`——2026-09-23 真机实测均可用）+ `tracked`（本会话**下发过**什么，与回读分开报）。`TEMP?` 实测 37.0（数值，单位按 °C 采信） |
+| ks3458a_status | resource? | `ID?`/`ERRSTR?`/`TEMP?` + **`device` 设备回读**（`FUNC?`/`RANGE?`/`NPLC?`/`APER?`/`TARM?`/`TRIG?`/`NRDGS?`/`INBUF?`/`END?`/`MEM?`/`AZERO?`/`OFORMAT?`/`MFORMAT?`/`ISCALE?`——2026-09-23 真机实测 + **手册逐条核对**，`TARM/TRIG/END/INBUF/OFORMAT/MFORMAT/AZERO` 已按手册码表**解码**成 `4(HOLD)`/`1(ASCII)`/`4(SREAL)` 形式）+ `tracked`（本会话**下发过**什么，与回读分开报）。`TEMP?` = 内部温度，单位**摄氏度**（手册 p.37/50；实测 37.0） |
 | ks3458a_read / ks3458a_read_avg / ks3458a_read_stats | n≤1000 | 单次 DCV（`TARM SGL,1`）/ n 次平均 / `{n,mean,stddev,min,max}`（样本标准差）。读数非数值按 device_error 报，**不返回 0 兜底** |
 | ks3458a_burst | n, sample_interval_s?, dcv_range?, save_csv? | 100k rdg/s 二进制突发（`PRESET DIG`+`MFORMAT/OFORMAT SINT`+`MEM OFF`+`NRDGS`+`TRIG AUTO`+`TARM SYN`+`ISCALE?`，读 2n+2 字节按 2 字节大端有符号 × ISCALE）。返回**摘要**；`save_csv=True` 落 `TEST_DATA/ks3458a/`。⚠ **改设备配置**（数字档预设、功能切 DCV、内存关闭） |
 | ks3458a_configure | dcv_range, nplc | 档位只有 0.1/1/10/100/1000 V；10V 档可用到 ±12V，但选档按 1.1 倍余量（保守）。**换档后自动丢首读数**（建立时间+自校准，有意行为）。改完用 `ks3458a_status` 的 `device`（`FUNC?`/`RANGE?`/`NPLC?`）**回读复核**，另看 `errstr`/`error_clear` |

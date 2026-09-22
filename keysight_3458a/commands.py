@@ -24,6 +24,9 @@
               通过的查询——最高等级证据，逐条记响应样例
     [AC]      EmoeCalibrator/Software/cal_tool/ac_1khz_probe.py / ac_stability.py /
               ac_verify.py（3458A 交流测量配方：SETACV / ACBAND / ACV）
+    [MANUAL]  Agilent 3458A User's Guide（本机
+              `E:\手册与技术支持\设备资料与文档\3458A\Ag_3458A_UserGuide_en.pdf`）——
+              2026-09-23 逐条核对；页码索引见 `docs/3458a_manual_verification_20260923.md`
     [TASK]    仅来自本项目任务书、**参考实现与实测均无** → 已在
               docs/COMMANDS_3458A.md「待手册核对项」登记，代码里一律标注"未验证"
 """
@@ -35,7 +38,8 @@ from __future__ import annotations
 ID = "ID?"                       # [SICL] L392-394；[VISA] L639-640 —— 不是 *IDN?
 ERRSTR = "ERRSTR?"               # [SAMPLE] L39 —— 不是 SYST:ERR?；每次查询弹出队首错误
 TEMP = "TEMP?"                   # [TOOLS] tc_attrib_temp.py:96、tc_temp_sweep.py:135
-                                 #   —— 在 3458A 会话上查**其内部温度**（单位/精度待手册核对）
+                                 #   —— 3458A 内部温度。[MANUAL] p.37/p.50：
+                                 #   单位=**摄氏度**（实测 37.0/36.9 合理）
 
 # ---------------------------------------------------------------------------
 # 生命周期 / 总线
@@ -59,9 +63,22 @@ RANGE_Q = "RANGE?"               # [MEASURED] 实测 '.1'
 AZERO_Q = "AZERO?"               # [MEASURED] 实测 '1'
 MEM_Q = "MEM?"                   # [MEASURED] 实测 '0'
 OFORMAT_Q = "OFORMAT?"           # [MEASURED] 实测 '1'（ASCII）
-MFORMAT_Q = "MFORMAT?"           # [MEASURED] 实测 '4'
-INBUF_Q = "INBUF?"               # [MEASURED] 实测 '1'（ON）
-END_Q = "END?"                   # [MEASURED] 实测 '2'（ALWAYS）
+MFORMAT_Q = "MFORMAT?"           # [MEASURED] 实测 '4' = **SREAL**（[MANUAL] p.199 码表，
+                                 #   SINT 是 2；上电默认就是 SREAL，别读成 SINT）
+INBUF_Q = "INBUF?"               # [MEASURED] 实测 '1'（ON；[MANUAL] p.186-187 上电 OFF/默认 ON）
+END_Q = "END?"                   # [MEASURED] 实测 '2'（ALWAYS；[MANUAL] p.176 0/1/2）
+
+# ---------------------------------------------------------------------------
+# 手册核对过的数值码表（[MANUAL] 页码见 docs/3458a_manual_verification_20260923.md）
+# ---------------------------------------------------------------------------
+TARM_CODES = {1: "AUTO", 2: "EXT", 3: "SGL", 4: "HOLD"}          # p.251
+TRIG_CODES = {1: "AUTO", 2: "EXT", 3: "SGL", 4: "HOLD"}          # p.257
+END_CODES = {0: "NEVER", 1: "ON", 2: "ALWAYS"}                   # p.176
+INBUF_CODES = {0: "OFF", 1: "ON"}                                # p.186-187
+FORMAT_CODES = {1: "ASCII", 2: "SINT", 3: "DINT", 4: "SREAL"}    # p.199 (MFORMAT) / p.210 (OFORMAT)
+AZERO_CODES = {0: "OFF", 1: "ON", 2: "ONCE"}                     # p.162-163
+TARM_SGL_MAX_ARMS = 2.1e9       # [MANUAL] p.251：TARM SGL 的 number_arms 上限
+NRDGS_MAX = 16_777_215          # [MANUAL] p.207：NRDGS 的 n 上限（1..16777215）
 
 # ---------------------------------------------------------------------------
 # 触发模型

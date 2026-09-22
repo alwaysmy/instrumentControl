@@ -230,9 +230,11 @@ class DMM3458A:
     def state(self) -> dict:
         """**设备回读**的当前状态（不是"本会话设过什么"的记录）。
 
-        2026-09-23 本机实测：下列查询在 3458A 上都有响应（响应样例见 `commands.py`），
-        因此 `ks3458a_status` 报的是设备真实配置。任一查询失败只记 `None`，
-        不让整次状态查询失败。
+        2026-09-23 本机实测：下列查询在 3458A 上都有响应（响应样例见 `commands.py`）；
+        同日又按手册逐条核对（`docs/3458a_manual_verification_20260923.md`），故这里把
+        裸码值**解码**成可读语义（`4(HOLD)` / `1(ASCII)` / `4(SREAL)`）——避免再出现
+        "MFORMAT?=4 当成 SINT"这类误读（手册 p.199：4 = SREAL，SINT = 2）。
+        任一查询失败只记 `None`，不让整次状态查询失败。
         """
         t = self._t()
 
@@ -242,22 +244,32 @@ class DMM3458A:
             except Exception:                        # noqa: BLE001
                 return None
 
+        def dec(table: dict, raw):
+            """裸码值 → `'4(HOLD)'`（码表来自手册，见 commands.py 的 *_CODES）。"""
+            if raw is None:
+                return None
+            try:
+                n = int(float(str(raw).strip()))
+                return f"{n}({table[n]})"
+            except Exception:                        # noqa: BLE001 —— 非预期值原样返回
+                return raw
+
         out: dict = {
             "id": q(C.ID),
             "error": q(C.ERRSTR),
-            "tarm": q(C.TARM_Q),                     # '4'=HOLD '1'=AUTO
-            "trig": q(C.TRIG_Q),                     # '1'=AUTO '4'=HOLD
-            "nrdgs": q(C.NRDGS_Q),                   # '1, 1'
+            "tarm": dec(C.TARM_CODES, q(C.TARM_Q)),          # 1(AUTO)/4(HOLD)…
+            "trig": dec(C.TRIG_CODES, q(C.TRIG_Q)),          # 1(AUTO)/4(HOLD)…
+            "nrdgs": q(C.NRDGS_Q),                           # '1, 1'（第二字段=采样事件码，AUTO=1）
             "nplc": _safe_float(q(C.NPLC_Q)),
             "aperture_s": _safe_float(q(C.APER_Q)),
-            "function": q(C.FUNC_Q),                 # '1, .1' = DCV + 档位
+            "function": q(C.FUNC_Q),                         # '1, .1' = DCV + max_input
             "range_v": _safe_float(q(C.RANGE_Q)),
-            "azero": q(C.AZERO_Q),
+            "azero": dec(C.AZERO_CODES, q(C.AZERO_Q)),
             "mem": q(C.MEM_Q),
-            "inbuf": q(C.INBUF_Q),
-            "end": q(C.END_Q),
-            "oformat": q(C.OFORMAT_Q),
-            "mformat": q(C.MFORMAT_Q),
+            "inbuf": dec(C.INBUF_CODES, q(C.INBUF_Q)),
+            "end": dec(C.END_CODES, q(C.END_Q)),
+            "oformat": dec(C.FORMAT_CODES, q(C.OFORMAT_Q)),
+            "mformat": dec(C.FORMAT_CODES, q(C.MFORMAT_Q)),
             "iscale": _safe_float(q(C.ISCALE_Q)),
         }
         try:

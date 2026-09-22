@@ -236,8 +236,35 @@ def run_volts(args: argparse.Namespace) -> int:
     return 1
 
 
+def run_unstuck(args: argparse.Namespace) -> int:
+    """**救砖**：照参考项目移植的 IFC + clear + RESET 序列（退出 Talk Only / 停 free-run）。"""
+    from keysight_3458a import DMM3458A
+
+    d = DMM3458A(args.resource, timeout_s=20.0)
+    d.connect(recover=False)                     # 先只开会话（不做预恢复）
+    try:
+        out = d.unstick()
+    finally:
+        try:
+            d.close()
+        except Exception:                        # noqa: BLE001
+            pass
+    say(f"  idn      : {out.get('idn')!r}")
+    say(f"  errstr   : {out.get('error')!r}")
+    if out.get("voltage") is not None:
+        say(f"  电压读数 : {out['voltage']:.9e} V")
+    say(f"  idn_error/voltage_error: {out.get('idn_error') or '-'} / "
+        f"{out.get('voltage_error') or '-'}")
+    ok = "3458" in str(out.get("idn", "")).upper()
+    say("== 救回：表已听命令（IFC + RESET 生效；设备已回到开机测量配置）==" if ok
+        else "== 仍未拿回身份响应：按前面板把 ADDRESS 改成 31 以外的值（或按 Reset）==")
+    return 0 if ok else 1
+
+
 def run_child(args: argparse.Namespace) -> int:
     """在子进程里执行（--child），输出直接透传。"""
+    if args.unstuck:
+        return run_unstuck(args)
     if args.volts:
         return run_volts(args)
     info = layer_driver()
@@ -263,6 +290,8 @@ def main() -> int:
                     help="下发文档化恢复（停流数据；不发 RESET）")
     ap.add_argument("--volts", nargs="?", const=3, default=0, type=int,
                     help="**最小电压测试**：恢复总线态 + 读 N 次 DCV（默认 3），不改任何设置")
+    ap.add_argument("--unstuck", action="store_true",
+                    help="**救砖**：IFC + clear + RESET（退出 Talk Only）；⚠ 回到开机配置")
     ap.add_argument("--watchdog", type=float, default=30.0, help="看门狗秒数（默认 30）")
     ap.add_argument("--no-watchdog", action="store_true", help="本进程直接跑（慎用）")
     ap.add_argument("--child", action="store_true", help=argparse.SUPPRESS)
@@ -280,6 +309,8 @@ def main() -> int:
         cmd.append("--recover")
     if args.volts:
         cmd += ["--volts", str(args.volts)]
+    if args.unstuck:
+        cmd.append("--unstuck")
     say(f"（看门狗 {args.watchdog:.0f}s；子进程执行，卡死即 kill）")
     p = subprocess.Popen(cmd, cwd=str(ROOT), stdout=subprocess.PIPE,
                          stderr=subprocess.STDOUT, text=True,

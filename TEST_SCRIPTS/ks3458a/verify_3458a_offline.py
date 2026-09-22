@@ -409,8 +409,9 @@ def main() -> int:
     transport.calls.clear()
     transport.writes.clear()
     dmm.recover()
-    expected = ["ifc", "drain", "write", "write", "drain"]
-    check("recovery order = ifc -> drain -> TARM HOLD -> TRIG HOLD -> drain",
+    # 顺序**逐条移植参考项目** dmm_sicl.py::open()：IFC → clear → drain → HOLD → drain
+    expected = ["ifc", "clear", "drain", "write", "write", "drain"]
+    check("recovery order = ifc -> clear -> drain -> HOLD -> drain",
           transport.names() == expected, transport.names())
     check("holds issued: TARM HOLD + TRIG HOLD",
           transport.writes == [C.TARM_HOLD, C.TRIG_HOLD], transport.writes)

@@ -1847,6 +1847,37 @@ def ks3458a_reset(confirm: bool = False, resource: str | None = None) -> str:
     return _call("3458A", lambda: _ks3458a(resource), fn)
 
 
+@device_tool(budget_s=180.0)
+def ks3458a_unstick(confirm: bool = False, resource: str | None = None) -> str:
+    """3458A **救砖**：`IFC` + clear + `RESET` + 读前准备（**移植自参考项目**）。
+
+    什么时候用（两个特征之一）：
+      * 每条命令都"回"一个电压读数（`ID?` 回的是 `4.99E-01` 而不是 `HP3458A`）——
+        说明表进了 **Talk Only 模式**（前面板 `ADDRESS`=31，只讲不听；手册 p.159）；
+      * `ks3458a_status`/`ks3458a_read` 全部超时，普通恢复（Device Clear）停不下来。
+
+    为什么必须是 IFC：Device Clear 只对"听命令"的设备有效；表在讲、不在听时，
+    只有 **IFC（`viGpibSendIFC`，等价于参考项目 SICL 的 `igpibpulseifc`）** 能从总线层
+    打断它，随后 `RESET` 才能被接收并退出 Talk Only（手册 p.159：Reset 或改地址）。
+
+    顺序（逐条照 `EmoeCalibrator/Software/cal_tool/dmm_sicl.py::open()` 移植）：
+    `IFC → clear → TARM/TRIG HOLD → RESET → clear → END ALWAYS/INBUF ON → ID?`
+
+    ⚠ **破坏性**：`RESET` 回到**开机测量配置**（档位/NPLC/功能/触发，手册 p.26 Table 5）
+    → 必须 `confirm=True`。返回体含 `idn`（救回来是 `HP3458A`）与一次电压读数，便于确认。
+    """
+    if not confirm:
+        return _err("confirm_required",
+                    "救砖会下发 RESET（回到开机测量配置：档位/NPLC/功能/触发全变），"
+                    "需 confirm=True", "3458A")
+
+    def fn(d: DMM3458A):
+        out = d.unstick()
+        out["unit"] = "V"
+        return out
+    return _call("3458A", lambda: _ks3458a(resource, timeout_s=60.0), fn)
+
+
 # ============ DHO 示波器 ============
 
 @device_tool()

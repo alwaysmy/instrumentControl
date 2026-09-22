@@ -373,6 +373,43 @@ def _f(name: str):
     return _SICL["bound"][name]
 
 
+def gpib_interface_name(resource: str, default: str = "gpib0") -> str:
+    """`GPIB0::9::INSTR` / `sicl:gpib0,9` → SICL 接口名（`gpib0`）。"""
+    text = str(resource or "")
+    if text.lower().startswith("sicl:"):
+        text = text.split(":", 1)[1]
+    head = text.split(",")[0].split("::")[0].strip().lower()
+    return head or default
+
+
+def pulse_ifc_via_sicl(interface: str = "gpib0") -> tuple[bool, str]:
+    """用 **SICL** 发一次真 IFC（移植参考项目 `dmm_sicl.py` 的 `igpibpulseifc`）。
+
+    为什么需要它（2026-09-23 实测）：Keysight VISA 的 `viGpibSendIFC` 在本机返回
+    **`-1073807257`（`VI_ERROR_NCIC`，本会话不是总线控制者）**，即 **VISA 通路发不出 IFC**；
+    而 SICL 的 `igpibpulseifc` **返回 0 = 真的发出去了**。所以 VISA 传输在 IFC 失败时
+    自动回退到这条通路。
+
+    返回 `(是否成功, 说明)`；**不抛异常**（收尾动作尽力而为）。
+    """
+    try:
+        _load_sicl()
+        inst = _IFC_SESSION.get("inst")
+        if inst is None:
+            inst = _f("iopen")(interface.encode())
+            if not inst:
+                errno, text = _last_error()
+                return False, f"iopen({interface}) 失败：{errno} {text}"
+            _IFC_SESSION["inst"] = inst
+        rc = _f("igpibpulseifc")(inst)
+        if rc != 0:
+            errno, text = _last_error()
+            return False, f"igpibpulseifc 失败 rc={rc}：{errno} {text}"
+        return True, f"sicl igpibpulseifc({interface}) ok"
+    except Exception as e:                                    # noqa: BLE001
+        return False, f"sicl IFC 失败：{type(e).__name__}: {str(e)[:90]}"
+
+
 def _last_error() -> tuple[int, str]:
     errno = _f("igeterrno")()
     try:
@@ -881,7 +918,42 @@ class KeysightVisaTransport:
                 pass
 
     def ifc(self) -> None:
-        """VISA 侧无独立 IFC；用 Device Clear 等价（3458A 实测足够停 free-run）。"""
+        """**真 IFC（接口清除）**：先试 VISA `viGpibSendIFC`，失败自动回退 **SICL**。
+
+        为什么必须真 IFC：Device Clear（`viClear`）**只对"听命令"的设备有效**；
+        表被留在 **free-run**（能听但一直吐数）时只有 IFC 能立刻打断它。
+        （⚠ 如果是 **Talk Only**（前面板 ADDRESS=31，**根本不听**），IFC 也救不回来——
+        手册 p.159 只有前面板两招：按 Reset 或把地址改成 31 以外。见 `unstick()` 文档。）
+
+        2026-09-23 本机实测：
+        * VISA `viGpibSendIFC` → `-1073807257`（`VI_ERROR_NCIC`）**发不出去**；
+        * SICL `igpibpulseifc(gpib0)` → **0（成功）** ← 参考项目用的就是这条。
+        所以这里做**自动回退**，并把实际走通的通路记在 `self.ifc_path` 上供调用方报告。
+        """
+        self.ifc_path = None
+        self.ifc_status = None
+        # ① VISA（本机失败，但别的机器/版本可能可用）
+        try:
+            fn = getattr(self._lib, "viGpibSendIFC", None)
+            if fn is not None and (self._session.value or self._rm.value):
+                fn.argtypes = [ctypes.c_uint]
+                fn.restype = ctypes.c_long
+                ses = self._session if self._session.value else self._rm
+                self.ifc_status = fn(ses)
+                if self.ifc_status >= 0:
+                    self.ifc_path = "visa"
+                    return
+        except Exception:                                    # noqa: BLE001
+            pass
+        # ② SICL 回退（参考项目通路）
+        ok, detail = pulse_ifc_via_sicl(gpib_interface_name(self.resource))
+        if ok:
+            self.ifc_path = "sicl"
+            self.ifc_detail = detail
+            return
+        # ③ 都不行 → 退回设备清除（并如实记录）
+        self.ifc_path = "none"
+        self.ifc_detail = detail
         self.clear()
 
     def drain(self, max_rounds: int = DRAIN_MAX_ROUNDS,

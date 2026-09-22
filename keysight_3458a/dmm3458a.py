@@ -393,23 +393,86 @@ class DMM3458A:
 
     # ---------- 会话恢复 / 重置 ----------
     def recover(self) -> None:
-        """把表从"上次会话留下的现场"救回来：IFC/clear → 有限 drain → 挂起触发。
+        """把表从"上次会话留下的现场"救回来：**IFC** → clear → 有限 drain → 挂起触发。
 
-        现场教训（[SICL] L273-276）：上次会话若把 3458A 留在 free-run，它会持续吐
-        读数、不理查询；此时**先 drain 只会一直读到数据**（实测 91 s）。必须先用
-        IFC（SICL 通路）/ Device Clear（VISA 通路）打断序列，且 drain 必须有限。
+        现场教训（[SICL] L273-276 + 2026-09-23 事故）：上次会话若把 3458A 留在 free-run
+        或 **Talk Only（ADDRESS 31，只讲不听）**，它会持续吐读数、不理查询；此时
+        **先 drain 只会一直读到数据**（实测 91 s），而 Device Clear 也送不进去——
+        必须先用 **IFC** 从总线层打断它。
+
+        顺序**逐条移植参考项目** `dmm_sicl.py::open()`（`igpibpulseifc` → `clear`）：
+        IFC → sleep 0.3 → clear → sleep 0.2 → 有界 drain → `TARM HOLD`/`TRIG HOLD`。
 
         ⚠ **成本**（2026-09-23 实测）：VISA 的 `VI_ATTR_TMO_VALUE` 有 ≈2 s 的最小粒度，
-        250 ms 设不下去 → 每轮 drain 实际 ≈2 s。所以本函数是**慢路径**（≈4-5 s），
+        250 ms 设不下去 → 每轮 drain 实际 ≈2 s。所以本函数是**慢路径**（≈5 s），
         只在 `connect(recover=True)` 或读数失败重试时走；默认 `recover="auto"` 不预做。
+
+        ⚠ 如果连 IFC+clear 都停不下来（每条命令仍回读数），说明是 Talk Only，
+        要改用 `unstick()`（多一步 `RESET`）。
         """
         transport = self._t()
-        transport.ifc()                  # SICL: IFC；VISA: Device Clear（见 transport 注释）
+        transport.ifc()                  # ← 真 IFC：VISA 不行自动回退 SICL（见 transport 注释）
+        time.sleep(0.3)
+        transport.clear()
         time.sleep(0.2)
         transport.drain(2, DRAIN_TIMEOUT_MS)
         transport.write(C.TARM_HOLD)     # 断言：后续不再自动触发
         transport.write(C.TRIG_HOLD)
         transport.drain(2, DRAIN_TIMEOUT_MS)
+
+    def unstick(self) -> dict:
+        """**救砖序列**（照参考项目 `dmm_sicl.py::open()` 移植 + 补验证）：
+
+            IFC → clear → TARM/TRIG HOLD → `RESET` → clear → END ALWAYS/INBUF ON → 读 ID?
+
+        什么时候用：表被留在 **Talk Only（前面板 ADDRESS=31，只讲不听）** 时——表现为
+        **每条命令都"回"一个电压读数**、`viWrite` 超时；此时 `recover()` 停不下来
+        （它在讲、不听），必须 **IFC 打断 + `RESET` 退出**。手册 p.159：
+        "To remove the multimeter from Talk Only mode, press the Reset key or specify
+        an address other than 31"。
+
+        ⚠ **破坏性**：`RESET` 回到开机测量配置（档位/NPLC/功能/触发等，手册 p.26 Table 5）。
+        返回 `{"unstuck": True, "idn": "HP3458A"|..., "voltage": ...}`。
+        """
+        transport = self._t()
+        transport.ifc()
+        ifc_path = getattr(transport, "ifc_path", None)
+        time.sleep(0.3)
+        transport.clear()
+        time.sleep(0.3)
+        transport.write(C.TARM_HOLD)
+        transport.write(C.TRIG_HOLD)
+        transport.write(C.RESET)
+        time.sleep(1.2)                              # RESET 后稳定（参考实现 1.0~1.2 s）
+        transport.clear()
+        time.sleep(0.3)
+        transport.write(C.END_ALWAYS)
+        transport.write(C.INBUF_ON)
+        transport.write(C.TRIG_AUTO)
+        transport.drain(2, DRAIN_TIMEOUT_MS)
+        self._range = None                           # RESET 复位了档位/NPLC → 记录作废
+        self._nplc = None
+        out: dict = {"unstuck": True,
+                     "ifc_path": ifc_path,
+                     "ifc_status": getattr(transport, "ifc_status", None),
+                     "ifc_detail": getattr(transport, "ifc_detail", None),
+                     "note": "IFC + clear + RESET（退出 Talk Only / 停 free-run）；"
+                             "设备已回到开机测量配置。若 idn 仍是读数，说明表处于 "
+                             "Talk Only（前面板 ADDRESS=31）——手册 p.159：只能前面板 "
+                             "按 Reset 或把地址改成 31 以外的值"}
+        try:
+            out["idn"] = self.idn()
+        except Exception as e:                        # noqa: BLE001
+            out["idn_error"] = f"{type(e).__name__}: {e}"
+        try:
+            out["error"] = self.error_string()
+        except Exception:                             # noqa: BLE001
+            pass
+        try:
+            out["voltage"] = self.read_dcv()
+        except Exception as e:                        # noqa: BLE001
+            out["voltage_error"] = f"{type(e).__name__}: {e}"
+        return out
 
     def reset(self) -> None:
         """`RESET` + `END ALWAYS` + `INBUF ON`——**回到开机测量配置（破坏性）**。

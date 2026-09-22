@@ -59,14 +59,21 @@ MCP server：`mcp_instruments/server.py`（65 工具 = 61 专用 + 3 通用护�
   复位（回开机配置） → ks3458a_reset(confirm=True)  ⚠ 破坏性
   ⚠ 3458A **没有** *IDN?/SYST:ERR?/*RST；**不要**用 instr_query/instr_write 对它发 SCPI
 
-  **连不上时的第一步——驱动预检查（照做，别猜地址）**：
-    `python keysight_3458a/driver_check.py`（或读工具返回体里的 `hint`）会查
-    82357B USB/GPIB 适配器的 PnP 状态与 Keysight VISA：
-    * `device_absent` → 适配器没插/线松/3458A 没上电
-    * `driver_missing` / `iolib_missing` → **告诉用户去装 Keysight IO Libraries Suite**
-      （提示即可，**不要自己下安装包、不要提权安装**）；**不要**建议装 NI-488.2
-      （不支持 82357B）；也不需要启用 NI MAX 的 Tulip 护照（那只对 32 位 VISA 有效）
-    * `ok` → 驱动没问题，再查地址/总线（本机默认 `GPIB0::9::INSTR`）
+  **连不上时的第一步——分层诊断（一条命令，照做，别猜地址）**：
+    `python -m keysight_3458a.preflight`（或读工具返回体里的 `hint`）——它在**子进程**里跑、
+    带**看门狗**（默认 30 s 超时即 kill），所以哪怕 DLL 里卡死也拖不垮会话。分层结论：
+    * `[1] 驱动层` `driver_missing`/`iolib_missing` → **告诉用户去装 Keysight IO Libraries Suite**
+      （提示即可，**不要自己下安装包、不要提权安装**）；**不要**建议装 NI-488.2（不支持 82357B）
+    * `[2] 枚举层` GPIB 为空 → 接口没带起来：**拔插 82357B + 打开 Keysight Connection Expert**
+      （让它重新发现接口），等适配器名字从 "<...> Initializing" 变正常（~20-30 s）再跑一次
+    * `[3] 会话层` 崩/`0xE06D7363`/`0xC0000005` → **适配器接口卡死**：杀相关进程 → 重置适配器节点
+      (`usb_reset`) → 仍不行**重启整机**；期间**不要反复重试**（每次都崩，没有信息增量）
+    * `[4] 应答层` viRead 无数据且 `RSRC_NFOUND`/`TMO` → **地址上没有仪器**：查 3458A 是否上电、
+      GPIB 电缆两端是否插牢、面板 GPIB 地址是否=9（**这一层是物理问题，软件无能为力**）
+    * `[4]` viRead **有数据** → 表被留在流数据 → 用 `--recover`（文档化恢复，不发 RESET）
+    * `[5] 身份层`（`--id`）`ID?` -> `HP3458A` 才算**通路完全正常**
+    **重启后的标准动作（2026-09-23 实测有效）**：重启 → 若仍连不上：**拔插适配器 + 打开
+    Connection Expert** → 等初始化完 → `python -m keysight_3458a.preflight --id` 确认。
 
   **现场态是自动处置的（无需你手动干预，也**不要**用 reset 去"清理"）**：
     * 表可能被上次会话留在 **free-run（上电就持续吐数）**——`connect()` 自动做

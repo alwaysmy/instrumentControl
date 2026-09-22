@@ -49,6 +49,33 @@ python mcp_instruments/config_cli.py set ks3458a "visa://<host>/GPIB0::9::INSTR"
 $env:INSTRUMENT_KS3458A_RES = "sicl:gpib0,9"
 ```
 
+## 连通前的分层诊断（连不上时先跑这个，别猜地址）
+
+```bash
+python -m keysight_3458a.preflight            # 只读分层检查（不写设备）
+python -m keysight_3458a.preflight --id       # 追加一条 ID?（通路完全正常的判据）
+python -m keysight_3458a.preflight --recover  # 表被留在流数据时：文档化恢复（不发 RESET）
+```
+
+它在**子进程**里跑并带**看门狗**（默认 30 s 超时即 kill）——因为 `viOpen/viRead/viWrite`
+一旦卡在 `ioGPIB` 内，同进程无法中断（见 `docs/3458a_wedge_postmortem_20260923.md`）。
+
+分层判据与对应处置：
+
+| 层 | 现象 | 处置 |
+|---|---|---|
+| [1] 驱动层 | `driver_missing` / `iolib_missing` | 装 **Keysight IO Libraries Suite**（别装 NI-488.2，不支持 82357B） |
+| [2] 枚举层 | GPIB 资源为空 | **拔插适配器 + 打开 Keysight Connection Expert**，等 "Initializing" 消失（~20-30 s） |
+| [3] 会话层 | `0xE06D7363` / `0xC0000005` | 适配器接口卡死：杀进程 → 重置适配器节点 → **重启整机**；不要反复重试 |
+| [4] 应答层 | viRead 无数据（`RSRC_NFOUND`/`TMO`） | **物理侧**：3458A 是否上电、GPIB 电缆两端、面板地址=9 |
+| [4] 应答层 | viRead 有数据 | 表被留在流数据 → `--recover` |
+| [5] 身份层 | `ID?` -> `HP3458A` | 通路完全正常 |
+
+**重启后的标准动作（2026-09-23 实测有效）**：重启系统 → 若仍连不上，**拔插 82357B +
+打开 Keysight Connection Expert**（让它重新发现接口）→ 等适配器名字从
+"`Keysight Technologies 82357B Initializing`" 变回 "`Keysight Technologies 82357B`"
+→ 再跑 `preflight --id` 确认。
+
 ## 三条传输通路（`transport.make_transport` 按资源串自动选）
 
 | 通路 | 资源串形态 | 实现 | 何时用 |

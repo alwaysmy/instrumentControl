@@ -57,3 +57,22 @@
 * 事故前的软件缺陷（超时过长、不收尾、无占用保护）**已修并有离线故障注入用例覆盖**。
 * 剩余风险是**"DLL 内卡死"这一类不可中断故障**——需要 §4.1 的进程隔离才能根治；
    在此之前，**burst 仍是高风险操作**，建议在专用会话里做，且做完就重启/重置一次。
+
+## 6. 事后复原记录（本次实际怎么好起来的）
+
+**结论：重启整机 + 拔插适配器 + 打开 Keysight Connection Expert 之后恢复**；
+三步各自的作用（按证据）：
+
+| 步骤 | 证据 | 作用 |
+|---|---|---|
+| **重启整机** | 重启前 `viOpen` 抛 `0xE06D7363` 且进程 `0xC0000005`；重启后同一调用**正常返回 VISA 状态**（`RSRC_NFOUND`）不再崩溃 | 清掉了**驱动/接口层的损坏态**（`pnputil` 当时就要求重启） |
+| **拔插适配器 + 打开 Connection Expert** | 重启后最初：适配器名字带 `Initializing`、GPIB 开不了（`RSRC_NFOUND`）；拔插 + 开 CE 后：名字变正常、`viOpen` **OPEN OK**、枚举列出 `GPIB0::9::INSTR` | 让 IO Libraries **重新发现并带起 GPIB0 接口**（等 ~20-30 s 初始化完成） |
+| （仍未恢复的） | 之后 `viRead` 无数据且 `RSRC_NFOUND`、`viWrite('ID?')` `TMO` | **地址 9 上没有仪器** —— 属**物理侧**（表上电/GPIB 电缆/地址=9），与前面的事故无关 |
+
+**标准动作（已写进 skill 与 `keysight_3458a/README.md`）**：
+`重启 → 仍连不上就拔插适配器 + 打开 Connection Expert → 等 "Initializing" 消失 →
+python -m keysight_3458a.preflight --id 确认`。
+
+**工具化**：分层诊断/恢复已从临时脚本固化进仓库——
+`keysight_3458a/preflight.py`（子进程 + 看门狗，`--id` / `--recover` / `--watchdog N`），
+它**自己就应该被首先使用**，不要再临时写探测脚本。

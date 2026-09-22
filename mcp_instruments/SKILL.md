@@ -60,8 +60,11 @@ MCP server：`mcp_instruments/server.py`（65 工具 = 61 专用 + 3 通用护�
   ⚠ 3458A **没有** *IDN?/SYST:ERR?/*RST；**不要**用 instr_query/instr_write 对它发 SCPI
 
   **连不上时的第一步——分层诊断（一条命令，照做，别猜地址）**：
-    `python -m keysight_3458a.preflight`（或读工具返回体里的 `hint`）——它在**子进程**里跑、
-    带**看门狗**（默认 30 s 超时即 kill），所以哪怕 DLL 里卡死也拖不垮会话。分层结论：
+    `python -m keysight_3458a.preflight [--id] [--volts N] [--unstuck] [--watchdog N]`
+    —— 它在**子进程**里跑、带**看门狗**（默认 30 s 超时即 kill），所以哪怕 DLL 里卡死也
+    拖不垮会话。四种用法：默认=只读分层检查；`--id`=追加一条 `ID?`；`--volts N`=**最小电压
+    测试**（恢复总线态 + 读 N 次，不改任何设置）；`--unstuck`=IFC+clear+RESET 救砖。
+    分层结论：
     * `[1] 驱动层` `driver_missing`/`iolib_missing` → **告诉用户去装 Keysight IO Libraries Suite**
       （提示即可，**不要自己下安装包、不要提权安装**）；**不要**建议装 NI-488.2（不支持 82357B）
     * `[2] 枚举层` GPIB 为空 → 接口没带起来：**拔插 82357B + 打开 Keysight Connection Expert**
@@ -73,12 +76,15 @@ MCP server：`mcp_instruments/server.py`（65 工具 = 61 专用 + 3 通用护�
     * `[4]` viRead **有数据** → 表被留在流数据 → 用 `--recover`（文档化恢复，不发 RESET）
     * `[5] 身份层`（`--id`）`ID?` -> `HP3458A` 才算**通路完全正常**
     * ⚠ `[5]` 若 `ID?` **回的不是 `HP3458A`，而是一个电压读数**（比方 `4.99E-01`）——
-      说明表在"**只讲不听**"，两步处置（**顺序不要颠倒**）：
-      ① **先重新拔插 82357B 适配器**（最常见成因：适配器/接口卡死把缓冲的读数当响应吐；
-         实测拔插后 `ID?` 立刻恢复）→ 重新跑 `preflight --id`；
-      ② 若仍是这样 → 让用户到面板操作：**`Address` → `9` → `Enter`**（退出 Talk Only；
-         等效可按下 `Reset` 键，但 Reset 会一并回到开机测量配置）。
-      **这一态无法远程修**：表根本不听命令，`RESET`/IFC 都送不进去（手册 p.159：
+      说明表在"**只讲不听**"。两个成因今天都遇到过、且**未能完全分离**
+      （2026-09-23：拔插适配器与面板按键都做过，用户回忆更像是**按了面板键**才好的），
+      所以按下面顺序两条都要试，别只试一条：
+      ① **看/问面板 `TALK` 指示灯**：亮 → 确诊 **Talk Only** → 让用户按
+         **`Address` → `9` → `Enter`**（退出该模式、保留测量设定；或按 `Reset` 键，
+         但那会一并回到开机测量配置）。
+      ② 若 `TALK` 不亮 / ①做完仍这样 → **重新拔插 82357B 适配器**（适配器/接口卡死
+         也会把缓冲读数当响应吐出来）→ 重新跑 `preflight --id`；仍不行则重启整机。
+      **①这一态无法远程修**：表根本不听命令，`RESET`/IFC 都送不进去（手册 p.159：
       "To remove the multimeter from Talk Only mode, press the Reset key or specify an
       address other than 31"）——别反复试 `ks3458a_unstick`。
     **重启后的标准动作（2026-09-23 实测有效）**：重启 → 若仍连不上：**拔插适配器 + 打开
@@ -86,11 +92,21 @@ MCP server：`mcp_instruments/server.py`（65 工具 = 61 专用 + 3 通用护�
 
   **现场态是自动处置的（无需你手动干预，也**不要**用 reset 去"清理"）**：
     * 表可能被上次会话留在 **free-run（上电就持续吐数）**——`connect()` 自动做
-      `recover()`：Device Clear/IFC → **有界** drain（≤6 轮×250 ms，绝不是无界读）→
+      `recover()`，顺序**逐条移植参考项目** `dmm_sicl.py::open()`：
+      **真 IFC** → clear → **有界** drain（≤6 轮×250 ms，绝不是无界读）→
       `TARM HOLD`/`TRIG HOLD`；不需要也不应该发 `RESET`
+    * ⚡ **真 IFC 从哪来**（2026-09-23 实测）：VISA 的 `viGpibSendIFC` 在本机返回
+      `-1073807257`（`VI_ERROR_NCIC`，本会话不是总线控制者）**发不出去**；而 SICL 的
+      `igpibpulseifc` **返回 0 = 真的发了**。所以 VISA 传输在 IFC 失败时**自动回退 SICL**，
+      并把实际通路记在 `ifc_path`/`ifc_status`（**不再静默降级成 Device Clear**）。
+      这也是参考项目坚持走 SICL 的原因
     * 随后 `prepare_for_read()` 自动补 `END ALWAYS` + `INBUF ON` + **`TRIG AUTO`**：
       实测若 `TRIG?`=4(HOLD)，`TARM SGL,1` **永远不出数**（20 s 超时），补 `TRIG AUTO`
       后 0.43 s/次（NPLC=10）。这三条**不改档位/NPLC/功能**，所以是安全的读前准备
+    * ⚠ **`ks3458a_burst` 是高风险操作**：2026-09-23 的适配器卡死就发生在一个 burst 上
+      （DLL 内卡住 → 接口被占 → 后续所有调用失败）。在"worker 子进程隔离"落地前
+      （见 `docs/3458a_wedge_postmortem_20260923.md` §9 TODO），burst 请在**专用会话**里做，
+      跑完就 `preflight --id` 验一次；一旦卡住按上面的 Talk Only/拔插两条路处置
     * 这些动作会打断**整条 GPIB 总线**上正在进行的采集（共享实验台注意）；本机 GPIB0
       上只有这台 3458A
 
@@ -127,14 +143,14 @@ MCP server：`mcp_instruments/server.py`（65 工具 = 61 专用 + 3 通用护�
         快路径连接 0.27 s、单次读数 0.43 s（NPLC 10）。
     14. **命令白名单**：只有 `keysight_3458a/commands.py` 里的命令；新增命令先登记出处
         （手册页码/实测留痕），见铁律 1。
-    15. **"每条命令都回一个电压读数"（表不听、只讲）** —— 有**两个**可能原因，按此顺序处置：
-        ① **适配器/接口卡死**（最常见）：`ioGPIB` 卡死后把缓冲里的读数一直当响应吐出来。
+    15. **"每条命令都回一个电压读数"（表不听、只讲）** —— 有**两个**可能原因，两个都要试：
+        ① **Talk Only 模式**（前面板 `ADDRESS`=31；手册 p.159：`TALK` 灯亮、地址存连续
+           内存、**断电不丢**）：表**根本不听**，`RESET`/IFC 都送不进去，**只能前面板**：
+           **`Address` → `9` → `Enter`**（退出 Talk Only，保留测量设定），或按 `Reset` 键
+           （会一并回到开机测量配置）。**先看 `TALK` 灯**判断是不是这一条。
+        ② **适配器/接口卡死**：`ioGPIB` 卡死后把缓冲里的读数一直当响应吐出来——
            处置：**重新拔插 82357B**（必要时重启整机）→ 跑 `preflight --id` 复验。
-           2026-09-23 实测：拔插后 `viRead` 变回"无数据"，`ID?` 立刻回 `HP3458A`。
-        ② **表处于 Talk Only 模式**（前面板 `ADDRESS`=31；手册 p.159：`TALK` 灯亮、
-           地址存连续内存、**断电不丢**）：此时表**根本不听**，`RESET`/IFC 都送不进去——
-           **只能前面板**：**`Address` → `9` → `Enter`**（退出 Talk Only，保留测量设定），
-           或按 `Reset` 键（会一并回到开机测量配置）。
+        ⚠ 2026-09-23 那次两个动作都做过、**无法分离**（用户回忆更像按键起效）→ 不要只试一条。
         ⚠ 别指望远程救 Talk Only：`ks3458a_unstick`（IFC+RESET）只对"能听但一直吐"
         （free-run）有效；`preflight --id` 会识别这一态并直接告诉你按哪个键。
 
@@ -261,6 +277,7 @@ DG832 信号源（RIGOL DG800 系列）：
 | ks3458a_acv | range, band_lo?, band_hi?, sync?, nplc? | `ACV`/`SETACV ANA|SYNC`/`ACBAND <lo>,<hi>`（带宽需成对给）。`SETACV SYNC` 用于 <10 Hz、`ANA` 用于 >10 Hz。✅ 2026-09-23 实测：`ANA` 下 `TARM SGL,1` 能读出交流电压（4.11 mV AC）；`SYNC/RNDM` 采样法未测 |
 | ks3458a_autorange | on | `ARANGE ON` / `ARANGE OFF`（手册 p.160）；**只开关自动挡**，不碰档位数值/NPLC。回读看 `device.arange`（`1(ON)`/`0(OFF)`）与 `device.autorange`（`FUNC?` 在自动挡下仍返回固定档值，**别用它判自动挡**） |
 | ks3458a_reset | confirm | `RESET`+`END ALWAYS`+`INBUF ON`；**回到开机测量配置**（= 手册 p.26 Table 5 上电状态：`DCV AUTO`/`NPLC 10`/`END OFF`/`INBUF OFF`/`MFORMAT SREAL`…）。MCP 连接默认**不**重置仪表，这是唯一重置入口 |
+| ks3458a_unstick | confirm | **救砖**（顺序逐条移植参考项目 `dmm_sicl.py::open()`）：`IFC` → clear → `TARM/TRIG HOLD` → **`RESET`** → clear → `END ALWAYS`/`INBUF ON` → 读 `ID?`。用于"表能听但一直吐数 / 一切调用超时"这类**free-run / 收尾失败**场合。返回 `ifc_path`（`visa`/`sicl`/`none`）+ `idn` + 一次读数。⚠ **破坏性**（`RESET` 回开机配置）；⚠ **对 Talk Only 无效**（表不听，RESET 送不进去——那种情况走面板 `Address` → `9` → `Enter`） |
 | （3458A 通用） | — | **禁用** `instr_query`/`instr_write` 操作 3458A——那两条面向 SCPI，而 3458A 是 `ID?`/`ERRSTR?`/`RESET`/`TARM SGL,1` 那套；库只允许白名单命令（见 `keysight_3458a/docs/COMMANDS_3458A.md`） |
 | dho_measure_item | item, ch, ch2?, samples? | RIGOL 长名：VPP/VMAX/VAVG/PERiod/FREQuency...；samples>1 给均值统计；无值分类报因（suspicious/hint）|
 | dho_channel / dho_timebase / dho_trigger | 同 mho_* 同名工具 | DHO 的设置类工具（同一套内核语义）；⚠ DHO 不在本台，未实机验证 |

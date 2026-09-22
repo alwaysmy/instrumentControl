@@ -1,24 +1,24 @@
-"""MCP 工具**元信息**协议级验收（离线；只做 JSON-RPC 握手，绝不接触仪器）。
+"""Offline meta check for the MCP server: handshake, tool table, descriptions, schemas.
 
-为什么要有这条：2026-09-16 用户报"instrument MCP 的 12 个工具缺 description
-（49 个里 37 个有）"。查证结果是**已退役的 DG832 独立服务器**（`instrument_*` 命名、
-13 个工具里 12 个没写 docstring）的老进程还在跑——统一服务器（本仓
-`mcp_instruments/server.py`）里 57 个工具**全部**有 description。
-本文件把这套核对固化成断言，将来"新增工具忘写 docstring"或"客户端连到了退役服务器"
-都能一眼分辨。
+Runs the server as a subprocess and speaks JSON-RPC over stdio. No instrument is
+touched (the device tools are never called).
 
+Encoding policy (deliberate, keep it this way):
+  * stdout is the protocol stream (UTF-8 JSON-RPC) -> decode as UTF-8.
+  * stderr is the server's own startup log; it may be written in the machine's
+    legacy console code page. We decode it as UTF-8 with errors="replace" and only
+    match **ASCII anchors** ("[instrumentControl]", "description", digits), so this
+    check never depends on the local code page.
+  * Everything this script prints is ASCII-only, so it runs on any console
+    (cp936 / cp437 / utf-8) without reconfiguring streams.
+
+Usage:
     python TEST_SCRIPTS/common/verify_mcp_tools_meta.py
-
-断言：
-    §1 握手与工具表：initialize / tools/list 正常，名字唯一，数量达到下限
-    §2 **每个工具的 description 非空**（FastMCP 取自函数 docstring）
-    §3 每个工具都有 object 型 inputSchema（入参 schema 未被装饰器吃掉）
-    §4 关键工具在列（覆盖 7 类设备的代表 + 护栏/兜底）
-    §5 启动自检行打到 stderr（含工具数与 description 缺口统计）——且 **stdout 无污染**
 """
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -31,77 +31,90 @@ PY_EXE = sys.executable
 fails: list[str] = []
 
 
+def _ascii(text) -> str:
+    """Force ASCII for console safety (non-ASCII becomes '?')."""
+    return str(text).encode("ascii", "replace").decode("ascii")
+
+
 def _is_jsonrpc(line: str) -> bool:
-    """stdout 上的一行是否合法 JSON-RPC（协议流纯度判据）。"""
+    """True when the stdout line is a well-formed JSON-RPC envelope."""
     try:
         obj = json.loads(line)
     except ValueError:
         return False
-    return isinstance(obj, dict) and ("jsonrpc" in obj or "result" in obj or "error" in obj)
+    if not isinstance(obj, dict):
+        return False
+    return obj.get("jsonrpc") == "2.0" and ("result" in obj or "error" in obj or "id" in obj)
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
-    print(f"  [{'PASS' if ok else 'FAIL'}] {name:56s} {str(detail)[:110]}", flush=True)
+    print(f"  [{'PASS' if ok else 'FAIL'}] {_ascii(name):56s} {_ascii(detail)[:110]}", flush=True)
     if not ok:
         fails.append(name)
 
 
 def main() -> int:
+    # Binary pipes: stdout (UTF-8 JSON-RPC) and stderr (server log, unknown code page)
+    # are decoded separately below; one shared `encoding=` cannot serve both.
     proc = subprocess.Popen([PY_EXE, str(SERVER)], stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, encoding="utf-8", bufsize=1, cwd=str(ROOT))
+                            bufsize=0, cwd=str(ROOT))
 
     def send(obj: dict) -> None:
-        proc.stdin.write(json.dumps(obj) + "\n")
+        proc.stdin.write((json.dumps(obj) + "\n").encode("utf-8"))
         proc.stdin.flush()
 
     def read_line(timeout: float = 120.0) -> str:
         box: dict = {}
-        th = threading.Thread(target=lambda: box.update(l=proc.stdout.readline()), daemon=True)
+        th = threading.Thread(
+            target=lambda: box.update(l=proc.stdout.readline().decode("utf-8", "replace")),
+            daemon=True)
         th.start()
         th.join(timeout)
         return box.get("l", "")
 
-    print("§1 握手与工具表", flush=True)
+    print("S1 handshake and tool table", flush=True)
     send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
           "params": {"protocolVersion": "2024-11-05", "capabilities": {},
                      "clientInfo": {"name": "meta-check", "version": "1"}}})
     line = read_line()
     ok_init = bool(line.strip()) and "result" in (json.loads(line) if line.strip() else {})
-    check("initialize 正常返回", ok_init, line[:80])
+    check("initialize returns a result", ok_init, line[:80])
     send({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
     send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
     raw = read_line()
     tools = json.loads(raw)["result"]["tools"] if raw.strip() else []
     names = [t["name"] for t in tools]
-    check("tools/list 返回工具表", len(tools) > 0, f"{len(tools)} 个工具")
-    check("工具名无重复", len(names) == len(set(names)),
-          f"{len(names)} 个名字 / {len(set(names))} 个唯一")
-    check("工具数达到下限（≥50；当前统一服务器 57）", len(tools) >= 50, f"实际 {len(tools)}")
+    check("tools/list returns a tool table", len(tools) > 0, f"{len(tools)} tools")
+    check("tool names are unique", len(names) == len(set(names)),
+          f"{len(names)} names / {len(set(names))} unique")
+    check("tool count above floor (>=50)", len(tools) >= 50, f"actual {len(tools)}")
 
-    print("\n§2 description 覆盖（FastMCP 取自函数 docstring）", flush=True)
+    print("\nS2 description coverage (FastMCP takes them from docstrings)", flush=True)
     no_desc = [t["name"] for t in tools if not (t.get("description") or "").strip()]
-    check("**每个工具都有非空 description**", not no_desc,
-          f"缺 {len(no_desc)} 个：{no_desc}" if no_desc else f"{len(tools)}/{len(tools)} 全有")
+    check("every tool has a non-empty description", not no_desc,
+          f"missing {len(no_desc)}: {_ascii(no_desc)}" if no_desc else f"{len(tools)}/{len(tools)} ok")
 
-    print("\n§3 inputSchema 完整", flush=True)
+    print("\nS3 inputSchema completeness", flush=True)
     bad_schema = [t["name"] for t in tools
                   if (t.get("inputSchema") or {}).get("type") != "object"]
-    check("每个工具都有 object 型 inputSchema（装饰器未吃签名）", not bad_schema, str(bad_schema))
+    check("every tool has an object inputSchema", not bad_schema, str(bad_schema))
 
-    print("\n§4 关键工具在列（七类设备 + 护栏 + 兜底）", flush=True)
+    print("\nS4 key tools present (devices + guardrails + fallback)", flush=True)
     expect = ["instr_discover", "instr_query", "instr_write", "usb_reset",
               "sds_status", "sds_auto_scale", "sds_measure", "sdg_set_wave", "sdg_output",
               "dmm_measure", "dho_status", "dho_measure_item",
               "mho_status", "mho_measure_item", "mho_channel", "mho_fit_channel",
               "mho_timebase", "mho_trigger", "psu_status", "psu_output",
-              "dg_status", "dg_protect", "dg_output"]
+              "dg_status", "dg_protect", "dg_output",
+              "ks3458a_status", "ks3458a_read", "ks3458a_burst", "ks3458a_reset"]
     missing = [n for n in expect if n not in names]
-    check("代表工具齐全", not missing, f"缺 {missing}" if missing else f"核对 {len(expect)} 个")
+    check("representative tools present", not missing,
+          f"missing {missing}" if missing else f"checked {len(expect)}")
 
-    print("\n§5 启动自检行（stderr；stdout 必须是干净协议流）", flush=True)
-    # stdout 纯净性：协议流里除 JSON-RPC 外不许有任何东西（历史事故：库里的 print
-    # 打进协议通道 → 客户端 Connection closed）。先排空剩余行逐行验 JSON。
+    print("\nS5 startup self-check line (stderr) and stdout purity", flush=True)
+    # stdout must carry JSON-RPC only (history: a stray print() into the protocol
+    # channel made clients report "Connection closed").
     extra: list[str] = []
 
     def drain() -> None:
@@ -115,21 +128,24 @@ def main() -> int:
     th.start()
     th.join(2.0)
     bad = [l for l in extra if l.strip() and not _is_jsonrpc(l)]
-    check("stdout 只有合法 JSON-RPC（无 print 污染）", not bad, str(bad[:2]))
+    check("stdout carries JSON-RPC only (no print pollution)", not bad, str(bad[:2]))
     proc.stdin.close()
     try:
         proc.wait(timeout=15)
     except Exception:
         proc.kill()
-    err = proc.stderr.read()
-    lines = [l for l in err.splitlines() if "启动自检" in l]
-    check("启动自检行出现", bool(lines), lines[0][:100] if lines else "(无)")
-    if lines:
-        check("自检里报了工具数与 description 缺口",
-              "工具" in lines[-1] and "description" in lines[-1], lines[-1][:120])
-    print(f"\n== 结果: {'全部 PASS' if not fails else f'{len(fails)} 项 FAIL'} ==")
+    # ASCII anchors only: the log text itself may be in a legacy code page.
+    err = proc.stderr.read().decode("utf-8", "replace")
+    startup = [l for l in err.splitlines() if "[instrumentControl]" in l]
+    check("startup self-check line present", bool(startup), startup[0][:100] if startup else "(none)")
+    if startup:
+        m = re.search(r"description\s+(\d+)", startup[-1])
+        check("self-check reports a description gap of 0",
+              bool(m) and int(m.group(1)) == 0,
+              f"description gap = {m.group(1) if m else 'n/a'}")
+    print(f"\n== result: {'all PASS' if not fails else f'{len(fails)} FAIL'} ==")
     for f in fails:
-        print(f"  - {f}")
+        print(f"  - {_ascii(f)}")
     return 1 if fails else 0
 
 

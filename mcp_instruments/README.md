@@ -1,7 +1,8 @@
 # instrument MCP Server
 
-七台仪器的统一 MCP 接口（sds_control / sdg_control / keysight_3446x /
-dho_control / mho_control / dg832_control / dh1766_control + common 统一发现层）。
+八台仪器的统一 MCP 接口（sds_control / sdg_control / keysight_3446x /
+keysight_3458a / dho_control / mho_control / dg832_control / dh1766_control
++ common 统一发现层）。
 
 ## 启动
 
@@ -13,7 +14,7 @@ MCP 注册（opencode/cursor 等）：command 用 python 全路径，args 为本
 
 ## 工具清单
 
-共 **57 个** = 53 个设备专用 + 3 个通用护栏（`instr_discover` / `instr_query` / `instr_write`）
+共 **65 个** = 61 个设备专用 + 3 个通用护栏（`instr_discover` / `instr_query` / `instr_write`）
 + 1 个**故障维护兜底**（`usb_reset`：USB-TMC 卡死时重启该仪器的 USB PnP 设备节点）。
 
 | 工具 | 说明 | 安全 |
@@ -39,6 +40,13 @@ MCP 注册（opencode/cursor 等）：command 用 python 全路径，args 为本
 | `dmm_nplc(value?)` | 电压 DC 积分时间 NPLC（0.02~100）| 改配置 |
 | `dmm_measure(function)` | 34465A 测量（10 种） | 只读 |
 | `dmm_status` / `dmm_configure` | 快照 / 配置 | 只读/改配置 |
+| `ks3458a_status` | 3458A 快照：`ID?` / `ERRSTR?` / `TEMP?` + 本会话跟踪的档位与 NPLC（**非设备回读**，3458A 无档位回读命令） | 只读 |
+| `ks3458a_read` | 3458A 单次 DCV（`TARM SGL,1`，触发后直接回值）；非数值报错、不兜底 | 只读 |
+| `ks3458a_read_avg(n=10)` / `ks3458a_read_stats(n=10)` | 连读 n 次取平均 / 给 mean·stddev·min·max（n≤1000） | 只读 |
+| `ks3458a_burst(n=1000, sample_interval_s?, dcv_range?, save_csv?)` | 高速二进制突发（`PRESET DIG`+SINT，2 字节大端有符号 × ISCALE）；返回摘要，`save_csv` 落 `TEST_DATA/ks3458a/`。**改设备配置**（见说明） | 取数（改配置） |
+| `ks3458a_configure(dcv_range=10, nplc=10)` | 直流档位（0.1/1/10/100/1000 V）+ NPLC；换档后自动丢首读数 | 改配置 |
+| `ks3458a_acv(range=10, band_lo?, band_hi?, sync?, nplc?)` | 交流配置（`ACV`/`SETACV ANA|SYNC`/`ACBAND`）——⚠ **该命令组未验证** | 改配置 |
+| `ks3458a_reset(confirm)` | `RESET`+`END ALWAYS`+`INBUF ON`——⚠ **破坏性**：回到开机测量配置 | **confirm 必填** |
 | `dho_status` / `dho_measure_item(item, ch, ch2?, samples?)` | DHO 快照 / 测量（samples>1 给 mean/min/max/stddev；无有效值分类报因） | 只读 |
 | `dho_channel(ch, scale?, offset?, coupling?, probe?, display?)` | DHO 通道垂直设置；**写后回读**，设备未照做则 `adjusted`+`reasons`（⚠ DHO 不在本台，未实机验证） | 改配置 |
 | `dho_timebase(scale?, offset?)` / `dho_trigger(source?, level?, slope?, mode?, sweep?)` | DHO 时基 / 触发（写后回读，枚举对照手册） | 改配置（**时基/触发是全局项**） |
@@ -78,6 +86,19 @@ MCP 注册（opencode/cursor 等）：command 用 python 全路径，args 为本
 DH1766 工具每次调用收尾自动补发 `SYST:LOC` 归还面板控制权——**任何远程会话都会把该电源
 置为 REM**（2026-09-13 实测，见 dh1766_control/docs/EXPERIENCE.md §3.1）。
 
+**3458A（`ks3458a_*`）的三条特别约定**（专用库 `keysight_3458a`，**非 SCPI**）：
+
+- **连接即做会话恢复**：IFC/Device Clear + 有限 drain + `TARM HOLD`/`TRIG HOLD`。
+  上次会话可能把表留在 free-run（持续吐读数、不理查询），不恢复就会读到错位数据。
+  恢复**不发 RESET、不改档位/NPLC**，但 SICL 通路的 IFC 会中断**整条 GPIB 总线**上的
+  活动——共享实验台上别人正在采集时要注意（见 `keysight_3458a/README.md` 已知坑 3/7）。
+- **`ks3458a_burst` 改设备配置**：`PRESET DIG` 把整组采样参数复位到数字档、功能切 DCV、
+  内存关闭。它只是取数，但跑完设备不再是原来的配置——要恢复请显式 `ks3458a_reset`
+  或 `ks3458a_configure`。
+- **档位/NPLC 没有回读通道**：3458A 命令白名单里没有 `DCV?`/`RANGE?`，工具返回的
+  `dcv_range`/`nplc` 是**下发值**；`errstr`（`ERRSTR?`）是"设备接受了这条命令"的唯一证据。
+  `ks3458a_reset` 是唯一的重置入口，**必须 `confirm=True`**。
+
 ## 资源地址解析（**不写死 IP**）
 
 仪器地址不是固定资产：DHCP 续租换 IP、换网段不可达、USB 换口换资源串、串口号漂移。
@@ -102,6 +123,12 @@ DH1766 工具每次调用收尾自动补发 `SYST:LOC` 归还面板控制权—�
 | `mho` | RIGOL MHO900 系列示波器 | `INSTRUMENT_MHO_RES` | `MHO` |
 | `dg` | RIGOL DG800 系列信号源 | `INSTRUMENT_DG_RES` | `DG8` |
 | `psu` | DH1766 三路电源 | `INSTRUMENT_PSU_RES` | `DH1766` |
+| `ks3458a` | HP/Keysight 3458A 八位半万用表 | `INSTRUMENT_KS3458A_RES` | `3458` |
+
+> `ks3458a` 有**两条通路**，配置值二者取一：远端 VISA server 用
+> `visa://<host>/GPIB0::9::INSTR`；本机 Keysight SICL 用 `sicl:gpib0,9`
+> （`config_cli.py set ks3458a "sicl:gpib0,9"` 直接写即可，`sicl:` 被视为完整资源串，
+> **不会**被当成裸主机名拿去探测网段）。身份校验同样走连接后的 `ID?`（返回含 `3458`）。
 
 配置/缓存目录：`%LOCALAPPDATA%\instrumentControl\`（非 Windows 退 `XDG_CACHE_HOME` / `~/.cache`）。
 配置值**一律是完整 VISA 资源串**（TCPIP / USB / ASRL / GPIB 同一形态，不区分传输方式）：

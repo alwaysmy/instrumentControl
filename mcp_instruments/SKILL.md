@@ -5,7 +5,7 @@ description: instrument MCP 服务器使用指引 — 七台仪器（SDS 示波�
 
 # instrument MCP 使用指引
 
-MCP server：`mcp_instruments/server.py`（57 工具 = 53 专用 + 3 通用护栏 + 1 故障兜底，七台设备）。
+MCP server：`mcp_instruments/server.py`（65 工具 = 61 专用 + 3 通用护栏 + 1 故障兜底，八台设备）。
 本文是 AI 选择工具/参数时的决策依据。DG832 的详细 SOP/踩坑见 skill `dg832-control`。
 
 ## 一、工具选择决策树
@@ -33,9 +33,38 @@ MCP server：`mcp_instruments/server.py`（57 工具 = 53 专用 + 3 通用护�
   开/关输出 → sdg_output（**开/关都需 confirm=True**，expect_load 必填）
   看当前配置 → sdg_status
 
-万用表（DMM）：
+万用表（DMM，Keysight 34465A，标准 SCPI）：
   测量 → dmm_measure（先 dmm_configure 设功能/量程更稳）
   看配置 → dmm_status
+
+八位半万用表（3458A，**非 SCPI**，`ks3458a_*`）：
+  看状态 → ks3458a_status（`ID?`/`ERRSTR?`/`TEMP?` + **`device` 设备回读**
+    `FUNC?`/`RANGE?`/`NPLC?`/`TARM?`/`TRIG?`/`INBUF?`… → 真实配置，不是"本会话设过什么"）
+  取数 → ks3458a_read（单次 DCV）/ ks3458a_read_avg(n) / ks3458a_read_stats(n)
+  高速采样（100k rdg/s） → ks3458a_burst(n, sample_interval_s?, dcv_range?, save_csv?)
+  改档位/积分 → ks3458a_configure(dcv_range, nplc)（0.1/1/10/100/1000 V）
+  交流配置 → ks3458a_acv(range, band_lo?, band_hi?, sync?, nplc?)（命令有出处；AC 读数配方未实测）
+  复位（回开机配置） → ks3458a_reset(confirm=True)  ⚠ 破坏性
+  ⚠ 3458A **没有** *IDN?/SYST:ERR?/*RST；**不要**用 instr_query/instr_write 对它发 SCPI
+
+  **连不上时的第一步——驱动预检查（照做，别猜地址）**：
+    `python keysight_3458a/driver_check.py`（或读工具返回体里的 `hint`）会查
+    82357B USB/GPIB 适配器的 PnP 状态与 Keysight VISA：
+    * `device_absent` → 适配器没插/线松/3458A 没上电
+    * `driver_missing` / `iolib_missing` → **告诉用户去装 Keysight IO Libraries Suite**
+      （提示即可，**不要自己下安装包、不要提权安装**）；**不要**建议装 NI-488.2
+      （不支持 82357B）；也不需要启用 NI MAX 的 Tulip 护照（那只对 32 位 VISA 有效）
+    * `ok` → 驱动没问题，再查地址/总线（本机默认 `GPIB0::9::INSTR`）
+
+  **现场态是自动处置的（无需你手动干预，也**不要**用 reset 去"清理"）**：
+    * 表可能被上次会话留在 **free-run（上电就持续吐数）**——`connect()` 自动做
+      `recover()`：Device Clear/IFC → **有界** drain（≤6 轮×250 ms，绝不是无界读）→
+      `TARM HOLD`/`TRIG HOLD`；不需要也不应该发 `RESET`
+    * 随后 `prepare_for_read()` 自动补 `END ALWAYS` + `INBUF ON` + **`TRIG AUTO`**：
+      实测若 `TRIG?`=4(HOLD)，`TARM SGL,1` **永远不出数**（20 s 超时），补 `TRIG AUTO`
+      后 0.43 s/次（NPLC=10）。这三条**不改档位/NPLC/功能**，所以是安全的读前准备
+    * 这些动作会打断**整条 GPIB 总线**上正在进行的采集（共享实验台注意）；本机 GPIB0
+      上只有这台 3458A
 
 DHO 示波器 → dho_status / dho_measure_item / dho_channel / dho_timebase / dho_trigger
   （⚠ DHO 不在本实验台：读路径同共享内核，**写路径未实机验证**）
@@ -88,6 +117,21 @@ DG832 信号源（RIGOL DG800 系列）：
   `psu_local_restored` = 是否已把 DH1766 面板控制权归还现场。
 - 只有通用工具 `instr_query` / `instr_write` 必须显式给 `resource`（面向任意设备，不能猜）。
 
+### 3458A 的两条通路怎么配（`kind=ks3458a`）
+
+3458A 挂在 GPIB 上，**不是 LAN 设备**（扫网段对它没有意义）。通路按资源串自动选：
+
+| 通路 | 配置值 | 何时用 |
+|---|---|---|
+| **本机 GPIB（推荐，默认）** | `... set ks3458a "GPIB0::9::INSTR"` | 本机 82357B USB/GPIB。库会自动走 **Keysight VISA 核心（`ktvisa32.dll`）+ 预加载 `ioGPIB.dll`/`ioGpibIntfc.dll`**——这是本机 64 位 Python 唯一可行组合（系统默认 `visa32.dll` 会 `VI_ERROR_LIBRARY_NFOUND`） |
+| 本机 SICL | `... set ks3458a "sicl:gpib0,9"` | Keysight IO Libraries 装了、且 SICL 可用时的备选（EmoeCalibrator 现场用的就是它） |
+| 远端 VISA server | `... set ks3458a "visa://<host>/GPIB0::9::INSTR"` | 设备挂在另一台机器的 VISA server 上（不走本地 Keysight 通路） |
+
+`sicl:` 前缀被解析层视为**完整资源串**（不会当成裸主机名去探测网段）；不带任何配置时
+`ks3458a_*` 工具会按 `本机 GPIB0::9::INSTR → sicl:gpib0,9` 依次探测（`find_3458a()`），
+**不会**扫描网段。身份校验走连接后的 `ID?`（返回含 `3458`，3458A 没有 `*IDN?`）。
+**连不上先跑 `python keysight_3458a/driver_check.py`**（见上文"驱动预检查"）。
+
 ## 一.五、通用护栏工具（新设备零代码接入）
 
 有专用库的设备优先用专用工具；以下用于骨架设备（如 emoe）、临时设备、
@@ -126,6 +170,13 @@ DG832 信号源（RIGOL DG800 系列）：
 | dmm_nplc | value? | 电压 DC 积分时间 NPLC（0.02/0.2/1/10/100，越大越准越慢）；无参查询，有参设置后回读 |
 | dmm_measure | function | volt_dc/volt_ac/curr_dc/curr_ac/res/fres/cont/cap/diod/freq |
 | dmm_configure | range_v | 设定量程后 :CONF? 回读滞后一拍，以实测为准 |
+| ks3458a_status | resource? | `ID?`/`ERRSTR?`/`TEMP?` + **`device` 设备回读**（`FUNC?`/`RANGE?`/`NPLC?`/`APER?`/`TARM?`/`TRIG?`/`NRDGS?`/`INBUF?`/`END?`/`MEM?`/`AZERO?`/`OFORMAT?`/`MFORMAT?`/`ISCALE?`——2026-09-23 真机实测均可用）+ `tracked`（本会话**下发过**什么，与回读分开报）。`TEMP?` 实测 37.0（数值，单位按 °C 采信） |
+| ks3458a_read / ks3458a_read_avg / ks3458a_read_stats | n≤1000 | 单次 DCV（`TARM SGL,1`）/ n 次平均 / `{n,mean,stddev,min,max}`（样本标准差）。读数非数值按 device_error 报，**不返回 0 兜底** |
+| ks3458a_burst | n, sample_interval_s?, dcv_range?, save_csv? | 100k rdg/s 二进制突发（`PRESET DIG`+`MFORMAT/OFORMAT SINT`+`MEM OFF`+`NRDGS`+`TRIG AUTO`+`TARM SYN`+`ISCALE?`，读 2n+2 字节按 2 字节大端有符号 × ISCALE）。返回**摘要**；`save_csv=True` 落 `TEST_DATA/ks3458a/`。⚠ **改设备配置**（数字档预设、功能切 DCV、内存关闭） |
+| ks3458a_configure | dcv_range, nplc | 档位只有 0.1/1/10/100/1000 V；10V 档可用到 ±12V，但选档按 1.1 倍余量（保守）。**换档后自动丢首读数**（建立时间+自校准，有意行为）。改完用 `ks3458a_status` 的 `device`（`FUNC?`/`RANGE?`/`NPLC?`）**回读复核**，另看 `errstr`/`error_clear` |
+| ks3458a_acv | range, band_lo?, band_hi?, sync?, nplc? | `ACV`/`SETACV ANA|SYNC`/`ACBAND <lo>,<hi>`（带宽需成对给）。命令组有出处（EmoeCalibrator `ac_1khz_probe/ac_stability/ac_verify` 真机用过；`SETACV SYNC` 用于 <10 Hz、`ANA` 用于 >10 Hz）。⚠ **AC 单次读数配方未实测**（MCP 暂未暴露 AC 读数） |
+| ks3458a_reset | confirm | `RESET`+`END ALWAYS`+`INBUF ON`；**回到开机测量配置**（档位/NPLC/功能/触发全变，完整范围待手册核对）。MCP 连接默认**不**重置仪表，这是唯一重置入口 |
+| （3458A 通用） | — | **禁用** `instr_query`/`instr_write` 操作 3458A——那两条面向 SCPI，而 3458A 是 `ID?`/`ERRSTR?`/`RESET`/`TARM SGL,1` 那套；库只允许白名单命令（见 `keysight_3458a/docs/COMMANDS_3458A.md`） |
 | dho_measure_item | item, ch, ch2?, samples? | RIGOL 长名：VPP/VMAX/VAVG/PERiod/FREQuency...；samples>1 给均值统计；无值分类报因（suspicious/hint）|
 | dho_channel / dho_timebase / dho_trigger | 同 mho_* 同名工具 | DHO 的设置类工具（同一套内核语义）；⚠ DHO 不在本台，未实机验证 |
 | mho_measure_item | item, ch, ch2?, samples?, rails? | 手册 3.17.2 表：单信源 VMAX/VMIN/VPP/VTOP/VBASe/VAMP/VAVG/VRMS/MARea/MPARea/PERiod/FREQuency/RTIMe/FTIMe/PWIDth/PDUTy/PPULses/PEDGes/ACRMs…；双信源 RRDelay/RRPHase 等需给 ch2；**samples=5** 连读给 mean/min/max/stddev；无有效值时 `suspicious` ∈ channel_off/off_screen/near_edge/few_edges/no_signal + `hint`；返回带 `probe_x`（探头比 ≠1 时幅度类读数是**探头端**电压）；**`rails=True`** 额外读**顶轨/底轨**（VTOP/VBASe）并**上下分别**判断贴边——`edges_touching`（["top"]/["bottom"]/两者）+ 各自 `hints`（顶贴→offset 调更负；底贴→offset 调更大，方向相反故分开报）|
@@ -156,6 +207,9 @@ DG832 信号源（RIGOL DG800 系列）：
 | dg_output（开/关） | confirm=True | 开=真实信号输出；关=可能打断测试/他人实验 |
 | dg_protect → set_wave/output | 库内联锁 | 未开有效电压保护时设 amp/offset 或开输出一律被拒（protect_required） |
 | psu_output（开/关） | confirm=True | 开=真实电压；关=可能中断供电 |
+| ks3458a_reset | confirm=True | **回到开机测量配置**（`RESET`+`END ALWAYS`+`INBUF ON`）——档位/NPLC/功能/触发全变；共享实验台上会把表从别人设置的档位踢回默认 |
+| ks3458a_burst | 无 confirm，但有副作用 | 取数本身只读，但 `PRESET DIG` **改设备配置**（数字档预设 / 功能切 DCV / 内存关闭）；跑完要还原请显式 `ks3458a_configure` 或 `ks3458a_reset` |
+| ks3458a_*（全部） | 无 confirm，但会打断 | 连接即做会话恢复（IFC/Device Clear + 有限 drain + TARM/TRIG HOLD）：SICL 的 IFC 影响**整条 GPIB 总线**，别人正在采集时先用 `ks3458a_status` 之外的渠道确认安全 |
 | （未暴露）| — | 复位类命令一律不可用 |
 
 ### 输出关断的授权确认（重要纪律）

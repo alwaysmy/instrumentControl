@@ -6,6 +6,8 @@ instrument MCP Server — 五台仪器的统一 MCP 接口。
 
 设备库：sds_control(示波器) / sdg_control(信号源) / keysight_3446x(万用表) /
 dho_control(示波器) / dh1766_control(电源)，经 common 统一发现层。
+另有 keysight_3458a（HP/Keysight 3458A 八位半万用表，**非 SCPI**：`ID?`/`ERRSTR?`/
+`RESET`/`TARM SGL,1`，走 GPIB 的 VISA 或本机 SICL 通路），工具前缀 `ks3458a_`。
 
 启动: python mcp_instruments/server.py
 
@@ -83,8 +85,10 @@ _LOCK_WAIT_S = _env_float("INSTRUMENT_LOCK_WAIT_S", 30.0)
 
 # 设备专用工具返回体里回填"本次实际用的地址"：模型名 → 解析层的 kind
 _MODEL_KIND = {"SDS": "sds", "SDG": "sdg", "DMM": "dmm", "DHO": "dho", "MHO": "mho",
-               "DG832": "dg", "DH1766": "psu"}
+               "DG832": "dg", "DH1766": "psu", "3458A": "ks3458a"}
 _LAST_RESOLVED: dict[str, str] = {}  # kind -> 本次调用解析出的资源串（_DEVICE_LOCK 内更新）
+# 连接失败时由 _ks3458a 填的"可执行诊断"（82357B/驱动预检查），_call 挂到返回体 hint 上
+_LAST_DRIVER_HINT: dict[str, dict] = {}
 
 
 _SESSION_LOCKS: set = set()      # 本进程占用过的资源（供退出时释放）
@@ -221,7 +225,19 @@ def _call(model_name, connect_fn, fn, close_fn=None, resource=None,
         try:
             dev = connect_fn()
         except Exception as e:
-            return _err("connection", f"{type(e).__name__}: {e}", model_name, _out_res(model_name, resource))
+            payload = _err("connection", f"{type(e).__name__}: {e}", model_name,
+                           _out_res(model_name, resource))
+            # 3458A 专用：把 82357B/驱动预检查结论作为 hint 一并回传（缺驱动→提示装
+            # Keysight IO Libraries Suite），避免只抛一句超时/库加载失败。
+            hint = _LAST_DRIVER_HINT.pop("ks3458a", None) if model_name == "3458A" else None
+            if hint:
+                try:
+                    d = json.loads(payload)
+                    d["hint"] = hint
+                    payload = json.dumps(d, ensure_ascii=False, default=str)
+                except Exception:                    # noqa: BLE001
+                    pass
+            return payload
         res = _out_res(model_name, resource)
         # 跨进程**咨询锁**（2026-09-17）：本进程内已有单 worker 串行化，但**跨进程不互斥**——
         # 同一台仪器被两个实例同时操作会**静默串台**（实测：互相读到对方的响应）。
@@ -606,6 +622,60 @@ def _psu_close(p: DH1766) -> None:
             p.client.close()
     except Exception:
         pass
+
+
+def _ks3458a(resource: str | None = None, timeout_s: float = 30.0) -> "DMM3458A":
+    """3458A 连接（专用库 keysight_3458a；地址走解析层 kind=ks3458a）。
+
+    **默认不改设备状态**（`reset_on_open=False`）：MCP 是无状态工具，不该每次调用都
+    复位仪表。要重置走 `ks3458a_reset`（需 confirm=True）。
+
+    连接时会做一次**会话恢复**（IFC/clear → 有限 drain → TARM HOLD/TRIG HOLD）：
+    上次会话可能把表留在 free-run（持续吐读数、不理查询），不恢复就会读到错位数据。
+    恢复不发 RESET、不改档位/NPLC；但 IFC/Device Clear 会中断**整条 GPIB 总线**上的
+    活动（共享实验台上别人正在采集时要注意）。随后 `prepare_for_read()` 补
+    `END ALWAYS`/`INBUF ON`/`TRIG AUTO`（否则上次留下的 TRIG HOLD 会让读数永不出数）。
+
+    **连接失败时**：自动附带 82357B 的 USB/驱动预检查结论（`hint`），缺驱动时直接
+    告诉用户装 Keysight IO Libraries Suite——而不是抛一句超时（AGENTS.md：可执行结论）。
+    """
+    from keysight_3458a import DMM3458A
+
+    res = _resolve("ks3458a", resource)
+    _LAST_RESOLVED["ks3458a"] = res  # 供返回体回填本次实际地址
+    d = DMM3458A(res, timeout_s=timeout_s, reset_on_open=False)
+    try:
+        d.connect()
+    except Exception:
+        try:
+            from keysight_3458a.driver_check import check_gpib_driver
+
+            info = check_gpib_driver()
+            if not info.get("ok"):
+                _LAST_DRIVER_HINT["ks3458a"] = {
+                    "verdict": info.get("verdict"),
+                    "message": info.get("message"),
+                    "devices": info.get("devices"),
+                }
+        except Exception:                            # noqa: BLE001 —— 诊断失败不掩盖原错
+            pass
+        raise
+    # 3458A 没有 *IDN?，用 ID?（返回含 3458）——同一套身份校验口径
+    _verify_idn("ks3458a", res, d.idn())
+    _remember("ks3458a", res)
+    return d
+
+
+def _ks3458a_error(d) -> dict:
+    """读 3458A 错误队列并判读（**没有 SYST:ERR?，只有 `ERRSTR?`**）。
+
+    3458A 的写操作**没有回读通道**（无 `DCV?`/`NPLC?`），`ERRSTR?` 是"设备接受了
+    这条命令"的唯一证据，所以每个改配置的工具都把它带回返回体。
+    """
+    from keysight_3458a import is_error_clear
+
+    raw = d.error_string()
+    return {"errstr": raw, "error_clear": is_error_clear(raw)}
 
 
 # ============ 发现 ============
@@ -1506,6 +1576,198 @@ def dmm_nplc(value: float | None = None, resource: str | None = None) -> str:
     return _call("DMM", lambda: _dmm(resource), fn)
 
 
+# ============ HP/Keysight 3458A 八位半万用表（专用库，**非 SCPI**）============
+#
+# 3458A 不吃标准 SCPI：没有 *IDN?（用 ID?）、没有 SYST:ERR?（用 ERRSTR?）、复位是
+# RESET（不是 *RST）、读数是 `TARM SGL,1` 触发后直接回值、串尾必须 LF、档位/NPLC
+# 用 `DCV <range>` / `NPLC <n>` 且**没有回读命令**。因此它不套 common/visa_client.py
+# 的 SCPI 假设，也不该走 instr_query/instr_write 通用护栏（那两条面向 SCPI）。
+# 库/命令白名单/已知坑见 keysight_3458a/ 与 docs/3458a_integration_20260922.md。
+
+
+@device_tool()
+def ks3458a_status(resource: str | None = None) -> str:
+    """3458A 只读状态：身份（`ID?`）/ 错误串（`ERRSTR?`）/ 内部温度（`TEMP?`）
+    + 本会话跟踪的档位与 NPLC。
+
+    两条如实说明：
+    ① `device` 里的档位/NPLC/功能/触发等是**设备回读**（`state()`，2026-09-23 本机实测
+       `FUNC?`/`RANGE?`/`NPLC?`/`TARM?`/`TRIG?` 等在 3458A 上均可用）；
+       `tracked` 仍是"本会话下发过什么"的记录，两者都给出、语义分开。
+    ② `TEMP?` 内部温度：2026-09-23 实测返回 `37.0`/`36.9`（数值，单位按 °C 采信）；
+       精度/选件要求仍未核对手册——取不到时只记 `temperature_error`。
+
+    ⚠ 本工具连接时会做一次**会话恢复**（IFC/Device Clear + 有限 drain +
+    TARM/TRIG HOLD）+ **读前准备**（`END ALWAYS`/`INBUF ON`/`TRIG AUTO`）：上次会话若把表
+    留在 free-run 或 TRIG HOLD，不处理就会读到错位数据 / `TARM SGL,1` 超时。
+    代价是可能打断正在进行的 GPIB 采集（IFC/Device Clear 影响同总线设备）。
+    """
+    def fn(d: DMM3458A):
+        out = {
+            "idn": d.idn(),
+            **_ks3458a_error(d),
+            "tracked": {"dcv_range": d.current_range, "nplc": d.current_nplc},
+            "tracked_note": "本会话已下发过的档位/NPLC；与 device 回读分开报告",
+        }
+        try:
+            st = d.state()
+            out["device"] = {k: v for k, v in st.items()
+                             if k not in ("tracked", "temperature_c", "error")}
+        except Exception as e:                      # noqa: BLE001 —— 回读失败不影响其余
+            out["device_error"] = f"{type(e).__name__}: {e}"
+        try:
+            out["temperature"] = d.temperature()
+        except Exception as e:                      # noqa: BLE001 —— 温度取不到不影响其余
+            out["temperature_error"] = f"{type(e).__name__}: {e}"
+        return out
+    return _call("3458A", lambda: _ks3458a(resource), fn)
+
+
+@device_tool()
+def ks3458a_read(resource: str | None = None) -> str:
+    """3458A 单次直流电压读数（V）：`TARM SGL,1` 触发一次并回值（命令**不带问号**）。
+
+    只读、**不改配置**：用设备**当前**的档位/NPLC/功能。要指定档位先 `ks3458a_configure`。
+    读数非数值时按 device_error 报（**不返回 0 兜底**——错位数据比报错危险）。
+
+    ⚠ 连接时会做会话恢复（见 `ks3458a_status`），共享实验台上可能打断别人的 GPIB 采集。
+    """
+    return _call("3458A", lambda: _ks3458a(resource), lambda d: {"volts": d.read_dcv()})
+
+
+@device_tool()
+def ks3458a_read_avg(n: int = 10, resource: str | None = None) -> str:
+    """3458A 连续读 n 次取平均（降噪）。n 取 1~1000（本工具上限，防误传超大值）。
+
+    逐次 `TARM SGL,1`，耗时随 n 线性增长（10 PLC 约 0.2 s/次 @50Hz）——
+    调用墙钟上限 150 s，n 大时请自己算好；不够就分批读。
+    """
+    if not 1 <= int(n) <= 1000:
+        return _err("param_validation", f"n 需在 1~1000（收到 {n!r}）", "3458A")
+    return _call("3458A", lambda: _ks3458a(resource),
+                 lambda d: {"n": int(n), "volts": d.read_avg(n)})
+
+
+@device_tool()
+def ks3458a_read_stats(n: int = 10, resource: str | None = None) -> str:
+    """3458A 连续读 n 次并给统计：`{n, mean, stddev, min, max}`（单位 V）。
+
+    n 取 1~1000；stddev 是**样本标准差**（n-1 分母），n=1 时记 0.0。
+    单次读数抖动明显时用这个而不是 `ks3458a_read`（结论看 mean ± stddev）。
+    """
+    if not 1 <= int(n) <= 1000:
+        return _err("param_validation", f"n 需在 1~1000（收到 {n!r}）", "3458A")
+
+    def fn(d: DMM3458A):
+        out = d.read_stats(n)
+        out["unit"] = "V"
+        return out
+    return _call("3458A", lambda: _ks3458a(resource), fn)
+
+
+@device_tool(budget_s=300.0)   # 高速突发：n 大时读块远超默认预算
+def ks3458a_burst(n: int = 1000, sample_interval_s: float | None = None,
+                dcv_range: float | None = None, save_csv: bool = False,
+                resource: str | None = None) -> str:
+    """3458A 高速二进制突发（Keysight 官方 100k rdg/s 配方）：一次触发取 n 个读数。
+
+    配方：`PRESET DIG` → [`DCV <range>`] → `MFORMAT/OFORMAT SINT` → [`APER`] →
+    [`TIMER <sample_interval_s>`] → `MEM OFF` → `NRDGS n` → `TRIG AUTO` → `ISCALE?`
+    → `TARM SYN` → 读 2n+2 字节，按 **2 字节大端有符号整数 × ISCALE** 解析。
+
+    ⚠ 这会**改设备配置**：`PRESET DIG` 把整组采样参数复位到数字档、功能切 DCV、
+    内存关闭。跑完设备不再是原来的配置——要恢复请显式 `ks3458a_reset` 或
+    `ks3458a_configure`（本工具归"取数"一栏，但别当成无副作用）。
+
+    返回**摘要**（n/mean/stddev/min/max/iscale/档位/采样间隔/字节数），不返回完整
+    数组（防上下文爆炸）；要逐点数据用 `save_csv=True`，CSV 落在 `TEST_DATA/ks3458a/`。
+    `sample_interval_s`/`dcv_range` 省略则不下发对应命令（用设备当前值）。
+    """
+    def fn(d: DMM3458A):
+        burst = d.read_burst(n, sample_interval_s=sample_interval_s, dcv_range=dcv_range)
+        out = {"values_count": len(burst["values"]), "summary": burst["summary"]}
+        if save_csv:
+            p = Path(ROOT) / "TEST_DATA" / "ks3458a" / (
+                f"mcp_ks3458a_burst_n{int(n)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with open(p, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(["index", "volts"])
+                writer.writerows(enumerate(burst["values"]))
+            out["csv"] = str(p)
+        return out
+    return _call("3458A", lambda: _ks3458a(resource, timeout_s=120.0), fn)
+
+
+@device_tool()
+def ks3458a_configure(dcv_range: float = 10.0, nplc: float = 10.0,
+                    resource: str | None = None) -> str:
+    """3458A 设置直流档位与积分时间（`DCV <range>` / `NPLC <n>`）。**改配置**。
+
+    档位只有 0.1/1/10/100/1000 V；10V 档有 20% 超量程（可用到 ±12V），但本库按
+    1.1 倍余量选档（保守），确知 ≤12V 又要用 10V 档就直接传 10。
+    **换档/换配置后库内会自动丢弃第一次读数**（建立时间 + 自校准）——这是有意行为。
+
+    写后回读：3458A **没有档位/NPLC 回读命令**，只能用 `ERRSTR?` 核对是否被接受
+    （返回体 `errstr`/`error_clear`）；`dcv_range`/`nplc` 是**下发值**，不是实测值。
+    """
+    def fn(d: DMM3458A):
+        d.configure_dcv(dcv_range, nplc)
+        return {"dcv_range": d.current_range, "nplc": d.current_nplc,
+                **_ks3458a_error(d),
+                "note": "dcv_range/nplc 为本次下发值（设备无回读命令）；errstr 是接受证据"}
+    return _call("3458A", lambda: _ks3458a(resource), fn)
+
+
+@device_tool()
+def ks3458a_acv(range: float = 10.0, band_lo: float | None = None,
+              band_hi: float | None = None, sync: bool = False,
+              nplc: float | None = None, resource: str | None = None) -> str:
+    """3458A 交流电压配置（`ACV` / `SETACV` / `ACBAND`，可选 `NPLC`）。**改配置**。
+
+    `sync=False` → `SETACV ANA`（模拟转换，默认）；`True` → `SETACV SYNC`（同步采样）。
+    `band_lo`/`band_hi` 给定时下发 `ACBAND <lo>,<hi>`（Hz，**必须成对给**）。
+    `nplc` 给定时下发 `NPLC <n>`。
+
+    ⚠ **这一组命令未验证**：参考实现（EmoeCalibrator）与 Keysight 官方样例里只有
+    DCV 路径，`ACV`/`SETACV`/`ACBAND` 取自本项目任务书。真机首跑请对照手册并读返回体
+    的 `errstr`。交流**读数**同样未验证，本服务器暂未暴露（库里有 `DMM3458A.read_acv()`）。
+    详见 `docs/COMMANDS_3458A.md` 的「待手册核对项」。
+    """
+    def fn(d: DMM3458A):
+        d.configure_acv(range, band_lo=band_lo, band_hi=band_hi, sync=sync)
+        if nplc is not None:
+            d.set_nplc(nplc)
+        return {"acv_range": range, "band_lo": band_lo, "band_hi": band_hi,
+                "sync": bool(sync), "nplc": d.current_nplc,
+                **_ks3458a_error(d),
+                "unverified": "ACV/SETACV/ACBAND 未在参考实现/官方样例中出现，待手册核对"}
+    return _call("3458A", lambda: _ks3458a(resource), fn)
+
+
+@device_tool()
+def ks3458a_reset(confirm: bool = False, resource: str | None = None) -> str:
+    """3458A 复位：`RESET` + `END ALWAYS` + `INBUF ON`。
+
+    ⚠ **破坏性**：回到**开机测量配置**——档位/NPLC/功能/内存/触发等一并复位
+    （完整影响范围待手册核对，见 `docs/COMMANDS_3458A.md`）。必须 `confirm=True`。
+
+    这也是本库唯一的重置入口：MCP 连接默认 `reset_on_open=False`，**不会**每次调用
+    偷偷复位仪表。`END ALWAYS`（每次读数置 EOI）与 `INBUF ON`（打开输入缓冲）是
+    `TARM SGL` 单次读数配方的前置条件——缺了会把 GPIB 总线占住。
+    """
+    if not confirm:
+        return _err("confirm_required",
+                    "复位会回到开机测量配置（档位/NPLC/功能/触发全变），需 confirm=True",
+                    "3458A")
+
+    def fn(d: DMM3458A):
+        d.reset()
+        return {"reset": True, **_ks3458a_error(d),
+                "note": "RESET 后已补 END ALWAYS + INBUF ON（TARM SGL 配方前置条件）"}
+    return _call("3458A", lambda: _ks3458a(resource), fn)
+
+
 # ============ DHO 示波器 ============
 
 @device_tool()
@@ -2098,6 +2360,7 @@ from common.visa_client import VisaClient  # noqa: E402
 import sds_control  # noqa: E402,F401
 import sdg_control  # noqa: E402,F401
 import keysight_3446x  # noqa: E402,F401
+import keysight_3458a  # noqa: E402,F401
 import dho_control  # noqa: E402,F401
 import mho_control  # noqa: E402,F401
 import dg832_control  # noqa: E402,F401

@@ -211,7 +211,7 @@ AI/Agent 操作仪器必须遵守以下规范。
 - 操作手册：`docs/AI_OPERATION_GUIDE.md`（API/固件特性/闭环范例）
 - **实测记录**：`docs/TEST_RECORDS.md`（历轮实测时间线；README 只放项目定位与用法）
 - 设备经验：`dh1766_control/docs/EXPERIENCE.md`（时序/固件差异/上电过渡态）
-- MCP 服务器：`mcp_instruments/server.py`（57 工具 = 53 专用 + 3 通用护栏 + 1 故障兜底
+- MCP 服务器：`mcp_instruments/server.py`（65 工具 = 61 设备专用 + 3 通用护栏 + 1 故障兜底
   instr_discover/instr_query/instr_write/usb_reset——新设备零代码接入；zcode 用户级 config 已注册
   `instruments`；工具选择/参数语义/安全门见 skill `instrument-mcp`）
 
@@ -237,7 +237,17 @@ AI/Agent 操作仪器必须遵守以下规范。
 | Siglent SDS824X HD | sds_control | `find_sds()` · `resolve("sds")` · `sds_*` |
 | Siglent SDG2122X 信号源 | sdg_control | `find_sdg()` · `resolve("sdg")` · `sdg_*` |
 | Keysight 34465A 万用表 | keysight_3446x | `find_dmm()` · `resolve("dmm")` · `dmm_*` |
+| HP/Keysight 3458A（八位半，**非 SCPI**） | keysight_3458a | `find_3458a()` · `resolve("ks3458a")` · `ks3458a_*` |
 | Emoe 校准器（骨架） | emoe_control | `instr_discover`（仅发现 + *IDN?，编程手册未提供）。**ASRL 编号漂移最频繁**：校准器原 ASRL31 现离线、ASRL5 现为 ADS127L11-DAQ-EV——串口设备一律先重发现 |
+
+**3458A 接通要点（2026-09-23 本机实测，82357B USB/GPIB）**：它不是 SCPI 表（无 `*IDN?`，
+用 `ID?`；无 `SYST:ERR?`，用 `ERRSTR?`；复位是 `RESET`；读数是 `TARM SGL,1`），
+**必须走 Keysight VISA 核心 `ktvisa32.dll`** 并先 `SetDllDirectoryW(<IO Libraries Suite>\bin)`
++ 预加载 `ioGPIB.dll`/`ioGpibIntfc.dll`——系统默认 `visa32.dll`（NI/IVI 壳）会报
+`VI_ERROR_LIBRARY_NFOUND`（NI-488.2 / 32 位 Tulip 护照都不在本机）；SICL `iopen` 同因抛
+`0xE06D7363`。另：若 `TRIG?`=4(HOLD)，`TARM SGL,1` 永不出数，须先 `TRIG AUTO`
+（库已用 `prepare_for_read()` 处理，**不 RESET**）。命令白名单与实测响应见
+`keysight_3458a/docs/COMMANDS_3458A.md`。
 
 地址解析链（`common/resolver.py`，MCP 服务器与 `TEST_SCRIPTS/` 共用同一套来源）：
 **显式入参 > 环境变量 `INSTRUMENT_<KIND>_RES` > 本机配置

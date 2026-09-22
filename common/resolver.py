@@ -34,6 +34,8 @@ DEVICE_KINDS: dict[str, tuple[str, str, str]] = {
     "mho": ("MHO", "RIGOL MHO900 系列示波器", "INSTRUMENT_MHO_RES"),
     "dg": ("DG8", "RIGOL DG800 系列信号源（DG832 基准）", "INSTRUMENT_DG_RES"),
     "psu": ("DH1766", "DH1766 三路可编程电源", "INSTRUMENT_PSU_RES"),
+    # 3458A 的身份命令是 `ID?`（不是 *IDN?），返回含 3458；解析层只认这个串
+    "ks3458a": ("3458", "HP/Keysight 3458A 八位半万用表", "INSTRUMENT_KS3458A_RES"),
 }
 
 CACHE_DIR = Path(
@@ -120,20 +122,27 @@ def known_resources() -> dict[str, str]:
 
 
 def is_visa_resource(value: str) -> bool:
-    """粗略判断是否是完整 VISA 资源串（含 `::`）。
+    """粗略判断是否是完整资源串：VISA 资源串（含 `::`）或 SICL 短形式（`sicl:`）。
 
     覆盖 TCPIP/USB/ASRL/GPIB 以及 `visa://<gw>/TCPIP0::…` 别名形式——
     这些形态只有 VISA 解析器才认得全，**不要自己拼**：协议/端口/参数因设备而异
     （例如 DH1766 只认 raw 5025、DHO 只认 5555、SDS/SDG/DMM 走 VXI-11 inst0、
     USB 还要 vid/pid/serial），拼错一个字段就是"对未知设备发 SCPI"。
+
+    `sicl:gpib0,9` 这类**本机 SICL 通路**同样算完整资源串：它含逗号、不含 `::`，
+    若当成"裸主机名"就会拿它去探测网段（既无意义、又会对无关设备发 *IDN?）。
     """
-    return "::" in (value or "")
+    text = value or ""
+    if text.strip().lower().startswith("sicl:"):
+        return True
+    return "::" in text
 
 
 def canonicalize(kind: str, value: str) -> str:
     """把用户写的地址规范化为完整 VISA 资源串（**唯一允许"拼接"的入口**）。
 
-    - 已是 VISA 资源串（含 `::`）→ 原样返回，不联网、不改写；
+    - 已是完整资源串（VISA 的 `::` 形态，或 SICL 的 `sicl:` 形态）→ 原样返回，
+      不联网、不改写；
     - 裸主机名 / IP（如 `192.168.31.220`、`A-34461A-00000.local`）→
       ① 先看上次成功缓存里是否已有指向该 host 的资源（命中即用，不联网）；
       ② 否则按 LAN 多协议逐个探测（VXI-11 inst0 → HiSLIP → raw5025 → raw5555），
@@ -233,8 +242,8 @@ def config_template() -> dict:
     return {
         "_说明": (
             "仪器地址配置文件（本机专用，不入库、可随时手改）。"
-            "键 = 设备类（sds/sdg/dmm/dho/mho/dg/psu，见 resolver.DEVICE_KINDS）；"
-            "值 = 完整 VISA 资源串；"
+            "键 = 设备类（sds/sdg/dmm/dho/mho/dg/psu/ks3458a，见 resolver.DEVICE_KINDS）；"
+            "值 = 完整资源串（VISA 的 `::` 形态，或 3458A 的 SICL 形态 `sicl:gpib0,9`）；"
             "删除某键 = 该项回落到『上次成功缓存 → 自动发现』。"
             "优先级：显式入参 > 环境变量 INSTRUMENT_<KIND>_RES > 本文件 > 缓存 > 自动发现。"
             "写入用 `python mcp_instruments/config_cli.py set <kind> <resource>`，"

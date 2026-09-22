@@ -11,7 +11,7 @@
 AI 客户端（DSH / Codex / Claude / opencode …，经 MCP stdio）
         │
         ▼
-mcp_instruments/server.py ─── 57 工具（53 专用 + 3 通用护栏 + 1 故障兜底），无状态连接+全局锁串行化
+mcp_instruments/server.py ─── 65 工具（58 专用 + 3 通用护栏 + 1 故障兜底 + 3 设备无关），无状态连接+全局锁串行化
         │
         ├─▶ sds_control       Siglent SDS800X HD 示波器（波形/截图/测量/触发诊断/auto_scale）
         ├─▶ sdg_control       Siglent SDG2000X 信号源（BSWV 键值对）
@@ -90,6 +90,7 @@ MCP 注册（示例，路径按需替换）：
 | Siglent SDS824X HD | `sds_control` | `find_sds()` · `resolve("sds")` · `sds_*` |
 | Siglent SDG2122X | `sdg_control` | `find_sdg()` · `resolve("sdg")` · `sdg_*` |
 | Keysight 34465A | `keysight_3446x` | `find_dmm()` · `resolve("dmm")` · `dmm_*` |
+| HP/Keysight 3458A（八位半，**非 SCPI**） | `keysight_3458a` | `find_3458a()` · `resolve("ks3458a")` · `ks3458a_*` |
 | Emoe 校准器（骨架） | `emoe_control` | `instr_discover`（串口 ASRL 编号漂移最频繁，接入前必先发现） |
 
 MCP 专用工具的 `resource` 参数**默认省略**：server 端按

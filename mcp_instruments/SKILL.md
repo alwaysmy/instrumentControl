@@ -41,9 +41,17 @@ MCP server：`mcp_instruments/server.py`（65 工具 = 61 专用 + 3 通用护�
   看状态 → ks3458a_status（`ID?`/`ERRSTR?`/`TEMP?` + **`device` 设备回读**
     `FUNC?`/`RANGE?`/`NPLC?`/`TARM?`/`TRIG?`/`INBUF?`… → 真实配置，不是"本会话设过什么"）
   取数 → ks3458a_read（单次 DCV）/ ks3458a_read_avg(n) / ks3458a_read_stats(n)
-  高速采样（100k rdg/s） → ks3458a_burst(n, sample_interval_s?, dcv_range?, save_csv?)
-  改档位/积分 → ks3458a_configure(dcv_range, nplc)（0.1/1/10/100/1000 V）
-  交流配置 → ks3458a_acv(range, band_lo?, band_hi?, sync?, nplc?)（命令有出处；AC 读数配方未实测）
+        ⚡ 快路径：连接只做 `prepare_for_read`（≈0.27 s）；若表被上次会话留在 free-run
+        （读数超时/错位），库会**自动做一次会话恢复并重试**——不用你手动清理
+  高速采样（100k rdg/s） → ks3458a_burst(n, sample_interval_s?, dcv_range?, data_format?, save_csv?)
+        `data_format="SINT"`（默认，2 字节/读数）或 `"DINT"`（4 字节/读数，
+        **信号可能超过档位 120% 时必用**，手册 p.173：DINT 满量程=档位×500%）。
+        跑完自动收尾并用 `PRESET NORM` 恢复 ASCII 输出（**不是** RESET）——否则后续读数会超时
+  改档位/积分 → ks3458a_configure(dcv_range, nplc)：数值=**固定档**（0.1/1/10/100/1000 V），
+        传 `"AUTO"` = **自动挡**（`DCV AUTO`）；另有 ks3458a_autorange(on) 只开关自动挡
+        （`ARANGE ON/OFF`）。**自动挡状态只能看 `ARANGE?`**（`FUNC?` 在自动挡下仍返回固定档值）
+  交流配置 → ks3458a_acv(range, band_lo?, band_hi?, sync?, nplc?)（已实测：`SETACV ANA`
+        下 `TARM SGL,1` 能读出交流电压；`SYNC/RNDM` 采样法未测）
   复位（回开机配置） → ks3458a_reset(confirm=True)  ⚠ 破坏性
   ⚠ 3458A **没有** *IDN?/SYST:ERR?/*RST；**不要**用 instr_query/instr_write 对它发 SCPI
 
@@ -172,10 +180,11 @@ DG832 信号源（RIGOL DG800 系列）：
 | dmm_configure | range_v | 设定量程后 :CONF? 回读滞后一拍，以实测为准 |
 | ks3458a_status | resource? | `ID?`/`ERRSTR?`/`TEMP?` + **`device` 设备回读**（`FUNC?`/`RANGE?`/`NPLC?`/`APER?`/`TARM?`/`TRIG?`/`NRDGS?`/`INBUF?`/`END?`/`MEM?`/`AZERO?`/`OFORMAT?`/`MFORMAT?`/`ISCALE?`——2026-09-23 真机实测 + **手册逐条核对**，`TARM/TRIG/END/INBUF/OFORMAT/MFORMAT/AZERO` 已按手册码表**解码**成 `4(HOLD)`/`1(ASCII)`/`4(SREAL)` 形式）+ `tracked`（本会话**下发过**什么，与回读分开报）。`TEMP?` = 内部温度，单位**摄氏度**（手册 p.37/50；实测 37.0） |
 | ks3458a_read / ks3458a_read_avg / ks3458a_read_stats | n≤1000 | 单次 DCV（`TARM SGL,1`）/ n 次平均 / `{n,mean,stddev,min,max}`（样本标准差）。读数非数值按 device_error 报，**不返回 0 兜底** |
-| ks3458a_burst | n, sample_interval_s?, dcv_range?, save_csv? | 100k rdg/s 二进制突发（`PRESET DIG`+`MFORMAT/OFORMAT SINT`+`MEM OFF`+`NRDGS`+`TRIG AUTO`+`TARM SYN`+`ISCALE?`，读 2n+2 字节按 2 字节大端有符号 × ISCALE）。返回**摘要**；`save_csv=True` 落 `TEST_DATA/ks3458a/`。⚠ **改设备配置**（数字档预设、功能切 DCV、内存关闭） |
-| ks3458a_configure | dcv_range, nplc | 档位只有 0.1/1/10/100/1000 V；10V 档可用到 ±12V，但选档按 1.1 倍余量（保守）。**换档后自动丢首读数**（建立时间+自校准，有意行为）。改完用 `ks3458a_status` 的 `device`（`FUNC?`/`RANGE?`/`NPLC?`）**回读复核**，另看 `errstr`/`error_clear` |
-| ks3458a_acv | range, band_lo?, band_hi?, sync?, nplc? | `ACV`/`SETACV ANA|SYNC`/`ACBAND <lo>,<hi>`（带宽需成对给）。命令组有出处（EmoeCalibrator `ac_1khz_probe/ac_stability/ac_verify` 真机用过；`SETACV SYNC` 用于 <10 Hz、`ANA` 用于 >10 Hz）。⚠ **AC 单次读数配方未实测**（MCP 暂未暴露 AC 读数） |
-| ks3458a_reset | confirm | `RESET`+`END ALWAYS`+`INBUF ON`；**回到开机测量配置**（档位/NPLC/功能/触发全变，完整范围待手册核对）。MCP 连接默认**不**重置仪表，这是唯一重置入口 |
+| ks3458a_burst | n, sample_interval_s?, dcv_range?, data_format?, save_csv? | 100k rdg/s 二进制突发（`PRESET DIG`+`MFORMAT/OFORMAT`+`MEM OFF`+`NRDGS`+`TRIG AUTO`+`TARM SYN`+`ISCALE?`）。`data_format="SINT"`（2 字节/读数，读 2n+2 字节）或 `"DINT"`（4 字节/读数，读 4n；**信号可能超档位 120% 时必用**，手册 p.173：DINT 满量程=档位×500%）。跑完**自动收尾**（`TARM/TRIG HOLD`+clear+有界 drain）并 `PRESET NORM` 恢复 ASCII 输出（非 RESET）。n 上限=设备 16777215（手册 p.207）。返回**摘要**；`save_csv=True` 落 `TEST_DATA/ks3458a/`。⚠ **改设备配置** |
+| ks3458a_configure | dcv_range, nplc | `dcv_range` 传数值=**固定档**（0.1/1/10/100/1000 V），传 `"AUTO"`=**自动挡**（`DCV AUTO`）。10V 档可到 12 V（手册 p.136：120% of range），但选档按 1.1 倍余量（保守）。**换档后自动丢首读数**（建立时间+自校准）。返回体带 `device_readback`（`FUNC?`/`RANGE?`/`ARANGE?`/`NPLC?` 实测回读） |
+| ks3458a_acv | range, band_lo?, band_hi?, sync?, nplc? | `ACV`/`SETACV ANA|SYNC`/`ACBAND <lo>,<hi>`（带宽需成对给）。`SETACV SYNC` 用于 <10 Hz、`ANA` 用于 >10 Hz。✅ 2026-09-23 实测：`ANA` 下 `TARM SGL,1` 能读出交流电压（4.11 mV AC）；`SYNC/RNDM` 采样法未测 |
+| ks3458a_autorange | on | `ARANGE ON` / `ARANGE OFF`（手册 p.160）；**只开关自动挡**，不碰档位数值/NPLC。回读看 `device.arange`（`1(ON)`/`0(OFF)`）与 `device.autorange`（`FUNC?` 在自动挡下仍返回固定档值，**别用它判自动挡**） |
+| ks3458a_reset | confirm | `RESET`+`END ALWAYS`+`INBUF ON`；**回到开机测量配置**（= 手册 p.26 Table 5 上电状态：`DCV AUTO`/`NPLC 10`/`END OFF`/`INBUF OFF`/`MFORMAT SREAL`…）。MCP 连接默认**不**重置仪表，这是唯一重置入口 |
 | （3458A 通用） | — | **禁用** `instr_query`/`instr_write` 操作 3458A——那两条面向 SCPI，而 3458A 是 `ID?`/`ERRSTR?`/`RESET`/`TARM SGL,1` 那套；库只允许白名单命令（见 `keysight_3458a/docs/COMMANDS_3458A.md`） |
 | dho_measure_item | item, ch, ch2?, samples? | RIGOL 长名：VPP/VMAX/VAVG/PERiod/FREQuency...；samples>1 给均值统计；无值分类报因（suspicious/hint）|
 | dho_channel / dho_timebase / dho_trigger | 同 mho_* 同名工具 | DHO 的设置类工具（同一套内核语义）；⚠ DHO 不在本台，未实机验证 |

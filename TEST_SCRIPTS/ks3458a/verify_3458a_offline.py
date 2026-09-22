@@ -336,13 +336,20 @@ def main() -> int:
           and abs(result["summary"]["mean"]
                   - sum(raw_values) * iscale / len(raw_values)) < 1e-15,
           result["summary"])
-    # 2026-09-23 起 connect() 会先做读前准备（prepare_for_read），写序列以这三条开头
+    # 2026-09-23 起 connect() 会先做读前准备（prepare_for_read），写序列以这三条开头；
+    # 突发自身在样例配方之后还会**收尾 + 恢复**（TARM/TRIG HOLD、PRESET NORM、读前准备），
+    # 所以这里断言"前缀 = 样例配方"，并单独断言收尾/恢复确实发生。
     prep = [C.END_ALWAYS, C.INBUF_ON, C.TRIG_AUTO]
     expect_writes = prep + [C.PRESET_DIG, f"{C.DCV} 10", C.MFORMAT_SINT, C.OFORMAT_SINT,
                             f"{C.APER} 1.4E-6", f"{C.TIMER} 1E-5", C.MEM_OFF,
                             f"{C.NRDGS} {len(raw_values)}", C.TRIG_AUTO, C.TARM_SYN]
-    check("burst recipe matches the Keysight sample", transport.writes == expect_writes,
-          transport.writes if transport.writes != expect_writes else "13 条全对")
+    tail = transport.writes[len(expect_writes):]
+    check("burst recipe prefix matches the Keysight sample",
+          transport.writes[:len(expect_writes)] == expect_writes,
+          transport.writes[:len(expect_writes)])
+    check("burst cleans up and restores (TARM/TRIG HOLD + PRESET NORM)",
+          C.TARM_HOLD in tail and C.TRIG_HOLD in tail and C.PRESET_NORM in tail,
+          f"tail={tail}")
     check("reads a 2n+2 byte block", transport.count("read_bytes", 2 * len(raw_values) + 2) == 1,
           transport.calls[-2:])
     dmm.close()
@@ -396,9 +403,10 @@ def main() -> int:
           transport.names() == expected, transport.names())
     check("holds issued: TARM HOLD + TRIG HOLD",
           transport.writes == [C.TARM_HOLD, C.TRIG_HOLD], transport.writes)
-    check("drain capped (<=6 rounds x 250 ms)",
-          all(arg == (6, 250) for name, arg in transport.calls if name == "drain"),
-          [arg for name, arg in transport.calls if name == "drain"])
+    check("drain capped (rounds<=6, timeout_ms<=250)",
+          all(int(a[0]) <= 6 and int(a[1]) <= 250
+              for name, a in transport.calls if name == "drain"),
+          [a for name, a in transport.calls if name == "drain"])
     dmm.close()
 
     print("\nS11 candidate resource strings (no hard-coded host/IP)", flush=True)

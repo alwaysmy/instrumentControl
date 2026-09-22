@@ -126,14 +126,28 @@ PRESET DIG → [DCV <range>] → MFORMAT SINT → OFORMAT SINT
 `OFORMAT`/`MFORMAT` 1=ASCII/**2=SINT**/3=DINT/**4=SREAL**（p.210/p.199，MFORMAT 上电=SREAL；执行 MFORMAT 会**清空读数内存**）·
 `AZERO` ON/OFF/ONCE（p.162，上电 ON）·
 `NPLC` 0–1（细步进）/1–10/10–1000 步进 10（p.205，上电 10）·
-10 V 档超量程按 **120% of range**（=12 V）表述，>120% 应改用 DINT（p.136/p.173）。
+10 V 档超量程按 **120% of range**（=12 V）表述，>120% 应改用 DINT（p.136/p.173）·
+`ARANGE` ON=1 / OFF=0 / ONCE（p.160-161；**自动挡状态只能看 `ARANGE?`**——实测 `FUNC?`
+在自动挡下仍返回固定档数值）·
+`APER` 单位**秒**、有效 0–1 s（步进 100 ns，<500 ns 取最小 500 ns），且"overrides any
+previously specified integration time or resolution"（p.160）→ **APER/NPLC 不是互斥而是
+同一积分时间的不同写法，后设者生效**（`APER?` 返回当前积分时间，实测 NPLC 10@50 Hz → 0.2 s）。
+
+### 6.x 后续实测补齐（详见 `docs/3458a_manual_verification_20260923.md` §6）
+
+- **DINT 突发**已实现并实测（4 字节/读数；手册 p.173：DINT 满量程 = 档位 ×500%）；
+- **突发收尾**：`TARM/TRIG HOLD` + clear + 有界 drain，随后 **`PRESET NORM`**（p.217，
+  非 RESET）恢复 ASCII 输出——否则输出留在 SINT，后续 ASCII 读数必超时；
+- **AC 单次读数**已实测：`TARM SGL,1` 在 `SETACV ANA` 下返回交流读数（4.11 mV AC）；
+- **性能**：`connect(recover="auto")` 快速路径（0.27 s）+ 失败再恢复，替代原先每次
+  5.11 s 的强制恢复（原因：VISA 超时最小粒度 ≈2 s，一轮 drain ≈2 s）。
 
 ### 仍未覆盖（保持"不猜"）
 
 | # | 待核对项 | 现状 | 影响 |
 |---|---|---|---|
-| 6 | 突发尾部 2 字节的含义（Keysight 样例为何读 `2n+2`） | 手册**未描述**（属样例实现细节）；本库只取前 `2n` 字节，字节数不足即报错 | 末尾读数是否被丢弃（不猜） |
-| 9 | AC 功能下 `NPLC` 的语义（`SETACV SYNC` 积分含义是否同 DCV） | 手册未给出等效换算；`set_nplc()` 已标注 | AC 测量正确用法 |
-| 10 | AC 下单次读数的配方是否同为 `TARM SGL,1` | **未实测**（参考实现只有 DCV 路径）；`read_acv()` 沿用同一配方 | 库 `read_acv()`；MCP 暂未暴露 AC 读数 |
-| 12 | `APER` 与 `NPLC` 的互斥/优先关系 | 手册只说 `APER` 是数字/子采样通路的孔径时间（p.60/p.114）；模拟通路由 NPLC 决定 | 数字档之外的孔径设置 |
-| — | `SINT` 溢出边界（输入 >120% 档位时应改用 DINT，p.173） | 本库 burst 固定用 SINT（与 Keysight 100k rdg/s 样例一致） | >120% 信号的突发读数 |
+| 6 | 突发尾部 2 字节的含义（Keysight 样例为何读 `2n+2`） | 手册**未描述**（属样例实现细节）；本库 SINT 只取前 `2n` 字节、DINT 精确取 `4n`，字节数不足即报错 | 末尾读数是否被丢弃（不猜） |
+| 9 | AC 功能下 `NPLC` 的语义（`SETACV SYNC` 积分含义是否同 DCV） | 手册未给等效换算；`set_nplc()` 已标注 | AC 测量正确用法 |
+| 10 | AC 下单次读数的配方是否同为 `TARM SGL,1` | ✅ **已实测**（2026-09-23）：`SETACV ANA` 下返回 `4.11E-03 V AC`；`SETACV SYNC/RNDM` 采样法未测 | 库 `read_acv()` 可用 |
+| 12 | `APER` 与 `NPLC` 的互斥/优先关系 | ✅ **手册已答**（p.160）：同一积分时间的两种写法，APER"overrides any previously specified"，后设者生效（实测 NPLC10@50Hz → APER?=0.2 s） | — |
+| — | `SINT` 溢出边界（>120% 档位） | ✅ **已支持 DINT**：`read_burst(data_format="DINT")` 实测通过（手册 p.173：DINT 满量程=档位×500%） | 大信号突发 |

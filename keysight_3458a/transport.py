@@ -28,11 +28,15 @@ import re
 import time
 from typing import Optional, Protocol
 
-SETTLE_S = 0.3            # open 后 / clear 后的静默等待（参考实现实测值）
+SETTLE_S = 0.05           # open 后 / clear 后的静默等待（原为 0.3s；2026-09-23 计时后收紧，
+                          # open 的耗时其实来自 clear 本身，0.05s 足够吃下 Device Clear）
 READ_MAX_ROUNDS = 64      # 文本行分片拼包上限
 BLOCK_MAX_ROUNDS = 256    # 二进制块分片拼包上限
 DRAIN_MAX_ROUNDS = 6      # drain 轮数上限（硬性：≤6）
 DRAIN_TIMEOUT_MS = 250    # 每轮 drain 的超时（硬性：≤250ms）
+# ⚠ 2026-09-23 实测：VISA 的 VI_ATTR_TMO_VALUE 有 ≈2s 最小粒度，250ms 设不下去 →
+# 单轮 drain 实际耗时 ≈2s。因此 drain 是**慢路径**，只在 recover/收尾时用，轮数已压到 2。
+DRAIN_ROUNDS_MIN = 2
 
 
 class TransportError(RuntimeError):

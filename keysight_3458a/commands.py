@@ -81,6 +81,26 @@ TARM_SGL_MAX_ARMS = 2.1e9       # [MANUAL] p.251：TARM SGL 的 number_arms 上�
 NRDGS_MAX = 16_777_215          # [MANUAL] p.207：NRDGS 的 n 上限（1..16777215）
 
 # ---------------------------------------------------------------------------
+# 自动挡 / 固定档（2026-09-23 按手册补齐：此前只支持固定档）
+# ---------------------------------------------------------------------------
+ARANGE = "ARANGE"                # [MANUAL] p.160-161：Autorange ON / OFF / ONCE
+ARANGE_Q = "ARANGE?"             # [MANUAL] p.161 查询命令
+ARANGE_ON = "ARANGE ON"
+ARANGE_OFF = "ARANGE OFF"
+DCV_AUTO = "DCV AUTO"            # [MANUAL] p.184：max_input=AUTO → autorange 模式
+ARANGE_CODES = {0: "OFF", 1: "ON", 2: "ONCE"}   # 码值现场标定（ARANGE ON/OFF 实测）
+
+# ---------------------------------------------------------------------------
+# 大信号：DINT 通路（[MANUAL] p.173：direct-sampling 用 DINT 时满量程 = 档位 ×500%）
+# ---------------------------------------------------------------------------
+MFORMAT_DINT = "MFORMAT DINT"    # [MANUAL] p.199：DINT = 码 3，4 字节/读数
+OFORMAT_DINT = "OFORMAT DINT"    # [MANUAL] p.210：同上
+DINT_BYTES = 4                   # 每读数 4 字节（32 位 2 的补码）
+PRESET_NORM = "PRESET NORM"      # [MANUAL] p.217：退出数字档回"正常远程测量"预设
+                                 #   （原文"similar to RESET but optimizes for remote
+                                 #   operation"；不是 RESET 命令）
+
+# ---------------------------------------------------------------------------
 # 触发模型
 # ---------------------------------------------------------------------------
 TARM_HOLD = "TARM HOLD"          # [SICL] L318 —— 停止后续触发（free-run 的第一道闸）
@@ -134,9 +154,10 @@ DCV_10V_OVERLOAD_V = 12.0
 DEFAULT_APERTURE_S = 1.4e-6
 DEFAULT_SAMPLE_INTERVAL_S = 10e-6
 
-# 一次突发允许的最大读数个数（**本仓设定**，非设备限制）：2n+2 字节要在一次会话里读完，
-# 且 MCP 返回体只给摘要（全量走 CSV），所以设一个上界防止调用方误传超大 n。
-BURST_MAX_READINGS = 1_000_000
+# 一次突发允许的最大读数个数 = **设备上限**（[MANUAL] p.207：NRDGS 的 n ∈ 1..16777215）。
+# 提醒：SINT 时一次要读 2n+2 字节，n=16.7M ≈ 33 MB 且按 100k rdg/s 约需 3 分钟——
+# 库层不再自设 1e6 的小上限，但调用方要为内存/时间负责（MCP 工具只回摘要、全量走 CSV）。
+BURST_MAX_READINGS = NRDGS_MAX
 
 
 def fmt_num(value: float) -> str:

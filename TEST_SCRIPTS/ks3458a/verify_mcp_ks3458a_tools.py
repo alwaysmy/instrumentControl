@@ -35,8 +35,10 @@ EXPECTED_TOOLS: dict[str, set[str]] = {
     "ks3458a_read": {"resource"},
     "ks3458a_read_avg": {"n", "resource"},
     "ks3458a_read_stats": {"n", "resource"},
-    "ks3458a_burst": {"n", "sample_interval_s", "dcv_range", "save_csv", "resource"},
+    "ks3458a_burst": {"n", "sample_interval_s", "dcv_range", "data_format", "save_csv",
+                      "resource"},
     "ks3458a_configure": {"dcv_range", "nplc", "resource"},
+    "ks3458a_autorange": {"on", "resource"},
     "ks3458a_acv": {"range", "band_lo", "band_hi", "sync", "nplc", "resource"},
     "ks3458a_reset": {"confirm", "resource"},
 }
@@ -96,7 +98,7 @@ def main() -> int:
     print("\nS2 ks3458a_* tool family present", flush=True)
     missing = [n for n in EXPECTED_TOOLS if n not in by_name]
     extra = [n for n in names if n.startswith("ks3458a_") and n not in EXPECTED_TOOLS]
-    check("all 8 ks3458a_* tools registered", not missing,
+    check("all 9 ks3458a_* tools registered", not missing,
           f"缺 {missing}" if missing else f"{len(EXPECTED_TOOLS)}/{len(EXPECTED_TOOLS)} 全在")
     check("no unexpected ks3458a_ tools", not extra, extra or "none")
     # 只读/写分类是文档口径，这里顺带确认命名前缀一致（便于客户端按前缀过滤）

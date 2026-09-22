@@ -102,3 +102,54 @@ MEM? / OFORMAT? / MFORMAT? / INBUF? / END?` 全部属于这类查询，**合规*
 3. `docs/COMMANDS_3458A.md`：关闭已核对的条目，改为引用本文页码；保留仍未覆盖项
    （尾部 2 字节、AC 单次读数配方、SINT 溢出边界、APER/NPLC 细节）。
 4. skill `instrument-mcp`：`ks3458a_status` 说明里写清"码值已解码"与 `TEMP?` 单位。
+
+---
+
+## 6. 后续实测补齐（2026-09-23 晚，同一台 3458A）
+
+### 6.1 自动挡 / 固定档（手册 p.160-161、p.183-184）
+
+- 固定档：`DCV <数值>`（原有能力，`ks3458a_configure(dcv_range=0.1/1/10/100/1000)`）。
+- 自动挡：新增 `ARANGE ON|OFF`（手册 p.160：Autorange，control = ON / OFF / ONCE）与
+  `DCV AUTO`（手册 p.184：max_input=AUTO）。真机实测：
+  `ARANGE ON → ARANGE?=1(ON)`、`ARANGE OFF → 0(OFF)`、`DCV AUTO → ARANGE?=1`。
+- **重要实测**：`FUNC?` 在自动挡下仍返回固定档数值（如 `1, .1`），**自动挡状态只能看
+  `ARANGE?`**——`state()` 已据此修正（此前误用 `FUNC?` 推导，恒为 None）。
+
+### 6.2 突发（SINT / DINT）与跑完收尾
+
+- **DINT 通路已实现并实测**：`MFORMAT/OFORMAT DINT`（4 字节/读数）× ISCALE，
+  n=100 → 读 400 字节，与 SINT 同源同档结果一致。手册 p.173：direct-sampling 下
+  DINT 满量程是档位的 **500%**（SINT 约 120%）→ **信号可能超 120% 档位时必须用 DINT**。
+- **跑完必须收尾**：`PRESET DIG` + `TRIG AUTO` + `NRDGS n` + `MEM OFF` 之下，表取满后
+  仍会继续触发/输出——实测紧接着发 `PRESET DIG` 直接 `VI_ERROR_TMO`。
+  现在 `read_burst()` 结束时会 `clear()` + `TARM HOLD` + `TRIG HOLD` + **有界** drain。
+- **必须恢复输出格式**：`PRESET DIG` 把输出留在 **SINT**（无换行符），此后普通 ASCII
+  读数会超时。现在 `read_burst(restore=True)`（默认）在收尾后发
+  **`PRESET NORM`**（手册 p.217："similar to RESET but optimizes for remote operation"，
+  **不是 `RESET` 命令**）+ `END ALWAYS`/`INBUF ON`/`TRIG AUTO`。实测恢复后
+  `oformat=1(ASCII)`、`mformat=4(SREAL)`，ASCII 读数正常。
+
+### 6.3 AC 单次读数配方（原"未实测"项 → 已实测）
+
+`ACV 10` + `SETACV ANA` + `ACBAND 20,1E5` 下，`TARM SGL,1` **可以**读出交流电压：
+实测 `4.113401E-03 V AC`（读数返回单一数值、无单位后缀）。即 AC 沿用与 DCV 相同的
+`TARM SGL,1` 配方（ANA 转换）；`SETACV SYNC/RNDM`（采样法）未测——手册 p.256 另注
+TIMER/SWEEP 不能与采样法 AC 同用。
+
+### 6.4 性能：把"恢复"从必经路径改成按需（关键改动）
+
+计时实测（本机 82357B + Keysight VISA）：
+
+| 阶段 | 改前 | 改后 |
+|---|---|---|
+| `transport.open`（clear + settle） | 0.46 s | **0.18 s**（settle 0.3→0.05 s） |
+| **`connect()`（recover + prepare）** | **5.11 s** | **0.27 s**（`recover="auto"`） |
+| `state()`（20 条查询） | 0.17 s | 0.17 s |
+| 单次读数（NPLC 10 @50 Hz） | 0.43 s | 0.43 s（物理下限） |
+
+原因与做法：恢复里的每轮 drain 实测 ≈2 s（**VISA 的 `VI_ATTR_TMO_VALUE` 有 ≈2 s 最小
+粒度**，250 ms 设不下去），两轮就 ~4 s；而"表被留在 free-run"是少数情况。现在
+`connect(recover="auto")` 只做 `prepare_for_read()`（3 条写，≈0.01 s），**读数失败时**
+才由 `_with_recover_retry()` 做一次完整恢复并重试——把成本只花在真正需要的场合。
+`connect(recover=True)` 仍保留强制恢复（排障/共享台被占时用）。

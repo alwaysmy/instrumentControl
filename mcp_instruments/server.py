@@ -1667,28 +1667,36 @@ def ks3458a_read_stats(n: int = 10, resource: str | None = None) -> str:
 
 @device_tool(budget_s=300.0)   # 高速突发：n 大时读块远超默认预算
 def ks3458a_burst(n: int = 1000, sample_interval_s: float | None = None,
-                dcv_range: float | None = None, save_csv: bool = False,
-                resource: str | None = None) -> str:
+                dcv_range: float | None = None, data_format: str = "SINT",
+                save_csv: bool = False, resource: str | None = None) -> str:
     """3458A 高速二进制突发（Keysight 官方 100k rdg/s 配方）：一次触发取 n 个读数。
 
-    配方：`PRESET DIG` → [`DCV <range>`] → `MFORMAT/OFORMAT SINT` → [`APER`] →
-    [`TIMER <sample_interval_s>`] → `MEM OFF` → `NRDGS n` → `TRIG AUTO` → `ISCALE?`
-    → `TARM SYN` → 读 2n+2 字节，按 **2 字节大端有符号整数 × ISCALE** 解析。
+    配方（`data_format="SINT"`）：`PRESET DIG` → [`DCV <range>`] → `MFORMAT/OFORMAT SINT`
+    → [`APER`] → [`TIMER <sample_interval_s>`] → `MEM OFF` → `NRDGS n` → `TRIG AUTO`
+    → `ISCALE?` → `TARM SYN` → 读 2n+2 字节，按 **2 字节大端有符号整数 × ISCALE** 解析。
+
+    `data_format="DINT"`：改用 `MFORMAT/OFORMAT DINT`（4 字节/读数），读 4n 字节后按
+    **4 字节大端有符号整数 × ISCALE** 解析。**什么时候用 DINT**：手册（p.173）说
+    direct-sampling 下 DINT 的满量程是档位的 **500%**，SINT 只有约 120%——
+    信号可能超过档位 120% 时必须用 DINT，否则 SINT 溢出。
 
     ⚠ 这会**改设备配置**：`PRESET DIG` 把整组采样参数复位到数字档、功能切 DCV、
     内存关闭。跑完设备不再是原来的配置——要恢复请显式 `ks3458a_reset` 或
     `ks3458a_configure`（本工具归"取数"一栏，但别当成无副作用）。
 
-    返回**摘要**（n/mean/stddev/min/max/iscale/档位/采样间隔/字节数），不返回完整
+    返回**摘要**（n/mean/stddev/min/max/iscale/格式/档位/采样间隔/字节数），不返回完整
     数组（防上下文爆炸）；要逐点数据用 `save_csv=True`，CSV 落在 `TEST_DATA/ks3458a/`。
-    `sample_interval_s`/`dcv_range` 省略则不下发对应命令（用设备当前值）。
+    `sample_interval_s`/`dcv_range` 省略则不下发对应命令（用设备当前值）；
+    `n` 上限 = 设备上限 16777215（手册 p.207），但 n 越大越慢、内存越大（SINT≈2n 字节）。
     """
     def fn(d: DMM3458A):
-        burst = d.read_burst(n, sample_interval_s=sample_interval_s, dcv_range=dcv_range)
+        burst = d.read_burst(n, sample_interval_s=sample_interval_s, dcv_range=dcv_range,
+                             data_format=data_format)
         out = {"values_count": len(burst["values"]), "summary": burst["summary"]}
         if save_csv:
             p = Path(ROOT) / "TEST_DATA" / "ks3458a" / (
-                f"mcp_ks3458a_burst_n{int(n)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+                f"mcp_ks3458a_burst_{str(data_format).upper()}_n{int(n)}_"
+                f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
             p.parent.mkdir(parents=True, exist_ok=True)
             with open(p, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
@@ -1700,22 +1708,57 @@ def ks3458a_burst(n: int = 1000, sample_interval_s: float | None = None,
 
 
 @device_tool()
-def ks3458a_configure(dcv_range: float = 10.0, nplc: float = 10.0,
+def ks3458a_configure(dcv_range: str | float = 10.0, nplc: float = 10.0,
                     resource: str | None = None) -> str:
     """3458A 设置直流档位与积分时间（`DCV <range>` / `NPLC <n>`）。**改配置**。
 
-    档位只有 0.1/1/10/100/1000 V；10V 档有 20% 超量程（可用到 ±12V），但本库按
-    1.1 倍余量选档（保守），确知 ≤12V 又要用 10V 档就直接传 10。
-    **换档/换配置后库内会自动丢弃第一次读数**（建立时间 + 自校准）——这是有意行为。
+    **固定档 vs 自动挡**（手册 p.183-184）：
+    · `dcv_range` 传数值（0.1/1/10/100/1000）→ **固定档**（写 `DCV <range>`）；
+    · `dcv_range="AUTO"` → **自动挡**（写 `DCV AUTO`，max_input=AUTO ⇒ autorange）。
+    另有只动自动挡开关的 `ARANGE ON/OFF`（手册 p.160）——需要时用
+    `ks3458a_autorange(on=True/False)`，它不碰档位数值/NPLC。
 
-    写后回读：3458A **没有档位/NPLC 回读命令**，只能用 `ERRSTR?` 核对是否被接受
-    （返回体 `errstr`/`error_clear`）；`dcv_range`/`nplc` 是**下发值**，不是实测值。
+    10 V 档物理可到 12 V（手册 p.136/p.173：120% of range），但本库选档按 1.1 倍余量
+    （保守），确知 ≤12 V 又要用 10 V 档就直接传 10。
+    **换档/换配置后库内会自动丢弃第一次读数**（建立时间 + 自校准）——有意行为。
+
+    写后**可回读复核**：`ks3458a_status` 的 `device` 里 `FUNC?`/`RANGE?`/`ARANGE?`/`NPLC?`
+    是实测值（返回体同时给 `errstr`/`error_clear` 作为"设备接受了"的证据）。
     """
     def fn(d: DMM3458A):
         d.configure_dcv(dcv_range, nplc)
+        st = {}
+        try:
+            st = {k: v for k, v in d.state().items()
+                  if k in ("function", "range_v", "arange", "autorange", "nplc")}
+        except Exception as e:                        # noqa: BLE001 —— 回读失败不影响写结果
+            st = {"readback_error": f"{type(e).__name__}: {e}"}
         return {"dcv_range": d.current_range, "nplc": d.current_nplc,
+                "device_readback": st,
                 **_ks3458a_error(d),
-                "note": "dcv_range/nplc 为本次下发值（设备无回读命令）；errstr 是接受证据"}
+                "note": "device_readback 是 FUNC?/RANGE?/ARANGE?/NPLC? 实测回读；"
+                        "errstr 是接受证据"}
+    return _call("3458A", lambda: _ks3458a(resource), fn)
+
+
+@device_tool()
+def ks3458a_autorange(on: bool = True, resource: str | None = None) -> str:
+    """3458A 自动挡开关（`ARANGE ON` / `ARANGE OFF`，手册 p.160-161）。**改配置**。
+
+    与 `ks3458a_configure(dcv_range="AUTO")` 的区别：这条**只动自动挡开关**，
+    不改档位数值与 NPLC。（手册 p.53-54 还提到 `ARANGE ONCE`：让自动挡选一次档位，
+    需要时用 `instr_write` 显式下发白名单外的该命令——本工具不封装。）
+    """
+    def fn(d: DMM3458A):
+        d.set_autorange(bool(on))
+        st = {}
+        try:
+            st = {k: v for k, v in d.state().items()
+                  if k in ("arange", "autorange", "range_v", "function")}
+        except Exception as e:                        # noqa: BLE001
+            st = {"readback_error": f"{type(e).__name__}: {e}"}
+        return {"requested_autorange": bool(on), "device_readback": st,
+                **_ks3458a_error(d)}
     return _call("3458A", lambda: _ks3458a(resource), fn)
 
 

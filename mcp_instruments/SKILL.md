@@ -41,6 +41,10 @@ MCP server：`mcp_instruments/server.py`（65 工具 = 61 专用 + 3 通用护�
   看状态 → ks3458a_status（`ID?`/`ERRSTR?`/`TEMP?` + **`device` 设备回读**
     `FUNC?`/`RANGE?`/`NPLC?`/`TARM?`/`TRIG?`/`INBUF?`… → 真实配置，不是"本会话设过什么"）
   取数 → ks3458a_read（单次 DCV）/ ks3458a_read_avg(n) / ks3458a_read_stats(n)
+        **多次重复测量 → ks3458a_read_series(n, interval_s?, save_csv?)**
+        （一次会话内连测 n 点，返回逐点/统计/时长；比连调 n 次 read 省掉每次 ~0.27 s
+        重连 —— 100 点 @NPLC10 约 45 s。`interval_s` 是点间间隔（主机 sleep，非精密）；
+        要精密等间隔用 ks3458a_burst 的 TIMER）
         ⚡ 快路径：连接只做 `prepare_for_read`（≈0.27 s）；若表被上次会话留在 free-run
         （读数超时/错位），库会**自动做一次会话恢复并重试**——不用你手动清理
   高速采样（100k rdg/s） → ks3458a_burst(n, sample_interval_s?, dcv_range?, data_format?, save_csv?)
@@ -73,6 +77,45 @@ MCP server：`mcp_instruments/server.py`（65 工具 = 61 专用 + 3 通用护�
       后 0.43 s/次（NPLC=10）。这三条**不改档位/NPLC/功能**，所以是安全的读前准备
     * 这些动作会打断**整条 GPIB 总线**上正在进行的采集（共享实验台注意）；本机 GPIB0
       上只有这台 3458A
+
+  **3458A 重要坑清单（写脚本/集成前逐条过；详版见 `keysight_3458a/README.md` 与
+    `docs/3458a_manual_verification_20260923.md`）**：
+    1. **非 SCPI**：`ID?`（无 `*IDN?`）、`ERRSTR?`（无 `SYST:ERR?`）、`RESET`（无 `*RST`）、
+       读数是 `TARM SGL,1`（不带问号）；**不要**用 `instr_query`/`instr_write` 对它发 SCPI。
+    2. **串尾必须 LF**：CRLF 结尾会让 3458A **不应答**（实测超时）。库已强制 `"\n"`；
+       自己写 socket/串口/GPIB 时同样要注意。
+    3. **`TRIG HOLD` 下 `TARM SGL,1` 永不出数**：读前必须 `TRIG AUTO`（库自动补）。
+    4. **free-run（上电吐数）**：恢复 = clear/IFC + **有界** drain + `TARM/TRIG HOLD`；
+       无界 drain 实测 80~91 s。库在读数失败时自动恢复一次并重试。
+    5. **换档/换配置后首读数必须丢弃**（建立时间+自校准）；库自动做。
+    6. **突发会改配置**（`PRESET DIG`：数字档/DCV/内存关/**SINT 输出**）→ 必须收尾 +
+       `PRESET NORM` 恢复，否则 ① 继续流数据卡死下条命令 ② SINT 无换行使 ASCII 读数超时。
+       `PRESET NORM` 手册原文"similar to RESET"——**会复位档位/NPLC**（不是 RESET 命令，
+       但脚本里跑完突发要显式 configure 回自己的设定）。
+    7. **码表易错**：`MFORMAT?`=4 是 **SREAL**（SINT=2）；**`FUNC?` 不能判自动挡**（看 `ARANGE?`）。
+    8. **SINT 只适用 ≤120% 档位**；>120% 必须用 **DINT**（满量程=档位×500%）。
+    9. **`ERRSTR?` 每次读并清除"最低置位"一位**：要反复查到 `0,"NO ERROR"`；它也是
+       "设备接受了这条命令"的**唯一证据**（写操作无回读通道）。
+    10. **APER 与 NPLC 是同一积分时间**（后设者生效）；NPLC 10 @50 Hz = 0.2 s → 0.43 s/读数。
+    11. **占用与并发**：同一地址两个会话会**静默串台**（实测互相读到对方响应）。库已接
+        `common/session_lock`：别人在用同一地址时 `connect()` **直接拒绝**并列出 pid/kind；
+        等对方释放，**确认对方已死**才 `connect(force=True)`。
+    12. **总线影响**：IFC/Device Clear 影响**整条 GPIB 总线**（本机 GPIB0 上只有这台表）。
+    13. **上限/性能**：`NRDGS` ≤ 16777215；VISA 超时最小粒度 ≈2 s（所以 drain 是慢路径）；
+        快路径连接 0.27 s、单次读数 0.43 s（NPLC 10）。
+    14. **命令白名单**：只有 `keysight_3458a/commands.py` 里的命令；新增命令先登记出处
+        （手册页码/实测留痕），见铁律 1。
+
+  **在脚本里集成 3458A（两种方式，二选一）**：
+    ① **直接用库（脚本推荐）**：`from keysight_3458a import DMM3458A`
+       → `with DMM3458A("GPIB0::9::INSTR") as d: d.read_dcv()`
+       适合批量采集/长脚本/需要精细控制（突发、逐点 CSV、异常处理）；库里已接会话锁。
+    ② **走 MCP（与 AI 共用一把锁、复用安全门）**：起 `mcp_instruments/server.py` 子进程，
+       用官方 SDK（`mcp.ClientSession` + `mcp.client.stdio.stdio_client`）调 `ks3458a_*` 工具，
+       返回值是 **JSON 文本**。适合"想让 AI 和自己串行用同一台表"；代价是每脚本多 ~1 s 启进程。
+    两条路都在示例里写好了（可直接抄）：`TEST_SCRIPTS/ks3458a/example_script_integration.py`
+       · `--dry-run` **不连设备**，只打印将要下发的命令序列（写脚本前先跑这个）
+       · 默认 = ①库；`--via mcp` = ②；`--burst` 追加一段 100 点 SINT 突发（会改配置并自动恢复）
 
 DHO 示波器 → dho_status / dho_measure_item / dho_channel / dho_timebase / dho_trigger
   （⚠ DHO 不在本实验台：读路径同共享内核，**写路径未实机验证**）
@@ -180,6 +223,7 @@ DG832 信号源（RIGOL DG800 系列）：
 | dmm_configure | range_v | 设定量程后 :CONF? 回读滞后一拍，以实测为准 |
 | ks3458a_status | resource? | `ID?`/`ERRSTR?`/`TEMP?` + **`device` 设备回读**（`FUNC?`/`RANGE?`/`NPLC?`/`APER?`/`TARM?`/`TRIG?`/`NRDGS?`/`INBUF?`/`END?`/`MEM?`/`AZERO?`/`OFORMAT?`/`MFORMAT?`/`ISCALE?`——2026-09-23 真机实测 + **手册逐条核对**，`TARM/TRIG/END/INBUF/OFORMAT/MFORMAT/AZERO` 已按手册码表**解码**成 `4(HOLD)`/`1(ASCII)`/`4(SREAL)` 形式）+ `tracked`（本会话**下发过**什么，与回读分开报）。`TEMP?` = 内部温度，单位**摄氏度**（手册 p.37/50；实测 37.0） |
 | ks3458a_read / ks3458a_read_avg / ks3458a_read_stats | n≤1000 | 单次 DCV（`TARM SGL,1`）/ n 次平均 / `{n,mean,stddev,min,max}`（样本标准差）。读数非数值按 device_error 报，**不返回 0 兜底** |
+| ks3458a_read_series | n≤1000, interval_s?, save_csv? | **一次会话内连测 n 点**（重复测量主用）：返回 `{summary:{n,mean,stddev,min,max,duration_s,per_reading_s}, values?}`（n≤50 内联逐点，更大只回摘要；`save_csv=True` 落带 unix 时间戳的 CSV）。点间 `interval_s` 为主机 sleep（非精密时序）。单点失败自动恢复重试一次，仍失败则报错并附已采点数 |
 | ks3458a_burst | n, sample_interval_s?, dcv_range?, data_format?, save_csv? | 100k rdg/s 二进制突发（`PRESET DIG`+`MFORMAT/OFORMAT`+`MEM OFF`+`NRDGS`+`TRIG AUTO`+`TARM SYN`+`ISCALE?`）。`data_format="SINT"`（2 字节/读数，读 2n+2 字节）或 `"DINT"`（4 字节/读数，读 4n；**信号可能超档位 120% 时必用**，手册 p.173：DINT 满量程=档位×500%）。跑完**自动收尾**（`TARM/TRIG HOLD`+clear+有界 drain）并 `PRESET NORM` 恢复 ASCII 输出（非 RESET）。n 上限=设备 16777215（手册 p.207）。返回**摘要**；`save_csv=True` 落 `TEST_DATA/ks3458a/`。⚠ **改设备配置** |
 | ks3458a_configure | dcv_range, nplc | `dcv_range` 传数值=**固定档**（0.1/1/10/100/1000 V），传 `"AUTO"`=**自动挡**（`DCV AUTO`）。10V 档可到 12 V（手册 p.136：120% of range），但选档按 1.1 倍余量（保守）。**换档后自动丢首读数**（建立时间+自校准）。返回体带 `device_readback`（`FUNC?`/`RANGE?`/`ARANGE?`/`NPLC?` 实测回读） |
 | ks3458a_acv | range, band_lo?, band_hi?, sync?, nplc? | `ACV`/`SETACV ANA|SYNC`/`ACBAND <lo>,<hi>`（带宽需成对给）。`SETACV SYNC` 用于 <10 Hz、`ANA` 用于 >10 Hz。✅ 2026-09-23 实测：`ANA` 下 `TARM SGL,1` 能读出交流电压（4.11 mV AC）；`SYNC/RNDM` 采样法未测 |

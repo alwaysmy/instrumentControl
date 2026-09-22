@@ -1648,6 +1648,42 @@ def ks3458a_read_avg(n: int = 10, resource: str | None = None) -> str:
                  lambda d: {"n": int(n), "volts": d.read_avg(n)})
 
 
+@device_tool(budget_s=600.0)   # 连续测量：n 点 ×（读数 + 点间间隔），预算给宽些
+def ks3458a_read_series(n: int = 10, interval_s: float | None = None,
+                        save_csv: bool = False, resource: str | None = None) -> str:
+    """3458A **一次会话内连续重复测量 n 次**（脚本/批量采集的主用工具）。
+
+    与 `ks3458a_read_avg/read_stats` 的区别：返回**逐点序列**（可选落 CSV）与时长统计；
+    与"连续调 n 次 ks3458a_read"相比省掉每次重连（每次 ~0.27 s），100 点 @NPLC 10
+    从 ~70 s 降到 ~45 s。`interval_s` 是**点间间隔**（主机 sleep，非精密时序；要
+    精密等间隔采样用 `ks3458a_burst` 的 TIMER）。
+
+    n 取 1~1000；返回 `{n, values?/summary, csv?}`（`values` 仅在 n≤50 时内联，
+    更大只回 summary——防上下文爆炸；要逐点数据用 `save_csv=True`）。
+    """
+    count = int(n)
+    if not 1 <= count <= 1000:
+        return _err("param_validation", f"n 需在 1~1000（收到 {n!r}）", "3458A")
+
+    def fn(d: DMM3458A):
+        res = d.read_series(count, interval_s=interval_s)
+        out: dict = {"summary": res["summary"]}
+        if count <= 50:
+            out["values"] = res["values"]
+        if save_csv:
+            p = Path(ROOT) / "TEST_DATA" / "ks3458a" / (
+                f"mcp_ks3458a_series_n{count}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with open(p, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(["index", "volts", "unix_time"])
+                writer.writerows((i, v, ts) for i, (v, ts)
+                                 in enumerate(zip(res["values"], res["timestamps"])))
+            out["csv"] = str(p)
+        return out
+    return _call("3458A", lambda: _ks3458a(resource), fn)
+
+
 @device_tool()
 def ks3458a_read_stats(n: int = 10, resource: str | None = None) -> str:
     """3458A 连续读 n 次并给统计：`{n, mean, stddev, min, max}`（单位 V）。

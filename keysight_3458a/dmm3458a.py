@@ -134,12 +134,36 @@ class DMM3458A:
         self._transport = transport
         self._connected = False
         self.recover_mode: bool | str = "auto"       # connect() 决定；"auto"=失败才恢复
+        self.holders: list[dict] = []                # 连接时发现的**他人**占用（辅助锁）
         self._range: Optional[float] = None          # 本会话已下发过的档位（None=没设过，'AUTO'=自动挡）
         self._autorange: Optional[bool] = None       # 本会话是否发过 ARANGE ON/OFF（None=没动过）
         self._nplc: Optional[float] = None           # 本会话已下发过的 NPLC（None=没设过）
 
     # ---------- 连接 ----------
-    def connect(self, recover: bool | str = "auto") -> str:
+    def _claim(self) -> list[dict]:
+        """登记"本进程正在用该资源"（`common/session_lock` 辅助锁），返回**他人**占用列表。
+
+        锁是**辅助设施**：任何异常都降级为空列表，绝不让它挡住正常使用。
+        意义：脚本用库直连时也能被 MCP/AI 侧看到；反之亦然——避免"同一台表两个会话
+        静默串台"（实测过：互相读到对方的响应）。
+        """
+        try:
+            from common import session_lock
+
+            info = session_lock.touch(self.resource, kind="ks3458a")
+            return list(info.get("holders") or [])
+        except Exception:                            # noqa: BLE001
+            return []
+
+    def _release_claim(self) -> None:
+        try:
+            from common import session_lock
+
+            session_lock.release(self.resource)
+        except Exception:                            # noqa: BLE001
+            pass
+
+    def connect(self, recover: bool | str = "auto", force: bool = False) -> str:
         """打开会话，返回资源串（与 keysight_3446x / rigol_scope 的 connect 一致）。
 
         `recover` 三态（2026-09-23 性能实测后改成"按需恢复"）：
@@ -155,6 +179,10 @@ class DMM3458A:
         ⚠ 恢复与 `prepare_for_read()` 都会碰总线状态；SICL 通路的 IFC 还影响**整条
         GPIB 总线**（本机 GPIB0 上只有这台 3458A）。
 
+        `force=False`（默认）时，若辅助锁显示**别的进程正在用同一地址**，直接报
+        `TransportError` 并列出占用者——同一台表两个会话会**静默串台**（实测过），
+        所以宁可拒绝也不并发。确有理由要抢（对方已死/僵尸锁）才传 `force=True`。
+
         `reset_on_open=True` 时额外 `reset()` + 按构造参数配置档位/NPLC（**破坏性**）。
         """
         if self._transport is None:
@@ -163,7 +191,21 @@ class DMM3458A:
                     "resource 为空：需要 GPIB/VISA/SICL 资源串，"
                     "如 'GPIB0::9::INSTR' / 'visa://<host>/GPIB0::9::INSTR' / 'sicl:gpib0,9'")
             self._transport = make_transport(self.resource, timeout_s=self.timeout_s)
-        self._transport.open()
+        # 先登记自己的占用，再看有没有别人（顺序反了会把自己也算进去）
+        self.holders = self._claim()
+        if self.holders and not force:
+            who = "; ".join(
+                f"pid={h.get('pid')} kind={h.get('kind') or '?'} host={h.get('host') or '?'}"
+                f" started={h.get('started')}" for h in self.holders[:3])
+            raise TransportError(
+                f"3458A 正被其它会话占用（{len(self.holders)} 个）：{who}。"
+                f"同一地址并发会静默串台，已拒绝连接——请等对方释放；"
+                f"确认对方已死/僵尸锁时可用 connect(force=True) 强制")
+        try:
+            self._transport.open()
+        except Exception:
+            self._release_claim()                    # 开不起来就别占着锁
+            raise
         self._connected = True
         self.recover_mode = recover
         if recover is True:
@@ -228,6 +270,7 @@ class DMM3458A:
             transport.close()
         finally:
             self._connected = False
+            self._release_claim()                    # 交还辅助锁（让 MCP/其它脚本能看到设备空了）
 
     @property
     def is_open(self) -> bool:
@@ -565,6 +608,51 @@ class DMM3458A:
             raise ValueError(f"n 必须 ≥1，收到 {n!r}")
         return _stats([self.read_dcv() for _ in range(count)])
 
+    def read_series(self, n: int = 10, interval_s: Optional[float] = None,
+                    timeout_s: Optional[float] = None) -> dict:
+        """**一次会话内连续重复测量 n 次**（脚本/批量采集的主用接口）。
+
+        与 `read_avg`/`read_stats` 的区别：本方法返回**逐点序列 + 时间戳 + 时长**，
+        可选点间间隔（`interval_s`，用主机 sleep，非精密时序）；与 MCP 逐次调用相比
+        省掉了每次重连（快路径 0.27 s/次）——100 点从 ~70 s 降到 ~45 s（NPLC 10）。
+
+        返回 `{"values": [...], "summary": {n, mean, stddev, min, max, duration_s,
+        interval_s, per_reading_s, nplc, stopped_early}}`。
+        单点失败会重试一次（`_with_recover_retry`）；仍失败则**带上已采到的点**报错，
+        不静默丢数据。
+        """
+        count = int(n)
+        if count < 1:
+            raise ValueError(f"n 必须 ≥1，收到 {n!r}")
+        gap = float(interval_s) if interval_s else 0.0
+        values: list[float] = []
+        stamps: list[float] = []
+        t0 = time.time()
+        for i in range(count):
+            if i and gap > 0:
+                time.sleep(gap)
+            try:
+                if timeout_s is not None:
+                    v = self.read_dcv(timeout_s=timeout_s)
+                else:
+                    v = self.read_dcv()
+            except Exception as exc:                      # noqa: BLE001
+                raise TransportError(
+                    f"连续测量在第 {i + 1}/{count} 点失败（已成功 {len(values)} 点）："
+                    f"{type(exc).__name__}: {exc}") from exc
+            values.append(float(v))
+            stamps.append(time.time())
+        total = time.time() - t0
+        summary = _stats(values)
+        summary.update({
+            "duration_s": round(total, 4),
+            "interval_s": gap or None,
+            "per_reading_s": round(total / count, 4) if count else None,
+            "nplc": self._nplc,
+            "stopped_early": False,
+        })
+        return {"values": values, "timestamps": stamps, "summary": summary}
+
     # ---------- 高速二进制突发 ----------
     def read_burst(self, n: int, sample_interval_s: Optional[float] = None,
                    dcv_range: Optional[float] = None,
@@ -606,63 +694,86 @@ class DMM3458A:
         per_reading = 2 if fmt == "SINT" else C.DINT_BYTES
         trailer = 2 if fmt == "SINT" else 0        # 尾部 2 字节只存在于官方 SINT 样例
         transport = self._t()
-        transport.write(C.PRESET_DIG)
-        if dcv_range is not None:
-            transport.write(f"{C.DCV} {C.fmt_num(dcv_range)}")
-            self._range = dcv_range
-        transport.write(C.MFORMAT_SINT if fmt == "SINT" else C.MFORMAT_DINT)
-        transport.write(C.OFORMAT_SINT if fmt == "SINT" else C.OFORMAT_DINT)
-        if aperture_s is not None:
-            transport.write(f"{C.APER} {C.fmt_num(aperture_s)}")
-        if sample_interval_s is not None:
-            transport.write(f"{C.TIMER} {C.fmt_num(sample_interval_s)}")
-        transport.write(C.MEM_OFF)
-        transport.write(f"{C.NRDGS} {count}")
-        transport.write(C.TRIG_AUTO)
-        iscale = _first_float(transport.query(C.ISCALE_Q))
-        transport.write(C.TARM_SYN)
         want = per_reading * count + trailer
-        raw = transport.read_bytes(want, timeout_s=timeout_s)
-        # 传输层已保证字节数；这里再挡一道——截断数据会解析出错位的"合理值"，
-        # 比直接报错危险得多（宁可失败，不可静默给错数）
-        if len(raw) < want:
-            raise TransportError(
-                f"二进制突发回读不足：期望 {want} 字节，实得 {len(raw)} 字节"
-                f"（n={count}, {fmt}；超时或设备未按 {fmt} 配方输出）")
-        if fmt == "DINT":
-            # 无官方样例的尾字节约定：精确取 4n 后把可能的残留（若有）有界清掉
+
+        def safe_write(cmd: str) -> None:
+            """写一条命令；失败（多半是表还在流数据）→ 恢复一次 → 重试一次。
+
+            现场教训：表被上次会话留在连续输出时，`PRESET DIG` 直接 `VI_ERROR_TMO`；
+            旧实现只会抛错，把设备留在原地（后续调用继续撞）。现在自动救一次。
+            """
             try:
-                transport.drain(DRAIN_MAX_ROUNDS, DRAIN_TIMEOUT_MS)
-            except Exception:                        # noqa: BLE001 —— 清残留失败不影响已读数据
-                pass
-        # **收尾（必须）**：`TRIG AUTO` + `NRDGS n` + `MEM OFF` 之下，表取满 n 个读数后
-        # 仍会继续触发/输出；不收尾下一条命令会撞 `VI_ERROR_TMO`（2026-09-23 实测：
-        # 紧接着发 `PRESET DIG` 超时）。按 p.251/p.257：TARM HOLD + TRIG HOLD 停止触发，
-        # 再 clear + **有界** drain 扫掉残留（绝不做无界读）。
+                transport.write(cmd)
+            except TransportError:
+                self.recover()
+                transport.write(cmd)
+
         try:
-            transport.clear()
-            time.sleep(0.2)
-            transport.write(C.TARM_HOLD)
-            transport.write(C.TRIG_HOLD)
-            time.sleep(0.2)
-            transport.drain(DRAIN_MAX_ROUNDS, DRAIN_TIMEOUT_MS)
-        except Exception:                            # noqa: BLE001 —— 收尾尽力而为
-            pass
-        # `PRESET DIG` 还会把 **输出格式留在 SINT**——此后普通 ASCII 读数会解析失败。
-        # 手册 p.217：`PRESET NORM` 是官方"退出数字档回正常远程测量"的路径
-        # （原文"similar to RESET but optimizes for remote operation"，**不是 RESET 命令**）。
-        # 默认恢复；`restore=False` 时调用方要自己负责（例如连续多次突发）。
-        if restore:
+            safe_write(C.PRESET_DIG)
+            if dcv_range is not None:
+                safe_write(f"{C.DCV} {C.fmt_num(dcv_range)}")
+                self._range = dcv_range
+            safe_write(C.MFORMAT_SINT if fmt == "SINT" else C.MFORMAT_DINT)
+            safe_write(C.OFORMAT_SINT if fmt == "SINT" else C.OFORMAT_DINT)
+            if aperture_s is not None:
+                safe_write(f"{C.APER} {C.fmt_num(aperture_s)}")
+            effective_interval = sample_interval_s
+            if sample_interval_s is not None:
+                safe_write(f"{C.TIMER} {C.fmt_num(sample_interval_s)}")
+            else:
+                # 没给采样间隔就用设备当前 TIMER；顺手查出来算超时预算
+                try:
+                    effective_interval = _first_float(transport.query(C.TIMER_Q))
+                except Exception:                    # noqa: BLE001
+                    effective_interval = C.DEFAULT_SAMPLE_INTERVAL_S
+            safe_write(C.MEM_OFF)
+            safe_write(f"{C.NRDGS} {count}")
+            safe_write(C.TRIG_AUTO)
+            iscale = _first_float(transport.query(C.ISCALE_Q))
+            safe_write(C.TARM_SYN)
+
+            # 超时预算按"n × 采样间隔"算，而不是吃通用的 120 s——否则一旦设备状态
+            # 不对（例如格式/触发没生效），调用会长时间占着设备锁把 MCP 堵死。
+            if timeout_s is None:
+                interval = float(effective_interval or C.DEFAULT_SAMPLE_INTERVAL_S)
+                timeout_s = min(C.BURST_TIMEOUT_MAX_S,
+                                max(C.BURST_TIMEOUT_MIN_S, 10.0 + 3.0 * count * interval))
+            raw = transport.read_bytes(want, timeout_s=timeout_s)
+            # 传输层已保证字节数；这里再挡一道——截断数据会解析出错位的"合理值"，
+            # 比直接报错危险得多（宁可失败，不可静默给错数）
+            if len(raw) < want:
+                raise TransportError(
+                    f"二进制突发回读不足：期望 {want} 字节，实得 {len(raw)} 字节"
+                    f"（n={count}, {fmt}；超时或设备未按 {fmt} 配方输出）")
+        finally:
+            # **无论成功失败都要收尾 + 恢复**：
+            # ① 收尾：`TRIG AUTO`+`NRDGS n`+`MEM OFF` 之下表取满后仍会继续触发/输出，
+            #    不收尾下一条命令必撞 `VI_ERROR_TMO`（2026-09-23 实测）；
+            # ② 恢复：`PRESET DIG` 把输出留在 **SINT**（无换行符），此后 ASCII 读数
+            #    会超时（现场实测：MCP 里 burst 之后整个工具面瘫掉）。
+            #    手册 p.217 的 `PRESET NORM` 是官方"退出数字档"路径（**不是 RESET**）。
             try:
-                transport.write(C.PRESET_NORM)
-                time.sleep(1.0)                      # 预设切换的稳定时间（与 RESET 同级）
                 transport.clear()
-                transport.write(C.END_ALWAYS)
-                transport.write(C.INBUF_ON)
-                transport.write(C.TRIG_AUTO)
-                transport.drain(DRAIN_MAX_ROUNDS, DRAIN_TIMEOUT_MS)
-            except Exception:                        # noqa: BLE001
+                transport.write(C.TARM_HOLD)
+                transport.write(C.TRIG_HOLD)
+                transport.drain(2, DRAIN_TIMEOUT_MS)
+            except Exception:                        # noqa: BLE001 —— 收尾尽力而为
                 pass
+            if restore:
+                try:
+                    transport.write(C.PRESET_NORM)
+                    time.sleep(1.0)                  # 预设切换稳定时间（与 RESET 同级）
+                    transport.clear()
+                    transport.write(C.END_ALWAYS)
+                    transport.write(C.INBUF_ON)
+                    transport.write(C.TRIG_AUTO)
+                    transport.drain(2, DRAIN_TIMEOUT_MS)
+                except Exception:                    # noqa: BLE001
+                    pass
+                # PRESET NORM 会把档位/NPLC 复位（与 RESET 同级）→ 本会话记录作废
+                self._range = None
+                self._nplc = None
+
         values = [int.from_bytes(raw[i:i + per_reading], "big", signed=True) * iscale
                   for i in range(0, per_reading * count, per_reading)]
         summary = _stats(values)
@@ -673,11 +784,9 @@ class DMM3458A:
             "bytes_expected": want,
             "dcv_range": dcv_range if dcv_range is not None else self._range,
             "sample_interval_s": sample_interval_s,
+            "effective_interval_s": effective_interval,
+            "read_timeout_s": timeout_s,
             "aperture_s": aperture_s,
             "restored_to_preset_norm": bool(restore),
         })
-        if restore:
-            # PRESET NORM 会把档位/NPLC 复位（与 RESET 同级）→ 本会话记录作废
-            self._range = None
-            self._nplc = None
         return {"values": values, "summary": summary}

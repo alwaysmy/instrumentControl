@@ -69,7 +69,8 @@ class FakeTransport:
     顺序错误能被抓到，而不只是看最终值对不对。
     """
 
-    def __init__(self, readings=None, responses=None, block=None):
+    def __init__(self, readings=None, responses=None, block=None,
+                 fail_writes: int = 0, fail_read_bytes: bool = False):
         self.resource = "fake:3458a"
         self.calls: list[tuple[str, object]] = []
         self.writes: list[str] = []
@@ -79,6 +80,8 @@ class FakeTransport:
         self._readings = list(readings or [])
         self._responses = dict(responses or {})
         self._block = bytes(block or b"")
+        self._fail_writes = int(fail_writes)     # 前 K 次 write 抛 TransportError（模拟"表还在流数据"）
+        self._fail_read_bytes = bool(fail_read_bytes)   # read_bytes 抛错（模拟突发回读失败）
 
     # -- 接口 --
     def open(self):
@@ -91,6 +94,10 @@ class FakeTransport:
         self.calls.append(("close", None))
 
     def write(self, cmd):
+        if self._fail_writes > 0:
+            self._fail_writes -= 1
+            self.calls.append(("write", f"FAIL:{cmd}"))
+            raise TransportError(f"模拟写超时（表可能还在流数据）: {cmd}")
         self.calls.append(("write", cmd))
         self.writes.append(cmd)
 
@@ -99,7 +106,9 @@ class FakeTransport:
         return self._readings.pop(0) if self._readings else ""
 
     def read_bytes(self, count, timeout_s=None):
-        self.calls.append(("read_bytes", count))
+        self.calls.append(("read_bytes", (count, timeout_s)))
+        if self._fail_read_bytes:
+            raise TransportError(f"模拟突发回读失败（期望 {count} 字节）")
         return self._block[:count]
 
     def query(self, cmd, timeout_s=None):
@@ -350,8 +359,10 @@ def main() -> int:
     check("burst cleans up and restores (TARM/TRIG HOLD + PRESET NORM)",
           C.TARM_HOLD in tail and C.TRIG_HOLD in tail and C.PRESET_NORM in tail,
           f"tail={tail}")
-    check("reads a 2n+2 byte block", transport.count("read_bytes", 2 * len(raw_values) + 2) == 1,
-          transport.calls[-2:])
+    check("reads a 2n+2 byte block",
+          any(name == "read_bytes" and arg[0] == 2 * len(raw_values) + 2
+              for name, arg in transport.calls),
+          [arg for name, arg in transport.calls if name == "read_bytes"])
     dmm.close()
 
     dmm, _ = connected(responses={C.ISCALE_Q: "1E-7"}, block=b"\x00" * 4)
@@ -525,6 +536,79 @@ def main() -> int:
         check("连接失败返回 hint（驱动预检查结论）", False, f"{type(exc).__name__}: {exc}")
     finally:
         dc.check_gpib_driver = real_check               # type: ignore[assignment]
+
+    total = len(checks)
+    # 真实场景：同一台表被别的进程/MCP 会话占用 → 库必须**明确拒绝**而不是并发串台。
+    # 这里把 session_lock.touch 换成"总是返回一个他人占用"，验证拒绝逻辑与提示文案。
+    import common.session_lock as sl
+    real_touch, real_release = sl.touch, sl.release
+    sl.touch = lambda *a, **k: {"holders": [{"pid": 999999, "kind": "other-script",
+                                             "host": "FAKE", "started": 1.0}]}
+    sl.release = lambda *a, **k: None
+    try:
+        guarded = DMM3458A("GPIB0::9::INSTR", timeout_s=5.0)   # 不 open，只测 connect 前置检查
+        try:
+            guarded.connect()
+            check("busy guard rejects concurrent session", False, "没有拒绝")
+        except Exception as exc:                          # noqa: BLE001
+            msg = str(exc)
+            check("busy guard rejects concurrent session",
+                  "占用" in msg and "force=True" in msg, msg[:110])
+        check("busy guard exposes holders list",
+              bool(guarded.holders) and guarded.holders[0].get("pid") == 999999,
+              guarded.holders)
+    finally:
+        sl.touch, sl.release = real_touch, real_release
+
+    print("\nS16 burst robustness (offline: fault injection, no device I/O)", flush=True)
+    # 现场故障（2026-09-23）：MCP 里一次 burst 卡住 71s+ 并握着设备锁 → 后续调用全堵。
+    # 三条防线各自要有用例：①写超时自动恢复重试 ②读失败也必须收尾+恢复 ③超时预算按 n×间隔算。
+    block = b"\x00\x01" * 200      # 足够 n=100 的 SINT 块（2n+2 = 202 字节）
+    t1 = FakeTransport(block=block, responses={C.ISCALE_Q: "1.0"}, fail_writes=1)
+    d1 = DMM3458A(transport=t1)
+    d1._connected = True
+    res1 = d1.read_burst(5, sample_interval_s=1e-4, dcv_range=0.1)
+    check("burst retries a timed-out write after recovery",
+          len(res1["values"]) == 5 and any(name == "ifc" for name, _ in t1.calls),
+          f"values={len(res1['values'])} ifc_called={any(n == 'ifc' for n, _ in t1.calls)}")
+
+    t2 = FakeTransport(block=block, responses={C.ISCALE_Q: "1.0"}, fail_read_bytes=True)
+    d2 = DMM3458A(transport=t2)
+    d2._connected = True
+    try:
+        d2.read_burst(5, sample_interval_s=1e-4, dcv_range=0.1)
+        check("failed burst still cleans up + restores (finally path)", False, "没有抛错")
+    except Exception:                                     # noqa: BLE001
+        check("failed burst still cleans up + restores (finally path)",
+              C.TARM_HOLD in t2.writes and C.TRIG_HOLD in t2.writes
+              and C.PRESET_NORM in t2.writes,
+              [w for w in t2.writes if w in (C.TARM_HOLD, C.TRIG_HOLD, C.PRESET_NORM)])
+
+    # ③ 超时预算 = clamp(10 + 3×n×间隔, 10, 180)：不再吃 120 s 通用默认
+    t3 = FakeTransport(block=block, responses={C.ISCALE_Q: "1.0"})
+    d3 = DMM3458A(transport=t3)
+    d3._connected = True
+    res3 = d3.read_burst(100, sample_interval_s=1e-4, dcv_range=0.1)
+    budget = res3["summary"]["read_timeout_s"]
+    rb = [a for n, a in t3.calls if n == "read_bytes"]
+    check("burst timeout budget derived from n x interval",
+          abs(budget - (10.0 + 3 * 100 * 1e-4)) < 1e-6 and rb and rb[0][1] == budget,
+          f"budget={budget} read_bytes_arg={rb[:1]}")
+
+    print("\nS17 read_series: one session, N points (offline, fake transport)", flush=True)
+    t4 = FakeTransport(readings=["1.0", "2.0", "3.0"])
+    d4 = DMM3458A(transport=t4)
+    d4._connected = True
+    out4 = d4.read_series(3, interval_s=None)
+    check("read_series returns per-point values + stats + duration",
+          out4["values"] == [1.0, 2.0, 3.0] and out4["summary"]["n"] == 3
+          and out4["summary"]["mean"] == 2.0 and out4["summary"]["duration_s"] >= 0
+          and len(out4["timestamps"]) == 3,
+          f"values={out4['values']} n/mean/stddev="
+          f"{out4['summary']['n']}/{out4['summary']['mean']}/{out4['summary']['stddev']}")
+    check("read_series uses one TARM SGL,1 per point (no reconnect)",
+          sum(1 for n, a in t4.calls if n == "query" and a == C.TARM_SGL_1) == 3,
+          f"tarm_calls={sum(1 for n, a in t4.calls if n == 'query' and a == C.TARM_SGL_1)}")
 
     total = len(checks)
     passed = total - len(fails)

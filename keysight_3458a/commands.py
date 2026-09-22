@@ -134,6 +134,7 @@ MFORMAT_SINT = "MFORMAT SINT"    # [SAMPLE] L45 —— 内存格式 = 2 字节�
 OFORMAT_SINT = "OFORMAT SINT"    # [SAMPLE] L46 —— 输出格式 = 2 字节有符号整数
 MEM_OFF = "MEM OFF"              # [SAMPLE] L49 —— 关读数内存（直接走总线，不存表内）
 TIMER = "TIMER"                  # [SAMPLE] L48 —— 参数 = 采样间隔（s）
+TIMER_Q = "TIMER?"               # [MANUAL] p.256：查询当前采样间隔（突发超时预算要用）
 APER = "APER"                    # [SAMPLE] L47；[SAMPLE2] L52 —— 参数 = 孔径时间（s）
 NRDGS = "NRDGS"                  # [SAMPLE] L55 —— 参数 = 一次触发的读数个数
 ISCALE_Q = "ISCALE?"             # [SAMPLE] L59 —— 查询 SINT 读数的换算因子（V/LSB）
@@ -158,6 +159,11 @@ DEFAULT_SAMPLE_INTERVAL_S = 10e-6
 # 提醒：SINT 时一次要读 2n+2 字节，n=16.7M ≈ 33 MB 且按 100k rdg/s 约需 3 分钟——
 # 库层不再自设 1e6 的小上限，但调用方要为内存/时间负责（MCP 工具只回摘要、全量走 CSV）。
 BURST_MAX_READINGS = NRDGS_MAX
+# 突发回读超时预算：`timeout = clamp(10s + 3 × n × 采样间隔, 10s, 180s)`。
+# 现场教训（2026-09-23）：MCP 进程里一次 burst 卡住 71s+ 并**握着设备锁**，
+# 把后续所有调用堵死——根因是回读用了通用超时（120s）且异常路径没收尾。
+BURST_TIMEOUT_MIN_S = 10.0
+BURST_TIMEOUT_MAX_S = 180.0
 
 
 def fmt_num(value: float) -> str:

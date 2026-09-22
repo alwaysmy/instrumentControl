@@ -94,7 +94,7 @@ MHO900 示波器（MHO984D 实测基准）：
 DG832 信号源（RIGOL DG800 系列）：
   **强制流程（顺序不可变）**：dg_status 查现状 → dg_protect 开电压保护（state=True 且 high>low）
     → dg_set_wave/dg_set_param 设参数 → dg_output(on,confirm=True) 开输出 → dg_check_error
-  看现状 → dg_status（波形/频率/幅度/偏移/输出/负载）
+  看现状 → dg_status（波形/频率/幅度/偏移/输出/负载）；查保护配置 → dg_get_protect(ch)
   设波形 → dg_set_wave（省略参数=保持当前值；amp/offset 需已开保护，否则 protect_required）
   单参数 → dg_set_param（freq/amp/offset/phase/load；设备钳制时返回 note）
   DC 电平 → dg_set_dc（返回切换前快照 restore，切回时**显式**传参）

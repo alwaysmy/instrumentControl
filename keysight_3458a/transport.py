@@ -640,8 +640,6 @@ def prepare_keysight_visa() -> Optional[str]:
     suite_bin = r"C:\Program Files\Keysight\IO Libraries Suite\bin"
     if os.path.isdir(suite_bin):
         try:
-            import ctypes
-
             k32 = ctypes.windll.kernel32
             k32.SetDllDirectoryW.argtypes = [ctypes.c_wchar_p]
             k32.SetDllDirectoryW.restype = ctypes.c_int

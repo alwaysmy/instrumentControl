@@ -211,7 +211,7 @@ AI/Agent 操作仪器必须遵守以下规范。
 - 操作手册：`docs/AI_OPERATION_GUIDE.md`（API/固件特性/闭环范例）
 - **实测记录**：`docs/TEST_RECORDS.md`（历轮实测时间线；README 只放项目定位与用法）
 - 设备经验：`dh1766_control/docs/EXPERIENCE.md`（时序/固件差异/上电过渡态）
-- MCP 服务器：`mcp_instruments/server.py`（65 工具 = 61 设备专用 + 3 通用护栏 + 1 故障兜底
+- MCP 服务器：`mcp_instruments/server.py`（66 工具 = 62 设备专用 + 3 通用护栏 + 1 故障兜底
   instr_discover/instr_query/instr_write/usb_reset——新设备零代码接入；zcode 用户级 config 已注册
   `instruments`；工具选择/参数语义/安全门见 skill `instrument-mcp`）
 

@@ -72,6 +72,15 @@ MCP server：`mcp_instruments/server.py`（65 工具 = 61 专用 + 3 通用护�
       GPIB 电缆两端是否插牢、面板 GPIB 地址是否=9（**这一层是物理问题，软件无能为力**）
     * `[4]` viRead **有数据** → 表被留在流数据 → 用 `--recover`（文档化恢复，不发 RESET）
     * `[5] 身份层`（`--id`）`ID?` -> `HP3458A` 才算**通路完全正常**
+    * ⚠ `[5]` 若 `ID?` **回的不是 `HP3458A`，而是一个电压读数**（比方 `4.99E-01`）——
+      说明表在"**只讲不听**"，两步处置（**顺序不要颠倒**）：
+      ① **先重新拔插 82357B 适配器**（最常见成因：适配器/接口卡死把缓冲的读数当响应吐；
+         实测拔插后 `ID?` 立刻恢复）→ 重新跑 `preflight --id`；
+      ② 若仍是这样 → 让用户到面板操作：**`Address` → `9` → `Enter`**（退出 Talk Only；
+         等效可按下 `Reset` 键，但 Reset 会一并回到开机测量配置）。
+      **这一态无法远程修**：表根本不听命令，`RESET`/IFC 都送不进去（手册 p.159：
+      "To remove the multimeter from Talk Only mode, press the Reset key or specify an
+      address other than 31"）——别反复试 `ks3458a_unstick`。
     **重启后的标准动作（2026-09-23 实测有效）**：重启 → 若仍连不上：**拔插适配器 + 打开
     Connection Expert** → 等初始化完 → `python -m keysight_3458a.preflight --id` 确认。
 
@@ -124,7 +133,8 @@ MCP server：`mcp_instruments/server.py`（65 工具 = 61 专用 + 3 通用护�
            2026-09-23 实测：拔插后 `viRead` 变回"无数据"，`ID?` 立刻回 `HP3458A`。
         ② **表处于 Talk Only 模式**（前面板 `ADDRESS`=31；手册 p.159：`TALK` 灯亮、
            地址存连续内存、**断电不丢**）：此时表**根本不听**，`RESET`/IFC 都送不进去——
-           **只能前面板**：按 `Reset` 键，或 **`Address` → 非 31 的值（如 9）→ `Enter`**。
+           **只能前面板**：**`Address` → `9` → `Enter`**（退出 Talk Only，保留测量设定），
+           或按 `Reset` 键（会一并回到开机测量配置）。
         ⚠ 别指望远程救 Talk Only：`ks3458a_unstick`（IFC+RESET）只对"能听但一直吐"
         （free-run）有效；`preflight --id` 会识别这一态并直接告诉你按哪个键。
 

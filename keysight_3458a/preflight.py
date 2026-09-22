@@ -164,8 +164,11 @@ def layer_session_and_answer(resource: str, do_id: bool, do_recover: bool) -> in
                     say("            => **疑似 Talk Only 模式（只讲不听）**：手册 p.159 —— "
                         "前面板 ADDRESS 被设成 31 时进入该模式（TALK 指示灯亮），"
                         "表只输出读数、不理命令；**地址存连续内存，断电不丢**。")
-                    say("               处置（前面板）：把 **ADDRESS 改成 31 以外的值**（如 9）；"
-                        "或按 Reset 键（Reset 会一并回到开机测量配置）")
+                    say("               处置（**前面板，远程救不了**）：**`Address` → `9` → `Enter`**"
+                        "（退出 Talk Only，保留测量设定）；或按 `Reset` 键"
+                        "（会一并回到开机测量配置）。")
+                    say("               注：先试**重新拔插 82357B**——适配器卡死也会造成"
+                        "同样症状，实测拔插即可恢复。")
                     return 5
                 say("            => 有响应但不像 3458A，注意地址/设备是否搞错")
                 return 1

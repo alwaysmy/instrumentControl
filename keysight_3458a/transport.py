@@ -786,6 +786,62 @@ class KeysightVisaTransport:
         if status < 0:
             raise TransportError(f"{what} 失败: {status} {self._desc(status)}")
 
+    def _diag(self) -> str:
+        """进程级诊断快照（排查"同机 CLI 正常、MCP 进程 AV"这类差异用）。
+
+        重点记录**每个相关 DLL 的实际加载路径**（`GetModuleFileNameW`）：`ktvisa32.dll`
+        会内部去加载 `visa32.dll`，若进程里先被别的组件加载了**系统 IVI 壳**，两者会串味
+        （实测：pyvisa 默认后端 + Keysight 通路同进程 → `INV_OBJECT`/访问违例）。
+        """
+        import os
+        import sys
+
+        def mod_path(name: str) -> str:
+            try:
+                k32 = ctypes.windll.kernel32
+                k32.GetModuleHandleW.argtypes = [ctypes.c_wchar_p]
+                k32.GetModuleHandleW.restype = ctypes.c_void_p
+                h = k32.GetModuleHandleW(name)
+                if not h:
+                    return "未加载"
+                buf = ctypes.create_unicode_buffer(512)
+                k32.GetModuleFileNameW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p,
+                                                   ctypes.c_uint]
+                k32.GetModuleFileNameW(h, buf, 512)
+                return buf.value
+            except Exception:                                 # noqa: BLE001
+                return "?"
+
+        return " | ".join([
+            f"dll={getattr(self, '_dll_path', None)}",
+            f"rm={int(getattr(self._rm, 'value', 0) or 0)}",
+            f"ses={int(getattr(self._session, 'value', 0) or 0)}",
+            f"cwd={os.getcwd()}",
+            f"exe={sys.executable}",
+            f"py={sys.version.split()[0]}",
+            f"VXIPNPPATH={os.environ.get('VXIPNPPATH')!r}",
+            f"preloaded={len(_PRELOADED_DLLS)}",
+            f"dll_dirs={len(_DLL_DIR_HANDLES)}",
+            f"visa32={mod_path('visa32.dll')}",
+            f"ktvisa32={mod_path('ktvisa32.dll')}",
+            f"ioGPIB={mod_path('ioGPIB.dll')}",
+        ])
+
+    def _call_guarded(self, step: str, fn, *args):
+        """调一条 VISA/ctypes 函数，**出错时报出具体步骤与 DLL**。
+
+        为什么需要：`OSError: exception: access violation reading 0x...` 这类崩溃只告诉我们
+        "某个 ctypes 调用炸了"，无法定位是哪条（2026-09-23 排查 MCP 侧 AV 时卡在这里）。
+        现在异常里会带上步骤名、DLL 路径和**进程诊断快照**（`_diag()`）。
+        """
+        self._step = step
+        try:
+            return fn(*args)
+        except OSError as exc:                                # noqa: PERF203
+            raise TransportError(
+                f"{step} @ {getattr(self, '_dll_path', '?')}: {exc}\n  [{self._diag()}]"
+            ) from exc
+
     # -- 生命周期 ------------------------------------------------------------
     def open(self) -> "KeysightVisaTransport":
         if self._session.value:
@@ -793,12 +849,18 @@ class KeysightVisaTransport:
         dll = self.core_dll or keysight_visa_core()
         if not dll:
             raise TransportError("未找到 ktvisa32.dll（Keysight VISA 核心）")
-        self._lib = ctypes.WinDLL(dll)
+        self._dll_path = str(dll)
+        try:
+            self._lib = ctypes.WinDLL(dll)
+        except OSError as exc:
+            raise TransportError(f"WinDLL({dll}) 加载失败: {exc}") from exc
         self._bind()
-        self._check(self._viOpenDefaultRM(ctypes.byref(self._rm)), "viOpenDefaultRM")
+        self._check(self._call_guarded("viOpenDefaultRM", self._viOpenDefaultRM,
+                                       ctypes.byref(self._rm)), "viOpenDefaultRM")
         ses = ctypes.c_uint(0)
-        self._check(self._viOpen(self._rm, self.resource.encode("ascii"), 0, 0,
-                                 ctypes.byref(ses)), f"viOpen({self.resource})")
+        self._check(self._call_guarded(f"viOpen({self.resource})", self._viOpen,
+                                       self._rm, self.resource.encode("ascii"), 0, 0,
+                                       ctypes.byref(ses)), f"viOpen({self.resource})")
         self._session = ses
         self.set_timeout(self.timeout_s)
         # 3458A 用 LF 结尾：让 viRead 以 '\n' 为终止符
@@ -807,7 +869,10 @@ class KeysightVisaTransport:
             self._viSetAttribute(self._session, _VI_ATTR_TERMCHAR_EN, 1)
         except Exception:
             pass
-        self.clear()
+        try:
+            self.clear()                                    # viClear（内部也走 guard）
+        except TransportError:
+            raise
         time.sleep(SETTLE_S)
         return self
 
@@ -853,7 +918,9 @@ class KeysightVisaTransport:
         if not data.endswith(b"\n"):
             data += b"\n"
         n = ctypes.c_ulong(0)
-        self._check(self._viWrite(s, data, len(data), ctypes.byref(n)), f"viWrite({cmd!r})")
+        self._check(self._call_guarded(f"viWrite({cmd!r})", self._viWrite,
+                                       s, data, len(data), ctypes.byref(n)),
+                    f"viWrite({cmd!r})")
         return int(n.value)
 
     def read(self, timeout_s: Optional[float] = None) -> str:
@@ -865,7 +932,8 @@ class KeysightVisaTransport:
             while True:
                 buf = ctypes.create_string_buffer(self.chunk_size)
                 n = ctypes.c_ulong(0)
-                st = self._viRead(s, buf, self.chunk_size, ctypes.byref(n))
+                st = self._call_guarded("viRead", self._viRead,
+                                        s, buf, self.chunk_size, ctypes.byref(n))
                 if n.value:
                     chunks.append(buf.raw[:n.value])
                 data = b"".join(chunks)

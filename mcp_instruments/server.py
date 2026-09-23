@@ -643,7 +643,23 @@ def _ks3458a(resource: str | None = None, timeout_s: float = 30.0) -> "DMM3458A"
 
     res = _resolve("ks3458a", resource)
     _LAST_RESOLVED["ks3458a"] = res  # 供返回体回填本次实际地址
-    d = DMM3458A(res, timeout_s=timeout_s, reset_on_open=False)
+    # **默认走进程外 worker**（2026-09-23 实测结论）：MCP 是长驻进程，别的仪器工具用 pyvisa
+    # 会把**系统 VISA**（System32\visa32.dll，IVI 壳）加载进来，此后本库的 Keysight VISA 通路
+    # 会串味——轻则 `viWrite` `VI_ERROR_INV_OBJECT`，重则 `viOpen` 访问违例（实测 MCP 里就是
+    # 后者）。子进程只加载 Keysight 栈 ⇒ 干净；且卡在 ioGPIB 内时父进程能 kill 回收句柄。
+    # 需要回退进程内（排障用）：设 `INSTRUMENT_KS3458A_WORKER=0`。
+    d = None
+    if os.environ.get("INSTRUMENT_KS3458A_WORKER", "1").lower() not in ("0", "false", "no"):
+        try:
+            from keysight_3458a.remote import RemoteDMM
+
+            d = RemoteDMM(res, timeout_s=timeout_s,
+                          deadline_s=min(240.0, max(30.0, float(timeout_s) * 2)))
+        except Exception as exc:                    # noqa: BLE001
+            sys.stderr.write(f"[3458A] worker 不可用，回退进程内：{exc}\n")
+            d = None
+    if d is None:
+        d = DMM3458A(res, timeout_s=timeout_s, reset_on_open=False)
     try:
         d.connect()
     except Exception:

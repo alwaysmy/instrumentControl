@@ -49,6 +49,30 @@ python mcp_instruments/config_cli.py set ks3458a "visa://<host>/GPIB0::9::INSTR"
 $env:INSTRUMENT_KS3458A_RES = "sicl:gpib0,9"
 ```
 
+## 进程外 worker（`remote.RemoteDMM` / `worker.py`）——**MCP 默认走这条**
+
+```python
+from keysight_3458a.remote import RemoteDMM
+with RemoteDMM("GPIB0::9::INSTR") as d:
+    print(d.idn(), d.read_dcv())
+```
+
+两个必须分进程的理由（2026-09-23 实测，详见 `docs/3458a_wedge_postmortem_20260923.md` §10）：
+
+1. **两套 VISA 不能同进程**：MCP 长驻进程里别的仪器工具会用 pyvisa 加载**系统 VISA**
+   （`C:\Windows\system32\visa32.dll`，IVI 壳）；此后本库的 Keysight ctypes 通路会串味——
+   `viWrite` 报 `VI_ERROR_INV_OBJECT`，在 MCP 里更严重：`viOpen` **访问违例**
+   （`access violation reading 0x8`）。两种加载顺序都坏，只能分进程。
+2. **卡死可 kill**：`viOpen/viRead/viWrite` 若卡在 `ioGPIB` 内，同进程无法中断
+   （超时/`finally` 都执行不到）；子进程超过 `deadline_s` 无响应 → `kill()` →
+   Windows 强制回收句柄 → 下次调用自动重启 worker。
+
+接口与 `DMM3458A` **同名**（`idn/state/read_dcv/read_series/read_burst/configure_dcv/
+set_autorange/configure_acv/reset/unstick/...`），白名单见 `worker.ALLOWED_METHODS`；
+协议是一行一条 JSON（`{"op":"call","method":...,"kwargs":{...}}`）。
+回退开关：`INSTRUMENT_KS3458A_WORKER=0`（排障用，会把上面两个问题带回来）。
+用例：`TEST_SCRIPTS/ks3458a/verify_worker_isolation.py`（6/6，含硬截止 kill 与自动重启）。
+
 ## 连通前的分层诊断（连不上时先跑这个，别猜地址）
 
 ```bash

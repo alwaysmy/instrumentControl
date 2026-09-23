@@ -134,7 +134,33 @@ ERRSTR?  -> '4.999982055E-01'
 
 | # | 事项 | 状态 | 说明 |
 |---|---|---|---|
-| A | **GPIB I/O 放进可杀死的 worker 子进程**（父进程硬截止 → kill → 回收句柄 → 重启 worker） | **P0，未做** | "DLL 内卡死"唯一工程解；顺带解决"长采集独占 MCP 单 worker"。见 §4.1 |
+| A | **GPIB I/O 放进可杀死的 worker 子进程** | ✅ **已实现（2026-09-23，3458A）** | `keysight_3458a/worker.py` + `remote.RemoteDMM`：MCP 的 `ks3458a_*` 默认走进程外 worker（`INSTRUMENT_KS3458A_WORKER=0` 可回退进程内）。用例 `TEST_SCRIPTS/ks3458a/verify_worker_isolation.py` 6/6：硬截止 → kill → 句柄回收 → 下次调用自动重启。**详见 §10** |
 | B | **`usb_reset` 支持 82357B 适配器节点**（PnP 重枚举，作为"卡死后不拔插"的兜底） | **暂缓（TODO）** | 用户判断"好像没啥用"：本次实测 `pnputil /restart-device` 直接要求**重启整机**，PnP 层重置对"接口卡死"未必有效；**等真机验证过再决定是否实现** |
-| C | 其余真机验收：burst DINT、ACV、其它档位/量程 | 待做 | **建议等 A 落地再跑 burst**（burst 正是本次卡死的触发操作） |
+| C | 其余真机验收：burst DINT、ACV、其它档位/量程 | 待做 | burst 现在跑在可 kill 的 worker 里，风险已降（卡死不再拖垮 MCP），但仍建议先在专用会话试 |
 | D | `preflight` 增加"自动区分 Talk Only / 适配器卡死"的更硬判据 | 待做 | 目前靠"`ID?` 是否返回读数"+ 用户看 `TALK` 灯；ADDRESS 无法远程查询（前面板专属） |
+
+## 10. MCP 侧"`viOpen` 访问违例"的真因 = 同进程两套 VISA（2026-09-23 定位并修复）
+
+### 现象与定位过程
+
+| 观测 | 结论 |
+|---|---|
+| CLI（`preflight --id`）一切正常；**MCP 里 `ks3458a_*` 全部报** `error_type=connection`、`access violation reading 0x0000000000000008` | 不是设备/适配器问题（同机、同一时刻 CLI 能读） |
+| 给传输层加**步骤追踪**后报出：`viOpen(GPIB0::9::INSTR) @ ...\ktvisa32.dll: access violation` | 崩在 `viOpen`，且 DLL 路径正确 |
+| 诊断快照（`_diag()`）对比：MCP 进程里 **`visa32=C:\Windows\system32\visa32.dll`、`ktvisa32=C:\Windows\system32\ktvisa32.dll`**；CLI 进程里系统 `visa32` **根本没加载** | MCP 长驻进程里被**别的仪器工具（pyvisa）**带进了**系统 VISA（IVI 壳）** |
+| 复现实验：同进程先 `pyvisa.ResourceManager()` 再用 Keysight 通路 → `viOpen` 通过但 `viWrite` 报 `VI_ERROR_INV_OBJECT`；**两种加载顺序（先 Keysight / 先系统）都坏** | 两套 VISA 同进程**必然串味**，无法靠顺序规避 |
+| 排除项：cwd、`VXIPNPPATH`、线程（主/普通/线程池）、`import server`（pyvisa 惰性）、DLL 路径选择均**不是**原因 | 唯一变量就是"进程里是否装了两套 VISA" |
+
+### 修复
+
+**把 3458A 的 I/O 挪进独立进程**（`keysight_3458a/worker.py`；父侧代理 `remote.RemoteDMM`）：
+
+* 子进程只加载 Keysight 一代 VISA 栈 ⇒ 不再串味（MCP 侧 `ks3458a_status` 恢复 `ok:true`）；
+* 顺带拿到"卡死可 kill"：调用超过 `deadline_s` 无响应 → `kill()` 子进程 → Windows 强制回收句柄；
+* 子进程**不登记会话锁**（`INSTRUMENT_NO_SESSION_LOCK=1`），否则父进程会把自己人误判成"另一进程在用"；
+* 回退开关：`INSTRUMENT_KS3458A_WORKER=0`（排障用；此时回到进程内，会把上面的老毛病带回来）。
+
+### 教训（已写进 skill）
+
+* **同一进程不要混用两套 VISA**（pyvisa 的系统栈 + Keysight ctypes 通路）——这不是"顺序问题"，是必坏；
+* 长驻服务里跑"会加载第三方驱动的库"时，**默认就该进程隔离**：既躲 DLL 串味，也躲不可中断的卡死。

@@ -19,6 +19,7 @@ RESET 仪表。要重置另走显式 `reset()`（MCP `ks3458a_reset` 需 confirm
 """
 from __future__ import annotations
 
+import os
 import re
 import time
 from typing import Optional
@@ -146,7 +147,13 @@ class DMM3458A:
         锁是**辅助设施**：任何异常都降级为空列表，绝不让它挡住正常使用。
         意义：脚本用库直连时也能被 MCP/AI 侧看到；反之亦然——避免"同一台表两个会话
         静默串台"（实测过：互相读到对方的响应）。
+
+        ⚠ 进程外 worker（`keysight_3458a.worker`）里**不要**再登记：父进程（MCP）已经登记过，
+        子进程再登记会让父进程把自己人看成"另一个进程在用"（实测产生假告警）。
+        父进程通过环境变量 `INSTRUMENT_NO_SESSION_LOCK=1` 告知子进程跳过。
         """
+        if str(os.environ.get("INSTRUMENT_NO_SESSION_LOCK", "")).strip() in ("1", "true", "yes"):
+            return []
         try:
             from common import session_lock
 

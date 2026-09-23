@@ -104,9 +104,17 @@ MCP server：`mcp_instruments/server.py`（65 工具 = 61 专用 + 3 通用护�
       实测若 `TRIG?`=4(HOLD)，`TARM SGL,1` **永远不出数**（20 s 超时），补 `TRIG AUTO`
       后 0.43 s/次（NPLC=10）。这三条**不改档位/NPLC/功能**，所以是安全的读前准备
     * ⚠ **`ks3458a_burst` 是高风险操作**：2026-09-23 的适配器卡死就发生在一个 burst 上
-      （DLL 内卡住 → 接口被占 → 后续所有调用失败）。在"worker 子进程隔离"落地前
-      （见 `docs/3458a_wedge_postmortem_20260923.md` §9 TODO），burst 请在**专用会话**里做，
-      跑完就 `preflight --id` 验一次；一旦卡住按上面的 Talk Only/拔插两条路处置
+      （DLL 内卡住 → 接口被占 → 后续所有调用失败）。现在 burst 跑在**可 kill 的 worker
+      子进程**里（见下条），卡死不再拖垮 MCP，但仍建议在**专用会话**里做，跑完 `preflight --id` 验一次
+    * ⚙ **3458A 的 I/O 默认跑在独立子进程里**（`keysight_3458a/worker.py` + `remote.RemoteDMM`，
+      回退开关 `INSTRUMENT_KS3458A_WORKER=0`）。两个原因，**别把它改回进程内**：
+      ① MCP 长驻进程里别的仪器工具会用 pyvisa 加载**系统 VISA**（`System32\visa32.dll` IVI 壳），
+      与我们的 Keysight ctypes 通路**同进程必串味**——实测 `viWrite` 报 `VI_ERROR_INV_OBJECT`，
+      在 MCP 里更严重：`viOpen` **访问违例**（`access violation reading 0x8`），此时 CLI 同刻却正常；
+      ② 卡在 `ioGPIB` 内的调用同进程无法中断，子进程超 `deadline` 直接 `kill` → 句柄回收 → 下次自动重启
+    * 若 `ks3458a_*` 报 **`access violation`** 或 **`VI_ERROR_INV_OBJECT`**：说明这条进程外隔离
+      失效了（被关了 worker 开关 / worker 起不来）→ 查 `INSTRUMENT_KS3458A_WORKER` 是否为 `1`、
+      看清 stderr 里的 `[3458A worker]` 记录，然后重载 MCP
     * 这些动作会打断**整条 GPIB 总线**上正在进行的采集（共享实验台注意）；本机 GPIB0
       上只有这台 3458A
 

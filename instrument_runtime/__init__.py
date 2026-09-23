@@ -7,7 +7,7 @@
         与进程内设备锁）——这些**不依赖 MCP wrapper**，供 compact profile、CLI、
         代码运行时共用。依赖仅标准库，由 verify_broker_offline.py 断言。
 """
-from . import audit, broker, policy, verify
+from . import audit, broker, policy, validate, verify
 from .broker import (
     DEVICE_LOCK,
     ScpiDecision,
@@ -73,5 +73,6 @@ __all__ = [
     "safety_for_tool",
     "split_tool_name",
     "unclassified",
+    "validate",
     "verify",
 ]

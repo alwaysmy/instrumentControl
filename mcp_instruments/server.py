@@ -96,6 +96,43 @@ def _env_float(name: str, default: float) -> float:
 _CALL_BUDGET_S = _env_float("INSTRUMENT_CALL_BUDGET_S", 150.0)
 _LOCK_WAIT_S = _env_float("INSTRUMENT_LOCK_WAIT_S", 30.0)
 
+
+# ── MCP profile（2026-09-23，方案 C 阶段 3）───────────────────────────────────
+# legacy  ：暴露全部 68 个工具（现状；兼容旧客户端与既有 skill/文档里的工具名）
+# compact ：只暴露 4 个按需发现工具（instr_devices / instr_search / instr_describe /
+#           instr_call），把"有哪些能力"变成**按需数据**，省掉约 19.8k token 的
+#           常驻工具定义（实测：68 个定义占该 harness 静态注入总量的 44%）。
+#
+# **两种 profile 都完整登记 registry**，且都走同一个执行器——因此 compact 下的
+# `instr_call(op, args)` 与 legacy 下的同名工具**共用一条执行路径**，
+# 不存在"换 profile 后超时/并发语义变了"的隐患。安全护栏也不经前端：
+# 黑名单在 policy/操作实现层，DG832 保护联锁在库里，绕过前端同样跳不过。
+#
+# 取值优先级：命令行 `--profile=<legacy|compact>` > 环境变量 INSTRUMENT_MCP_PROFILE
+# > 默认 legacy。**默认保持 legacy**——阶段 5 才在拿到对比数据后翻转默认值。
+_PROFILES = ("legacy", "compact")
+
+
+def _resolve_profile(argv: list[str]) -> str:
+    """解析 profile；非法值回退 legacy 并告警（不因为写错一个环境变量就起不来）。"""
+    chosen = ""
+    for i, a in enumerate(argv):
+        if a.startswith("--profile="):
+            chosen = a.split("=", 1)[1]
+        elif a == "--profile" and i + 1 < len(argv):
+            chosen = argv[i + 1]
+    if not chosen:
+        chosen = os.environ.get("INSTRUMENT_MCP_PROFILE", "")
+    chosen = (chosen or "legacy").strip().lower()
+    if chosen not in _PROFILES:
+        print(f"[instrumentControl] unknown profile {chosen!r}; falling back to legacy "
+              f"(expected one of {list(_PROFILES)})", file=sys.stderr, flush=True)
+        return "legacy"
+    return chosen
+
+
+_PROFILE = _resolve_profile(sys.argv[1:])
+
 # 设备专用工具返回体里回填"本次实际用的地址"：模型名 → 解析层的 kind
 _MODEL_KIND = {"SDS": "sds", "SDG": "sdg", "DMM": "dmm", "DHO": "dho", "MHO": "mho",
                "DG832": "dg", "DH1766": "psu", "3458A": "ks3458a"}
@@ -477,46 +514,84 @@ def device_tool(budget_s=None):
             return await _executor().run(functools.partial(fn, *args, **kwargs),
                                          budget_s, label=fn.__name__,
                                          args=args, kwargs=kwargs)
-        _preserve_signature(wrapper, fn)   # 保 50 个工具的入参 schema 不变
-        mcp.tool()(wrapper)
-        _register_runtime_operation(fn, budget_s)
+        _preserve_signature(wrapper, fn)   # 保工具的入参 schema 不变
+        if _PROFILE == "legacy":
+            mcp.tool()(wrapper)
+        _register_runtime_operation(fn, budget_s, wrapper)
         return fn
     return deco
 
 
-def _register_runtime_operation(fn, budget_s) -> None:
-    """把刚注册的 MCP 工具登记进 `instrument_runtime`（阶段 1：零行为变更）。
+def _register_runtime_operation(fn, budget_s, wrapper) -> None:
+    """把工具登记进 `instrument_runtime`（阶段 1 起；阶段 3 起与 profile 解耦）。
 
-    设计见 docs/gpt_qa/2026-09-23-instrument-gateway-arch.md（方案 C 阶段 1）。
-    两条纪律：
+    设计见 docs/gpt_qa/2026-09-23-instrument-gateway-arch.md。三条纪律：
 
-    * **schema / description 从 FastMCP 生成好的 Tool 对象原样取**，不在 runtime 里
-      按签名重算一遍——重算就等于把 FastMCP 的 schema 规则复制一份，将来必然漂移。
-      取原对象使得"legacy 工具表逐字节不变"是构造保证。
+    * **schema / description 用 FastMCP 自己的 `Tool.from_function` 生成**，不在 runtime
+      里按签名手写一遍——那等于把 FastMCP 的 schema 规则复制一份，将来必然漂移。
+      调用的是 FastMCP 注册工具时用的同一个构造器，所以两种 profile 下 schema 一致。
+    * **legacy 下再与真实注册对象比对**：注册表里的 Tool 若与派生结果不符，说明我对
+      FastMCP 的用法有偏差（compact 会据此下发错误的参数表），直接抛错——宁可服务起不来。
     * **未分类的工具直接报错**（safety_for_tool 抛 KeyError）。宁可服务起不来，也不要
-      一个没被风险分级、没有确认门的工具悄悄上线——本仓的护栏都是这么被误伤事件逼出来的。
+      一个没被风险分级、没有确认门的工具悄悄上线。
 
     requires_confirm 取**函数签名实测值**，与 catalog 的 CONFIRM_TOOLS 复核；两处不一致
     立即抛错（少一道确认门比多一道危险得多）。
     """
+    from mcp.server.fastmcp.tools.base import Tool
+
     from instrument_runtime import device_for_tool, register_operation, safety_for_tool
 
-    tool = mcp._tool_manager.get_tool(fn.__name__)
-    if tool is None:
-        raise RuntimeError(
-            f"tool {fn.__name__!r} was not found in the FastMCP registry right after "
-            f"registration; instrument_runtime cannot record it"
-        )
+    # description **不要自己传**：传了就等于换一套提取口径。实测（2026-09-23）
+    # 用 `inspect.getdoc(fn)` 会与 FastMCP 注册对象的 description 出现漂移
+    # （sds_meas_threshold 第一个报出来），而下面的比对会因此拒绝启动。
+    # 让它自己从 wrapper 的 __doc__ 提取，才与 `mcp.tool()` 的注册路径逐字一致。
+    derived = Tool.from_function(fn=wrapper, name=fn.__name__)
+    if _PROFILE == "legacy":
+        registered = mcp._tool_manager.get_tool(fn.__name__)
+        if registered is None:
+            raise RuntimeError(
+                f"tool {fn.__name__!r} was not found in the FastMCP registry right after "
+                f"registration; instrument_runtime cannot verify it"
+            )
+        if (registered.parameters or {}) != (derived.parameters or {}):
+            raise RuntimeError(
+                f"input schema drift for {fn.__name__!r}: the FastMCP-registered schema "
+                f"differs from Tool.from_function derivation; compact profile would serve a "
+                f"wrong parameter table. Refusing to start."
+            )
+        if (registered.description or "") != (derived.description or ""):
+            raise RuntimeError(
+                f"description drift for {fn.__name__!r}: registered vs derived differ; "
+                f"refusing to start."
+            )
+
     requires_confirm = "confirm" in inspect.signature(fn).parameters
     register_operation(
         tool_name=fn.__name__,
-        description=tool.description or "",
-        schema=tool.parameters or {},
+        description=derived.description or "",
+        schema=derived.parameters or {},
         device=device_for_tool(fn.__name__),
         safety=safety_for_tool(fn.__name__, requires_confirm=requires_confirm),
         budget=budget_s,
         fn=fn,
     )
+
+
+async def _run_operation_by_name(tool_name: str, args: dict) -> str:
+    """compact profile 的执行入口：按工具名跑 registry 里登记的操作。
+
+    **刻意与 `device_tool` 的 wrapper 逐句等价**（同一个 `_executor().run`、
+    同样把 `args=()` / `kwargs=args` 传给预算解析）——compact 下的 `instr_call`
+    因此与 legacy 下调用同名工具走**同一条执行路径**，不会出现"换 profile 后
+    超时/device_busy 语义变了"这类难查的差异。
+    """
+    from instrument_runtime import get_registry
+
+    op = get_registry().require(tool_name)
+    _fix_stdout_once()
+    return await _executor().run(functools.partial(op.fn, **args), op.budget,
+                                 label=op.tool_name, args=(), kwargs=args)
 
 
 def _preserve_signature(wrapper, fn) -> None:
@@ -2470,13 +2545,28 @@ if __name__ == "__main__":
     # runtime registry 覆盖自检（2026-09-23 加，方案 C 阶段 1）：registry 必须与
     # MCP 工具表**一一对应**——少一个（未分类）或多一个（目录残留）都要在启动时报出来。
     # 同口径的离线断言在 TEST_SCRIPTS/common/verify_registry_parity.py。
+    # compact profile：注册 4 个按需发现工具（阶段 3）。必须在 legacy 的 68 个工具
+    # 全部登记进 registry **之后**——compact 工具本身通过 registry 查找与执行操作。
+    if _PROFILE == "compact":
+        try:
+            from compact_tools import register as register_compact_tools
+            from instrument_runtime import get_registry as _get_registry
+
+            register_compact_tools(mcp, registry=_get_registry(),
+                                   run_fn=_run_operation_by_name)
+        except Exception as e:
+            print("[instrumentControl] compact profile registration failed: "
+                  f"{type(e).__name__}: {ascii(e)}",
+                  file=sys.stderr, flush=True)
+            raise
     try:
         from instrument_runtime import get_registry, unclassified
 
         _reg = get_registry()
         _stale, _unclassified = unclassified(_reg.tool_names())
-        print(f"[instrumentControl] startup self-check | runtime registry "
-              f"operations={len(_reg)}, unclassified {len(_unclassified)}, "
+        print(f"[instrumentControl] startup self-check | profile={_PROFILE}, "
+              f"runtime registry operations={len(_reg)}, "
+              f"unclassified {len(_unclassified)}, "
               f"stale catalog entries {len(_stale)}"
               + (f" unclassified={_unclassified}" if _unclassified else "")
               + (f" stale={_stale}" if _stale else ""),

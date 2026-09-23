@@ -287,10 +287,10 @@ CH2 的 −11.99V 是跟踪跟随，不是故障；同时任何远程会话都�
 
 ## 六、已知待办
 
-- **MCP 工具按配置选择性加载**（2026-09-09 调研完成，未实施）：opencode 客户端
-  支持 `tools` 配置 + glob（`"instruments_sds_*": false`，工具名带 server 名前缀
-  `instruments_`）；server 端可用 FastMCP `remove_tool()` 或环境变量条件注册做
-  更彻底的控制（tools/list 就不含）。短期用客户端配置即可（零代码）。
+- ~~MCP 工具按配置选择性加载~~ **已实现（2026-09-23，服务端 profile）**：见「七、runtime 分层与 MCP profile」。
+  早先设想的"用客户端 `tools` 配置过滤"**只在部分客户端成立**——opencode 支持
+  `tools` + glob，而 DSH 的 `dsh-mcp-client` 没有任何工具过滤字段（2026-09-23 查证），
+  故服务端 profile 是多客户端下唯一可行方案。
 - ~~sds_control 波形读取：PREamble DESC 布局不符~~ **已澄清（2026-09-09）**：
   DESC 解析完全正确——`interval`(1ns) 与 `ACQ:SRAT?`(1GSa/s) 一致，FFT 主频与设备
   硬件测量吻合，电压换算 Vpp 与测量值一致。此前"读出全零/interval 不可信"的判断
@@ -322,3 +322,53 @@ CH2 的 −11.99V 是跟踪跟随，不是故障；同时任何远程会话都�
 - 串口探测**子进程隔离**：本进程线程探测会留下卡死线程，导致后续任何 VISA 调用打死
   服务器（2026-09-15 实测）。另：非串口批量识别须**共享单个 ResourceManager**——
   多线程各建 RM 会随机 `VI_ERROR_INV_OBJECT`（`common.discovery.identify_all`）。
+
+## 七、runtime 分层与 MCP profile（2026-09-23）
+
+改仪器能力之前先读本节——它决定新代码该放哪一层。
+
+```
+mcp_instruments/            前端（MCP 专属）
+  server.py                 legacy 68 工具 + profile 选择 + 执行器
+  compact_tools.py          compact 4 工具（devices / search / describe / call）
+instrument_runtime/         能力与护栏（**不依赖 MCP/FastMCP/pyvisa**）
+  registry.py  catalog.py   操作登记 + 68 项声明式安全分类（risk/confirm/raw_scpi/verify）
+  policy.py                 黑名单与查询判据（纯函数）
+  broker.py                 放行口 decide_scpi() + 进程内设备锁
+  audit.py  verify.py       审计落盘、回读配名、错误队列排空
+  validate.py               按操作 schema 校验 instr_call 入参
+*_control/                  设备库（既有，未改动）
+```
+
+**纪律**：`instrument_runtime/` 只依赖标准库。加设备逻辑放 `*_control/`；加护栏或
+能力元数据放 `instrument_runtime/`；只有 MCP 协议相关的东西才放 `mcp_instruments/`。
+`verify_broker_offline.py` 会在子进程里断言这条边界（import broker 不得牵入
+mcp/fastmcp/pyvisa）。
+
+**profile**（`--profile=<legacy|compact>` 或环境变量 `INSTRUMENT_MCP_PROFILE`，默认 `legacy`）：
+
+| | 工具数 | 工具定义体量 | 说明 |
+|---|---|---|---|
+| `legacy` | 68 | 59677 字符 ≈ 19.9k token | 现状；skill 与文档里的工具名都指这套 |
+| `compact` | 4 | 2674 字符 ≈ 0.9k token | **省约 19.0k token/请求（95.5%）** |
+
+compact 的 4 个工具：`instr_devices`（列仪器）、`instr_search`（按关键词找操作）、
+`instr_describe`（取完整参数表/说明/安全属性）、`instr_call`（执行一次操作）。
+
+**两条不变量**（改 profile 相关代码时勿破）：
+
+1. **两种 profile 都完整登记 68 个操作**，且 `instr_call` 与 legacy 同名工具
+   **共用同一执行路径**（`_run_operation_by_name` 与 `device_tool` 的 wrapper 逐句等价）
+   ——不这样就会出现"换 profile 后超时/device_busy 语义变了"这类极难查的差异。
+2. **护栏不经前端放行**：黑名单在 `policy`/操作实现层，DG832 保护联锁在库里。
+   绕过 compact 前端直接调 `instr_call` 同样跳不过任何门。前端只做入参校验。
+
+新增工具必须同时在 `instrument_runtime/catalog.py` 登记风险等级，否则服务起不来
+（未分类的工具不允许上线）。
+
+校验脚本（全部离线，不碰仪器）：
+`verify_registry_parity.py`（工具表逐字节一致 + 分类覆盖）、`verify_broker_offline.py`
+（分层边界 + 判据等价）、`verify_compact_profile.py`（compact 形态 + 能力不丢 + 成本）、
+`dump_mcp_tools.py`（固化 tools/list 快照）。
+
+设计与取舍见 `docs/gpt_qa/2026-09-23-instrument-gateway-arch.md`。

@@ -139,6 +139,8 @@ def main() -> int:
                     help="显式确认：本脚本会与真实仪器通信（只读）")
     ap.add_argument("--device", default=None, help="只测指定设备族")
     ap.add_argument("--repeat", type=int, default=3, help="batch 内重复读次数")
+    ap.add_argument("--write-test", dest="write_test", action="store_true",
+                    help="额外跑写路径测试：会改设备设置，并短暂打开/关闭输出（需单独授权）")
     args = ap.parse_args()
 
     if not args.ack:
@@ -219,6 +221,85 @@ def main() -> int:
                    timeout=120)
         check("raw write without confirm is still rejected",
               r.get("error_type") == "confirm_required", str(r)[:90])
+
+        if args.write_test:
+            print("\nS6 write path on the real device (state-changing, output toggled)")
+            # 目标：验证"成功的写"也走得通 compact 路径 —— 之前只验证过成功的读与被拒的写。
+            # 顺带验证 DG832 的保护联锁（库内护栏）在 compact 下依然拦得住。
+            # 无论断言结果如何，最后一定把输出关回去（见本节收尾）。
+            def _call(op, a, t=200):
+                return p.call("instr_call", {"op": op, "args": a}, timeout=t)
+
+            dev = op_id.split(".")[0]
+            r = _call(dev + ".status", {})
+            before = r.get("result") if r.get("ok") else None
+            check("archived the pre-test device state", before is not None, str(r)[:80])
+
+            ch = 1
+            r = _call("dg.protect", {"ch": ch, "state": False})
+            check("protection can be turned off", r.get("ok"), str(r)[:80])
+            r = _call("dg.set_wave", {"ch": ch, "shape": "sine", "freq": 1000.0, "amp": 0.5})
+            check("set_wave without protection is refused (DG832 interlock survives compact)",
+                  not r.get("ok"), str(r)[:90])
+
+            r = _call("dg.protect", {"ch": ch, "high": 3.3, "low": -3.3, "state": True})
+            check("protection can be enabled", r.get("ok"), str(r)[:80])
+            r = _call("dg.get_protect", {"ch": ch})
+            check("protection reads back as configured",
+                  r.get("ok") and "3.3" in json.dumps(r, ensure_ascii=False), str(r)[:90])
+
+            r = _call("dg.set_wave", {"ch": ch, "shape": "sine", "freq": 1000.0, "amp": 0.5})
+            check("set_wave succeeds with protection on (write path works)", r.get("ok"), str(r)[:90])
+
+            r = _call("dg.output", {"ch": ch, "on": True, "confirm": True})
+            check("output ON succeeds WITH confirm=True (gate permits, not just blocks)",
+                  r.get("ok"), str(r)[:90])
+            r = _call("dg.status", {})
+            ch1 = ((r.get("result") or {}).get("ch1") or {})
+            check("readback shows the output is ON", r.get("ok") and ch1.get("output") == "ON",
+                  f"ch1.output={ch1.get('output')}")
+
+            r = _call("dg.output", {"ch": ch, "on": False, "confirm": True})
+            check("output OFF succeeds", r.get("ok"), str(r)[:90])
+            r = _call("dg.status", {})
+            ch1 = ((r.get("result") or {}).get("ch1") or {})
+            check("readback shows the output is OFF", r.get("ok") and ch1.get("output") == "OFF",
+                  f"ch1.output={ch1.get('output')}")
+
+            # 写操作经 instr_batch 也要走得通（整批一个 job）
+            wplan = {"plan_version": 1, "on_error": "stop", "max_leaf_steps": 4,
+                     "max_nesting_depth": 0,
+                     "steps": [{"op": "dg.set_wave",
+                                "args": {"ch": ch, "shape": "sine", "freq": 500.0, "amp": 0.5}},
+                               {"op": "dg.status", "args": {}}]}
+            b2 = p.call("instr_batch", {"plan": wplan}, timeout=300)
+            check("a write step runs through instr_batch too",
+                  b2.get("status") == "completed" and b2.get("success_count") == 2,
+                  f"status={b2.get('status')} ok={b2.get('success_count')}")
+
+            # 收尾：确保输出关闭（无条件），并恢复测试前的波形参数。
+            # ⚠ 首版这里写成 before["shape"]，而 dg.status 的结果是 {model,idn,ch1,ch2}——
+            # 通道字段在 before["ch1"] 下面，于是 shape 恒为 None、**恢复压根没执行**
+            # （实测把设备留在了测试用的 500Hz/0.5Vpp 上）。字段路径与 SCPI 短名都要处理。
+            r = _call("dg.output", {"ch": ch, "on": False, "confirm": True})
+            check("cleanup: output confirmed OFF at the end", r.get("ok"), str(r)[:80])
+            ch1_before = (before or {}).get("ch1") or {}
+            short2long = {"SIN": "sine", "SQU": "square", "RAMP": "ramp", "PULS": "pulse",
+                          "NOIS": "noise", "DC": "dc", "USER": "user", "HARM": "harmonic"}
+            shape = str(ch1_before.get("shape") or "").upper()
+            if shape:
+                shape = short2long.get(shape, str(ch1_before.get("shape")).lower())
+                rr = _call("dg.set_wave", {"ch": ch, "shape": shape,
+                                           "freq": float(ch1_before.get("freq") or 1000.0),
+                                           "amp": float(ch1_before.get("amp") or 1.0)})
+                check("restored the pre-test waveform settings", rr.get("ok"),
+                      f"shape={shape} freq={ch1_before.get('freq')} amp={ch1_before.get('amp')}")
+                r2 = _call("dg.status", {})
+                now = ((r2.get("result") or {}).get("ch1") or {})
+                check("restore verified by readback",
+                      now.get("freq") == ch1_before.get("freq")
+                      and now.get("amp") == ch1_before.get("amp"),
+                      f"freq={now.get('freq')} amp={now.get('amp')}")
         p.close()
     finally:
         try:

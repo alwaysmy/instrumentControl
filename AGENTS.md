@@ -387,7 +387,6 @@ shadowing、未定义变量）；`max_leaf_steps` **精确计数但不展开**�
 `integrity=contended`，但**不**把 `ok` 改成 false（既有口径是只告警、由调用方裁决）。
 
 **两条不变量**（改 profile 相关代码时勿破）：
-
 1. **两种 profile 都完整登记 68 个操作**，且 `instr_call` 与 legacy 同名工具
    **共用同一执行路径**（`_run_operation_by_name` 与 `device_tool` 的 wrapper 逐句等价）
    ——不这样就会出现"换 profile 后超时/device_busy 语义变了"这类极难查的差异。
@@ -401,6 +400,36 @@ shadowing、未定义变量）；`max_leaf_steps` **精确计数但不展开**�
 `verify_registry_parity.py`（工具表逐字节一致 + 分类覆盖）、`verify_broker_offline.py`
 （分层边界 + 判据等价）、`verify_compact_profile.py`（compact 形态 + 能力不丢 + 成本）、
 `verify_batch_offline.py`（plan preflight / 作用域 / 规模 / 指针 / 执行 / **"整批一个 job"**
-这条核心不变量）、`dump_mcp_tools.py`（固化 tools/list 快照）。
+这条核心不变量）、`verify_compact_mcp.py`（**协议级**：起真实子进程走 JSON-RPC，
+确认客户端真能拿到 5 个工具并调用成功）、`dump_mcp_tools.py`（固化 tools/list 快照）。
+
+### 在 DSH 上把 compact 切成默认（切换与回滚）
+
+DSH 侧这一行在 `~/.dsh/profiles/web/cordis.patch.yml` 的 `mcp-instrument` 条目里，
+给 MCP 子进程加一个环境变量即可（该条目已有 `env: PYTHONUTF8: '1'`）：
+
+```yaml
+        env:
+          PYTHONUTF8: '1'
+          INSTRUMENT_MCP_PROFILE: compact      # ← 加这一行；删掉即回到 legacy
+```
+
+**切换后必须重启 DSH**：MCP 子进程的工具表不会热重载（HMR 只重载插件配置），
+与 `cordis.patch.yml` 里既有的那条注记同因。
+
+切换前的验证（都离线、不碰仪器）：
+
+```bash
+python TEST_SCRIPTS/common/verify_compact_profile.py   # 进程内：形态/能力/成本
+python TEST_SCRIPTS/common/verify_compact_mcp.py       # 协议级：真实 stdio JSON-RPC
+python TEST_SCRIPTS/common/dump_mcp_tools.py           # 固化线上工具表快照
+```
+
+回滚：删掉该行并重启 DSH。legacy 的 68 个工具名与 schema 在任何阶段都**未变过**
+（`verify_registry_parity.py` 对着基线快照逐字节断言），所以回滚不会留下不一致状态。
+
+**尚未做的一步**：compact 目前**不是**默认（默认仍是 legacy）。切换需要一次 DSH 重启，
+而重启会中断当前会话，因此这一步由人来做；重启用真实会话跑一轮后，才有"真实上下文
+对比数据"（静态工具定义之外的：总输入 token、工具选择失败率、参数错误率、往返次数）。
 
 设计与取舍见 `docs/gpt_qa/2026-09-23-instrument-gateway-arch.md`。

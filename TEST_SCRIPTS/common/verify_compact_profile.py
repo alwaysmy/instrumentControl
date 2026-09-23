@@ -126,6 +126,28 @@ def main() -> int:
     check("mixed CJK query with a space still works",
           r["ok"] and r["count"] > 0, f"count={r.get('count')}")
 
+    # 空查询 = 完整能力目录（2026-09-23 加）。此前空查询恒返回 0 条，而 compact 下
+    # 没有别的途径枚举能力：describe 要 id、search 要关键词。
+    r = json.loads(_call(mcp, "instr_search", query=""))
+    devs = r.get("devices") or {}
+    total = sum(len(v) for v in devs.values())
+    check("empty query returns the full capability catalog",
+          r.get("mode") == "catalog" and total == 68, f"total={total} devices={len(devs)}")
+    check("catalog groups by device family and lists op ids only",
+          all(isinstance(v, list) and all("." in i for i in v) for v in devs.values()),
+          str(sorted(devs)[:4]))
+    check("catalog covers every device family",
+          set(devs) == {"dg832", "sds", "sdg", "dmm", "dho", "mho", "psu", "ks3458a",
+                        "instr", "usb"}, str(sorted(devs)))
+    r = json.loads(_call(mcp, "instr_search", query="", device="sds"))
+    check("catalog honours the device filter",
+          sum(len(v) for v in (r.get("devices") or {}).values()) == 13,
+          str({k: len(v) for k, v in (r.get("devices") or {}).items()}))
+    r = json.loads(_call(mcp, "instr_search", query="zzzz-nothing"))
+    check("a miss now points at the catalog mode",
+          r["ok"] and r["count"] == 0 and "空查询" in (r.get("hint") or ""),
+          (r.get("hint") or "")[:60])
+
     r = json.loads(_call(mcp, "instr_describe", ids="sds_measure"))
     check("describe accepts a tool name and returns the parameter table",
           r["ok"] and r["count"] == 1

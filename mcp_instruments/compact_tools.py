@@ -191,9 +191,11 @@ def register(mcp, *, registry, run_fn: Callable[[str, dict], Awaitable[str]],
                            limit: int = 8) -> str:
         """搜索可用的仪器操作，返回规范 id 与一句话摘要（不返回完整参数表）。
 
-        query: 自然语言或关键词，例如 "扫频 信号源"、"measure vpp"、"output on"；
+        query: 自然语言或关键词，例如 "扫频 信号源"、"读信号源状态"、"measure vpp"；
+               **留空 = 列出全部能力目录**（按设备族分组，只给操作 id）——不知道
+               该用什么词时先用它枚举，再挑合适的 id 去 describe。
         device: 可选，限定设备族（dg832/sds/sdg/dmm/dho/mho/psu/ks3458a/instr/usb）；
-        limit: 返回条数上限（1-20，默认 8）。
+        limit: 返回条数上限（1-20，默认 8）；目录模式（空 query）不受它限制。
 
         拿到 id 后用 `instr_describe` 取完整参数表，再用 `instr_call` 执行。
         """
@@ -208,14 +210,29 @@ def register(mcp, *, registry, run_fn: Callable[[str, dict], Awaitable[str]],
         ops = list(registry)
         if device:
             ops = [o for o in ops if o.device == device]
+        # 空查询 = **能力目录**（2026-09-23 加）。原来空查询恒返回 0 条，于是"我有哪些
+        # 能力"这个问题在 compact 下无处可问——`instr_describe` 要你先知道 id，
+        # `instr_search` 要关键词，模型一旦不知道设备族词汇就卡死。
+        # 目录按设备族分组只回**操作 id**（不回首句摘要）：够用来接着 describe，
+        # 又不会一次灌回半张表。
+        if not (query or "").strip():
+            groups: dict[str, list[str]] = {}
+            for o in sorted(ops, key=lambda x: x.id):
+                groups.setdefault(o.device, []).append(o.id)
+            return _json({
+                "ok": True, "mode": "catalog", "query": "", "device": device,
+                "count": len(ops), "devices": groups,
+                "hint": "这是全部可用操作（按设备族分组，只给 id）。用 instr_describe 取"
+                        "某个操作的完整参数表与安全属性；给 query 传关键词可做排序搜索。",
+            })
         ranked = sorted(((_score(o, query), o) for o in ops),
                         key=lambda p: (-p[0], p[1].id))
         hits = [o for s, o in ranked if s > 0][:n]
         if not hits:
             return _json({"ok": True, "query": query, "device": device, "count": 0,
                           "results": [],
-                          "hint": "没有匹配的操作；可换关键词，或用 instr_search "
-                                  "查设备族名（如 'sds'）列出该设备全部操作。"})
+                          "hint": "没有匹配的操作；用 instr_search 空查询可直接列出**全部**"
+                                  "能力目录（按设备族分组），或换关键词/设备族名再试。"})
         return _json({
             "ok": True, "query": query, "device": device, "count": len(hits),
             "results": [{"id": o.id, "tool_name": o.tool_name, "device": o.device,

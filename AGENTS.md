@@ -405,31 +405,48 @@ shadowing、未定义变量）；`max_leaf_steps` **精确计数但不展开**�
 
 ### 在 DSH 上把 compact 切成默认（切换与回滚）
 
-DSH 侧这一行在 `~/.dsh/profiles/web/cordis.patch.yml` 的 `mcp-instrument` 条目里，
-给 MCP 子进程加一个环境变量即可（该条目已有 `env: PYTHONUTF8: '1'`）：
+目标文件 `~/.dsh/profiles/web/cordis.patch.yml` 属**外部目录**——按仓库规则不由 AI 代改，
+由使用者执行。用仓内脚本，它负责备份、精确定位、YAML 校验与幂等（**逐行文本编辑**，
+不做 YAML 往返：往返会抹掉这个文件里一半的价值——注释）：
 
-```yaml
-        env:
-          PYTHONUTF8: '1'
-          INSTRUMENT_MCP_PROFILE: compact      # ← 加这一行；删掉即回到 legacy
+```bash
+python TEST_SCRIPTS/common/switch_dsh_instrument_profile.py --profile compact --dry-run
+python TEST_SCRIPTS/common/switch_dsh_instrument_profile.py --profile compact --apply
+# 回滚
+python TEST_SCRIPTS/common/switch_dsh_instrument_profile.py --profile legacy --apply
 ```
 
+它做的就是在 `mcp-instrument` 条目的 `env:` 下加/删一行 `INSTRUMENT_MCP_PROFILE: compact`。
+
 **切换后必须重启 DSH**：MCP 子进程的工具表不会热重载（HMR 只重载插件配置），
-与 `cordis.patch.yml` 里既有的那条注记同因。
+与 `cordis.patch.yml` 里既有的那条注记同因。重启会中断当前会话，故这一步只能由人做。
 
 切换前的验证（都离线、不碰仪器）：
 
 ```bash
 python TEST_SCRIPTS/common/verify_compact_profile.py   # 进程内：形态/能力/成本
-python TEST_SCRIPTS/common/verify_compact_mcp.py       # 协议级：真实 stdio JSON-RPC
+python TEST_SCRIPTS/common/verify_compact_mcp.py       # 协议级 + 设备路径（死回环资源）
 python TEST_SCRIPTS/common/dump_mcp_tools.py           # 固化线上工具表快照
 ```
 
-回滚：删掉该行并重启 DSH。legacy 的 68 个工具名与 schema 在任何阶段都**未变过**
-（`verify_registry_parity.py` 对着基线快照逐字节断言），所以回滚不会留下不一致状态。
+切换前后的**真实对比数据**（读 DSH 会话日志里那次请求真正带了什么）：
 
-**尚未做的一步**：compact 目前**不是**默认（默认仍是 legacy）。切换需要一次 DSH 重启，
-而重启会中断当前会话，因此这一步由人来做；重启用真实会话跑一轮后，才有"真实上下文
-对比数据"（静态工具定义之外的：总输入 token、工具选择失败率、参数错误率、往返次数）。
+```bash
+python TEST_SCRIPTS/common/measure_dsh_tool_cost.py "--workspace=--D-ChatWorkspace--" --out before.json
+# 重启后
+python TEST_SCRIPTS/common/measure_dsh_tool_cost.py "--workspace=--D-ChatWorkspace--" --out after.json
+python TEST_SCRIPTS/common/measure_dsh_tool_cost.py --compare before.json after.json
+```
+
+实测切换前基线（真实会话，非合成快照）：整个工具表 108 个 / 92629 字符 ≈ 30876 token，
+其中 `mcp__instrument__*` 57 个 / 40991 字符 ≈ 13663 token = **44.4%**；切换后仪器组
+降到约 4211 字符（5 个工具）。
+
+回滚不留不一致状态：legacy 的 68 个工具名与 schema 在任何阶段都**未变过**
+（`verify_registry_parity.py` 对着基线快照逐字节断言）。
+
+**当前状态**：compact 尚未成为默认（默认仍是 legacy）。切换与重启待使用者执行；
+重启用真实会话跑一轮后才有静态工具定义之外的对比数据（总输入 token、工具选择失败率、
+参数错误率、往返次数）。
 
 设计与取舍见 `docs/gpt_qa/2026-09-23-instrument-gateway-arch.md`。

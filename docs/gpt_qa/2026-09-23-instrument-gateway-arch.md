@@ -1,6 +1,6 @@
 # GPT 讨论：仪器控制 MCP 网关化架构（2026-09-23）
 
-<!-- chatgpt-discuss: session=instrument-gateway-arch conv=https://chatgpt.com/c/6ab37be8-9a44-83e9-a274-4e487364b947 updated=2026-09-23 15:16:34 rounds=1 -->
+<!-- chatgpt-discuss: session=instrument-gateway-arch conv=https://chatgpt.com/c/6ab37be8-9a44-83e9-a274-4e487364b947 updated=2026-09-23 16:13:36 rounds=3 -->
 - 会话: instrument-gateway-arch | 链接: https://chatgpt.com/c/6ab37be8-9a44-83e9-a274-4e487364b947
 
 ## Q1 2026-09-23 15:16:34
@@ -1033,3 +1033,1516 @@ legacy MCP 57 tools
 4. **固定的小 MCP surface 对 DSH、Codex、Claude、opencode、zcode 的兼容性明显优于依赖各客户端自己的懒加载能力。**
 
 还有一个我认为值得趁这次迁移一起修正的点：**把“安全确认”从模型可填写的 `confirm=True` 升级成 broker 侧的 bounded arm/capability，并把设备、动作、参数上限和有效期绑定进去。** 对真实电源、信号源输出这类操作，这会让整个架构的安全语义清楚很多。
+
+## Q2 2026-09-23 16:04:21
+**Q:** 上一轮你给的方案 C 我已经实现到阶段 3。先汇报实际落地情况（与你的建议有出入的地方我标出来了），再请你评审阶段 4——**我认为你上一轮的安全论证在本题的部署形态下不成立，请重点评估这一点**。
+
+【已实现（分支 v2dev，全部离线验证，未碰仪器）】
+
+阶段1：Operation Registry
+- 新增 instrument_runtime/{registry,catalog}.py。68 个操作用同一个 @device_tool 装饰器登记；canonical id 由工具名首个下划线切分派生（sdg_set_wave → sdg.set_wave）。
+- 我**没有**采纳"把 schema 做成 registry 里的显式数据"这一建议，而是从 FastMCP 自己的 Tool.from_function 生成后原样取。理由：手写 schema 等于把 FastMCP 的 schema 规则复制一份，将来必然漂移。
+- catalog.py 是 68 项声明式安全分类：risk（read_only=31 / config=28 / output=4 / destructive=5）、requires_confirm（10 个）、raw_scpi（3 个）、verify、note。requires_confirm 取函数签名实测值并与 catalog 复核，不一致直接抛错；**未分类的工具会让服务启动失败**。
+- 验收：tools/list 快照 sha256 重构前后完全一致（68 工具 / 123116 字节）。
+
+阶段2：Policy Broker
+- 把黑名单(policy.py) / 审计(audit.py) / 回读验证(verify.py) / 设备锁(broker.py) 抽进 instrument_runtime/；server.py 保留原私有名作别名（既有调用点一行未改，净减 73 行）。
+- 我按你的分层建议做了，但**没有把执行器（预算/超时/线程封闭）一起搬**——那部分要真实仪器才能验证，留在 server.py。
+- broker.py 提供 decide_scpi(cmd, require_query) 作为唯一放行口；设备锁是**同一个对象**。
+- 验收：子进程断言 import broker 不牵入 mcp/fastmcp/pyvisa；server 的私有名与 runtime 是同一函数对象；decide_scpi 与迁移前参考表达式在 38 条语料逐条等价；仓库既有的护栏穷举审计（七套手册）0 误伤 / 0 拒绝。
+
+阶段3：compact profile
+- server 支持 --profile=legacy|compact（默认 legacy）。compact 暴露 4 个工具：instr_devices / instr_search / instr_describe / instr_call。
+- 实测（真实 MCP 线格式、两者同口径）：legacy 68 工具 59677 字符 ≈19.9k token；compact 4 工具 2674 字符 ≈0.9k token；省约 19.0k token/请求（95.5%）。
+- 两条不变量：① 两种 profile 都完整登记 68 个操作，instr_call 与 legacy 同名工具**共用同一执行路径**（wrapper 逐句等价）；② 护栏不经前端放行，前端只做入参校验（校验失败时执行入口一次都不被调用）。
+- 你说"客户端过滤只能作优化、不能作架构基础"是对的。我另外查到：DSH 的 dsh-mcp-client **根本没有工具过滤字段**（只有 serverName/transport/超时/重连），所以服务端 profile 在这个部署里是唯一可行方案。
+
+【阶段 4 设计问题，含我对你上一轮论证的两点异议】
+
+异议 1（关键）：你的安全论证前提在本部署形态下不成立。
+你写道"如果 agent 可以 import socket / pyvisa，那在 Python library 里加多少安全检查都没有用"，并据此要求 instr_run 必须跑在无 socket / 无 VISA / 无 import 能力的沙箱里。但**本部署里 agent 已经拥有无限制代码执行能力**：DSH 给 agent 的工具里有 pwsh（任意 PowerShell；本会话 file policy = danger-full-access、审批策略 = never），它现在就能 `python -c "import pyvisa; ..."` 直接操作仪器，或直接对仪器的 5025 端口发 SCPI。也就是说：
+- 仪器控制这条链上的"沙箱"在本部署里不构成安全边界——同一个 agent 用 pwsh 一步就绕过了；
+- MCP 层的护栏实际上是**纪律与一致性层**（防误操作、留审计、串行化设备访问），不是对抗恶意或失控 agent 的边界。
+
+所以我认为阶段 4 不该以"提供安全隔离"为设计目标——投入很大（Python 沙箱很难做对）却买不到安全。请评估这个判断是否成立；如果不成立，请指出我漏掉了什么（例如你是否假设 pwsh 实际被限制，或你假设的是另一种部署形态）。
+
+异议 2：在这个前提下，instr_run 的收益需要重新论证。
+agent 现在就能用 pwsh 写脚本调用设备库——事实上该仓的 TEST_SCRIPTS/ 里已有大量这类脚本。也就是说"模型写代码组合调用"**已经可用**，instr_run 不提供新能力；它提供的是：受控 API（不用模型自己摸索库接口）、统一护栏与审计、以及只把摘要送回上下文。
+那么问题变成：instr_run 相对"agent 直接用 pwsh 写脚本"的**增量价值**是什么？值不值得为它建一套运行时？
+
+请给出：
+1. 对上述两点异议的评估（同意 / 不同意，理由）。
+2. 在这个前提下，阶段 4 应该做成什么形态？请给**一个**明确推荐，并说明它相对"直接用 pwsh"的增量价值。
+3. 若仍要保留"受控代码执行"，最小可行实现是什么（约束：Windows + Python + pyvisa + 真实仪器）？
+4. 如果你认为阶段 4 应该缩小范围或干脆不做，请直说。我要的是判断，不是把选项罗列一遍。
+
+
+**A:**
+你的两点异议我都接受，其中第一点会推翻我上一轮对阶段 4 的主要安全论证。
+
+## 1. 两点异议的判断
+
+### 异议 1：成立
+
+你给出的部署事实已经足够：
+
+```text
+Agent
+ ├─ MCP instrument server
+ │    └─ policy / audit / lock / verify
+ │
+ └─ pwsh，danger-full-access，approval=never
+      ├─ python + pyvisa
+      ├─ socket -> TCP/5025
+      └─ 其他本机能力
+```
+
+在这个拓扑里，即使 `instr_run` 内部做到：
+
+```text
+禁 socket
+禁 pyvisa
+禁 import
+独立进程
+严格白名单
+```
+
+同一个 agent 仍然可以下一步调用：
+
+```powershell
+python -c "import socket; ..."
+```
+
+绕过整个 instrument runtime。
+
+因此，`instr_run` 沙箱对**整个 agent 到仪器的攻击面**没有形成 security boundary。
+
+我上一轮隐含的前提确实与你的部署不符。我当时假定大致是：
+
+```text
+Agent 能调用 instrument MCP
+Agent 没有仪器网络 / VISA / 任意 shell 的旁路能力
+```
+
+在那种部署中，受限 runner 有明确的安全意义。你这里没有这个条件。
+
+更准确地说，你现在的 Broker 能覆盖三类风险：
+
+| 风险 | 当前 Broker 是否有效 |
+|---|---|
+| 模型正常走 MCP 时误发危险命令 | 有效 |
+| MCP wrapper / 调用方写错流程 | 有效 |
+| 操作审计、验证、错误队列、串行化 | 有效 |
+| agent 主动或异常地改走 pwsh/pyvisa/socket | 无法阻止 |
+| 本机执行环境被控制后直接碰仪器 | 无法阻止 |
+
+所以我会把现在的定位称为：
+
+> **受信执行路径上的强制策略层和工程一致性层。**
+
+只要进入这条路径，policy 是强制的；它对旁路路径没有控制力。
+
+这里还有一个容易漏掉的问题：
+
+**如果 DSH、Codex、Claude 等客户端各自启动一个 stdio server 进程，那么你现在“同一个 lock 对象”只能序列化单进程内部访问。**
+
+例如：
+
+```text
+DSH       -> server.exe A -> Lock A -> DMM
+Codex     -> server.exe B -> Lock B -> DMM
+pwsh                     -------> DMM
+```
+
+三个路径之间不会互斥。
+
+如果这些客户端存在同时操作同一台真实仪器的可能，这个问题的实际风险可能高于 `instr_run` 沙箱问题。届时需要 named mutex、file lock 或单实例 broker daemon，具体取决于你的并发模型。
+
+---
+
+### 异议 2：也成立
+
+在你的环境里，任意代码执行能力已经存在，所以：
+
+```text
+instr_run ≠ 新增“模型可以写程序控制仪器”的能力
+```
+
+它真正可能增加的是以下几项：
+
+1. **稳定的 canonical API**
+   
+   模型使用：
+
+   ```text
+   sdg.set_wave
+   dmm.measure_dc
+   ```
+
+   无需知道 `sdg_control`、`keysight_3446x` 内部 Python API。
+
+2. **统一执行路径**
+
+   每一个操作继续经过：
+
+   ```text
+   catalog
+   policy
+   lock
+   verify
+   audit
+   ```
+
+3. **减少 LLM round trip**
+
+   1000 点扫频可以一次提交给服务端执行，避免：
+
+   ```text
+   tool call
+   model
+   tool call
+   model
+   ...
+   ```
+
+4. **结果不进入模型上下文**
+
+   1000 个原始测量点可以留在服务器侧，只返回：
+
+   ```text
+   run_id
+   count
+   min/max
+   failures
+   artifact path
+   summary
+   ```
+
+5. **运行语义统一**
+
+   可以统一定义：
+
+   ```text
+   timeout
+   stop_on_error
+   cleanup
+   cancellation
+   run_id
+   step audit
+   result persistence
+   ```
+
+这些才是阶段 4 值得做的理由。
+
+而其中没有一项要求你实现 Python security sandbox。
+
+---
+
+# 2. 我的明确推荐：缩小阶段 4，做 `instr_batch`，不要做通用 `instr_run(Python)`
+
+我建议直接修改上一轮方案：
+
+> **阶段 4 做“服务端批处理 / plan executor”，暂时取消任意 Python Code Mode。**
+
+接口甚至可以只有第五个 compact tool：
+
+```text
+instr_batch(plan)
+```
+
+它接受由 canonical operation 组成的声明式执行计划。
+
+例如：
+
+```json
+{
+  "steps": [
+    {
+      "op": "sdg.set_frequency",
+      "args": {
+        "channel": 1,
+        "frequency_hz": 1000
+      }
+    },
+    {
+      "op": "dmm.measure_voltage",
+      "args": {
+        "range": "auto"
+      },
+      "save_as": "v"
+    }
+  ],
+  "on_error": "stop"
+}
+```
+
+执行路径：
+
+```text
+instr_batch
+    │
+    ├── registry resolve
+    ├── schema validate
+    │
+    └── for each operation
+          │
+          └── 与 instr_call / legacy 完全相同的执行入口
+                 ├── policy
+                 ├── locking
+                 ├── verify
+                 └── audit
+```
+
+### 为什么这个东西比直接 pwsh 有实际增量价值
+
+它解决的是**协调成本**。
+
+例如现在模型做 100 点扫频有三种办法。
+
+#### 多次 MCP
+
+```text
+100 × set_frequency
+100 × measure
+```
+
+产生大量 agent round trip。
+
+#### pwsh 脚本
+
+执行效率高，但 agent 必须自己知道：
+
+```python
+from sdg_control import ...
+from keysight_3446x import ...
+```
+
+还必须自行正确处理：
+
+```text
+设备发现
+锁
+超时
+错误队列
+安全策略
+readback
+审计
+异常 cleanup
+```
+
+除非脚本主动重新调用你的 runtime，否则这些语义容易漂移。
+
+#### `instr_batch`
+
+模型只需要知道已经通过 `instr_search/describe` 得到的 canonical operations：
+
+```text
+sdg.set_frequency
+dmm.measure_voltage
+```
+
+然后一次提交。
+
+因此 `instr_batch` 的价值非常明确：
+
+> **让组合调用继承现有 68 项 operation 的全部执行语义，同时消除逐工具 LLM round trip。**
+
+它与你已经完成的前三阶段衔接得非常自然，也不需要另一套 Python 运行时。
+
+---
+
+# 3. `instr_batch` 建议做到什么程度
+
+第一版刻意控制功能。
+
+我建议只支持四个机制：
+
+```text
+sequence
+foreach
+capture
+stop_on_error
+```
+
+例如：
+
+```json
+{
+  "foreach": {
+    "var": "freq",
+    "values": {
+      "linspace": [100, 10000, 100]
+    }
+  },
+  "steps": [
+    {
+      "op": "sdg.set_frequency",
+      "args": {
+        "channel": 1,
+        "frequency_hz": "$freq"
+      }
+    },
+    {
+      "op": "dmm.measure_voltage",
+      "args": {},
+      "capture": ["value"]
+    }
+  ]
+}
+```
+
+足够覆盖：
+
+```text
+扫频
+扫电压
+重复测量
+多通道采集
+参数矩阵
+设备配置 + 测量
+```
+
+第一版我会明确不做：
+
+```text
+arbitrary Python expression
+while
+eval
+exec
+任意函数定义
+任意 import
+复杂 if/else
+```
+
+理由主要是工程复杂度和可验证性。
+
+复杂自适应测试，例如：
+
+```python
+while error > target:
+    调整参数
+    重新测量
+```
+
+现阶段继续放在 `TEST_SCRIPTS/`，直接 Python 做即可。
+
+没有必要让 `instr_batch` 逐渐演变成一门残缺 Python。
+
+---
+
+## 一个重要实现细节
+
+不要这样：
+
+```python
+with DEVICE_LOCK:
+    execute_batch()
+```
+
+然后 batch 内继续调用现在的 operation wrapper，而 wrapper 又：
+
+```python
+with DEVICE_LOCK:
+    ...
+```
+
+如果当前是普通 `threading.Lock`，直接死锁。
+
+我建议第一版仍保持：
+
+```text
+每个 canonical operation 自己获得现有 lock
+```
+
+这样满足你最重要的不变量：
+
+> legacy / instr_call / instr_batch 的单次 operation 执行路径完全相同。
+
+以后有证据证明需要整个 sweep 独占仪器，再单独设计：
+
+```text
+lease / transaction / lock ownership token
+```
+
+不要为了 batch 顺手换成 `RLock` 掩盖锁层次问题。
+
+---
+
+# 4. 建议给 batch 增加的运行语义
+
+这部分比 Python 沙箱更值得投入。
+
+例如：
+
+```json
+{
+  "deadline_s": 120,
+  "max_steps": 1000,
+  "on_error": "stop",
+  "result_mode": "summary"
+}
+```
+
+服务器生成：
+
+```text
+run_id
+started_at
+finished_at
+operation_count
+success_count
+failed_step
+audit references
+result artifact
+summary
+```
+
+尤其推荐把大结果写：
+
+```text
+TEST_RESULTS/<run_id>/...
+```
+
+模型上下文只获得统计和路径。
+
+这正好匹配你现有强调留痕的工作方式，同时能显著减少：
+
+```text
+仪器 → MCP JSON → 模型 context
+```
+
+的数据量。
+
+---
+
+# 5. 关于 raw SCPI
+
+这里我建议继续维持你当前的统一规则。
+
+即便 `instr_batch` 里有：
+
+```json
+{
+  "op": "instr.raw_query",
+  "args": {"command": "..."}
+}
+```
+
+也必须正常经过：
+
+```text
+decide_scpi()
+```
+
+不要给 batch 一个“内部调用，所以可信”的特殊通道。
+
+否则它会成为第二个执行路径。
+
+你已经做得很好的一条架构不变量：
+
+> `instr_call` 与 legacy wrapper 共用执行入口。
+
+阶段 4 应继续保持：
+
+```text
+legacy
+instr_call
+instr_batch
+      │
+      └────── same canonical executor
+```
+
+这比给 batch 增加很多功能重要。
+
+---
+
+# 6. 如果仍坚持保留“模型写 Python”，最小实现该怎么做
+
+如果你确实发现声明式 batch 不够用，我建议把目标定义为：
+
+> **execution containment + API convenience**
+
+不要把目标写成 security sandbox。
+
+最小结构：
+
+```text
+MCP server / parent
+    │
+    ├─ owns registry
+    ├─ owns policy
+    ├─ owns pyvisa/session
+    ├─ owns locks
+    └─ owns audit
+           ▲
+           │ IPC
+           ▼
+    disposable Python worker
+```
+
+worker 中的脚本只能通过类似：
+
+```python
+instrument.call("sdg.set_frequency", ...)
+```
+
+请求父进程执行。
+
+### 为什么仍然用子进程
+
+价值主要有：
+
+```text
+脚本死循环可以 kill
+异常不会污染 MCP event loop
+stdout/stderr 可隔离
+可以设置 wall-clock deadline
+run 可独立编号
+失败可以完整回收
+```
+
+这属于**故障隔离**，不是可信安全隔离。
+
+Windows 下最小实现我会选择：
+
+```text
+python worker subprocess
+stdin/stdout framed JSON RPC
+CREATE_NEW_PROCESS_GROUP
+必要时 Windows Job Object
+```
+
+并限制：
+
+```text
+wall timeout
+最大 broker calls
+最大 stdout/stderr
+最大结果字节数
+最大执行步骤
+```
+
+父进程收到：
+
+```json
+{
+  "method": "call",
+  "op": "dmm.measure_voltage",
+  "args": {}
+}
+```
+
+仍然走唯一 canonical executor。
+
+### 不要做的工作
+
+我明确不建议投入：
+
+```text
+AST 安全审计
+RestrictedPython
+删除 __builtins__
+自制 import hook
+黑名单 socket
+黑名单 ctypes
+黑名单 subprocess
+```
+
+这些做不到系统级隔离，而你的 agent 本身又已经有 pwsh 旁路，所以收益更低。
+
+如果有一天你真要建立安全边界，需要调整的是**整个 agent 的 capability**：
+
+```text
+取消任意 shell / 限制网络 / 限制 VISA
+                 +
+instrument broker 成为唯一可达路径
+```
+
+到那时再讨论 AppContainer、独立账户、网络 ACL、instrument VLAN 等才有意义。
+
+---
+
+# 7. 我现在会怎么改阶段 4 目标
+
+我会把原来的：
+
+```text
+阶段4：受控 Code Mode
+```
+
+改成：
+
+```text
+阶段4：Batch Execution
+目标：
+1. 多 operation 一次提交
+2. 所有调用复用 canonical executor
+3. 服务端循环，降低 LLM round trip
+4. 大结果服务器侧落盘
+5. 统一 run_id / deadline / error / audit
+6. 复杂逻辑继续使用 TEST_SCRIPTS
+```
+
+这已经足够构成一个完整阶段。
+
+---
+
+# 8. 还有一个我认为现在应该检查的问题
+
+你这轮强调“设备锁是同一个对象”，这个验证对**单个 server.py 进程**成立。
+
+但你有：
+
+```text
+DSH
+Codex
+Claude
+opencode
+zcode
+```
+
+全部使用 stdio。
+
+如果它们可能同时启动 MCP server，建议你马上验证：
+
+```text
+是否存在多个 instrument server 进程同时连接同一台仪器？
+```
+
+如果答案为是，则：
+
+```python
+_DEVICE_LOCK = threading.Lock()
+```
+
+无论迁移得多漂亮，都无法保证跨进程串行化。
+
+这时真正值得增加的 stage 4.5 可能只是几十行：
+
+```text
+instrument identity
+      ↓
+named interprocess mutex
+```
+
+或者以后改为唯一的本地 broker daemon。
+
+这个问题和 arbitrary pwsh 一样说明了一件事：**当前 policy 的保护域应该明确写进设计文档。**
+
+例如：
+
+```text
+Policy scope:
+- 强制覆盖 legacy MCP / compact call / batch
+- 保证单 server process 内串行化
+- 不防止具有主机代码执行权限的 agent 直接访问 VISA/TCP
+- 不保证多个独立 server process 间互斥
+```
+
+最后一条如果之后实现跨进程锁，再删除。
+
+---
+
+## 最终判断
+
+我的建议比上一轮明显收缩：
+
+**阶段 4 值得做，但只做 `instr_batch` / plan executor。暂时不要做 Python `instr_run`。**
+
+你现在已经有成熟的 `TEST_SCRIPTS/ + pwsh + Python` 路径，重新造一个 Python execution runtime 的边际收益不足。`instr_batch` 恰好填补现有真正缺口：**在 compact MCP 内进行高效组合执行，同时完整继承已有的 registry、policy、verify、audit 与稳定 canonical API。**
+
+等实际日志证明 batch 无法覆盖大量任务，再增加 worker 型 Code Mode。不要提前建。
+
+## Q3 2026-09-23 16:13:36
+**Q:** 你接受了异议、并把阶段 4 收缩为 `instr_batch`，这个方向我同意。但你的回答里有**一处事实过时**和**三处技术判断我不同意**，需要再过一轮。
+
+## 一、事实过时：跨进程锁不是"待验证"，2026-09-17 就已实现并落地
+
+你写"建议你马上验证是否存在多个 instrument server 进程同时连接同一台仪器"，并把它列为可能的 stage 4.5（named mutex）。
+
+实际上本仓已有 `common/session_lock.py`（2026-09-17），并且正是你描述的那个问题：
+- 实测结论（`docs/visa_concurrency_20260917.md`）：**同一台设备开两个会话并发会静默串台**——两个客户端互相读到对方的响应，而响应本身都是合法值，调用方判断不出来（DG832/USB 实测约一半查询丢响应 + 100+ 次答非所问）。当日本机实测**同时存在 14 个 instrument MCP 实例**。
+- 已实现：按 **VISA 地址**为键的跨进程锁文件（`session_locks/<addr>.json`，含 pid/started/ts），"活跃"判据 = pid 仍存在 且 ts 在 TTL(180s) 内，过期/死进程的锁文件顺手清理。
+- **关键：这份实现是"只告警、不阻塞"，且是用户明确指定的口径**——理由是"仪器共享是常见需求，硬拦会误伤；调用方看到 warning 自行决定"。每次设备调用都会把自己的占用刷新，并把他人占用作为 `warnings` 附在返回体里。
+
+所以：
+1. 请评估——在你不知道这条已存在的情况下建议的"named mutex / 单实例 broker daemon"，是否与"只告警不阻塞"这个已定口径冲突？如果冲突，你要论证的是"应当改变这个既有决策"（例如指出告警不足的具体后果），而不是把它当作新建议。请给出明确判断。
+2. 你最后那条"把 policy scope 明确写进设计文档"我**采纳**，并且会包含你列的边界（强制覆盖 legacy/call/batch；只保证单进程内串行化；不防有主机代码执行权的 agent 直连 VISA/TCP；**跨进程只告警不阻塞**）。这一条我认为是你本轮最有价值的产出。
+
+## 二、技术判断分歧 1：batch 的原子性——我不同意"每个 operation 各自获取锁"
+
+你警告不要 `with DEVICE_LOCK: execute_batch()`（会与 wrapper 内层重复获取而死锁），这个**是对的**，本仓 `_DEVICE_LOCK` 确实是普通 `threading.Lock`（不可重入）。然后你建议"第一版仍保持：每个 canonical operation 自己获得现有 lock"。
+
+但本仓的实际串行化机制不是这把锁，而是**单 worker 执行器 + BUSY 闸门**：
+- `_DeviceExecutor.run()` 在入口检查 `if self._busy → 立即返回 device_busy`，否则置 `_busy=True` 并把这个 job 交给唯一 daemon worker 线程；job 完成后由事件循环回填并清 BUSY。
+- server.py 里那句注释写得很明确：设备锁"单 worker 下正常情况下没有竞争者，此处 acquire(timeout) 只作**第二道防线**"。
+- 每个 operation 的实现内部调 `_call(...)`，由 `_call` 去 acquire `_DEVICE_LOCK`。
+
+由此我有一个**与你相反的方案**，请你判断哪个对：
+
+> **把整个 batch 作为"一个 executor job"提交**，在其内部直接调用各 operation 的实现（`op.fn(**args)`）；每个 op 内部的 `_call` 仍照常 acquire/release `_DEVICE_LOCK`（**没有嵌套**，因为 batch 自己不持锁）。
+
+我的理由：
+- **原子性来自 BUSY 而不是锁**：整批作为一个 job ⇒ BUSY 在整批期间保持 ⇒ 进程内其它调用得到 device_busy 而不会插进扫频中间，仪器状态不会被撕开；这正是一次 sweep 需要的语义。
+- **不引入死锁**：batch 自己不持有 `_DEVICE_LOCK`，所以内层 `_call` 获取它没有问题。
+- **保持你我都看重的不变量**：每个 operation 仍走它自己的 canonical 执行入口，`legacy / instr_call / instr_batch` 的单次 operation 路径完全相同。
+
+而按你的建议（每步各提交一个 executor job），**BUSY 会在步与步之间释放**——别的调用可以插进扫频中途改频率，扫频结果就被污染了。对"配置→测量→配置→测量"这类序列这是实打实的正确性问题。
+
+请明确回答：一个 job 还是每步一个 job？若你仍坚持每步一个，请说明在"总线/仪器共享、多客户端可能同时调用"的前提下，如何保证扫频不被插入。
+
+## 三、技术判断分歧 2：`deadline_s` 与本仓既有的超时语义冲突
+
+你建议 batch 支持 `deadline_s`。但本仓执行器的超时语义是**刻意**这样的（写在模块级说明与返回体里）：
+
+> 超时**只代表放弃等待**，不清 BUSY，**worker 仍在跑**——设备保持 BUSY 直到那次操作真正结束；返回体明确写"操作**可能仍在执行或随后成功**，有副作用的命令请回读确认"。
+
+这是为了顶住"驱动挂起、worker 卡在 native 调用里"的场景（也是它不用 ThreadPoolExecutor 而用 daemon worker 的原因）。
+
+所以 batch 的 `deadline_s` 若照字面实现，会出现：**超时返回"已放弃"，但仪器还在继续执行撤不掉的 1000 点扫频**。这对调用方是误导——正是本仓历史上被反复教训的那类"看起来合理的假结论"。
+
+请给出判断：batch 的 deadline 应当
+（a）沿用现有语义（放弃等待、不终止执行、BUSY 保持）并在返回体里说清楚；
+（b）在**每个 step 之间**设可取消点（step 边界处检查 deadline，超时则不再发下一条，已发出的那条仍可能完成）；
+（c）真取消（需要中断 native 调用——我认为本仓做不到，也不该假装能做）。
+我倾向 (b)：它给出"最坏多做一步"的明确上界，且不假装能中断底层。请评估。
+
+## 四、技术判断分歧 3：plan 里的变量替换与校验顺序
+
+你给的例子把 `"frequency_hz": "$freq"` 作为字符串放进参数（类型本应是 number）。这在我已实现的 `instr_call` 校验器下**会先被类型校验拒掉**。所以 batch 必须先替换、再校验，顺序不能反。另外你的 `"capture": ["value"]` 依赖知道每个工具的返回体形状（本仓工具返回的是 JSON 字符串，成功时形如 `{"ok":true,"model":...,"result":...}`，而 `result` 的形状各工具不同：有的是 dict、有的带 `items`、有的只是字符串）。
+
+请给出：
+1. 变量替换与 schema 校验的先后（确认先替换后校验即可，还是有别的坑）。
+2. **capture 应当怎么设计才不依赖"模型猜返回体形状"**？我的初步想法是 route 走 `instr_describe` 里给出每个 operation 的结果字段说明，或者干脆让 capture 只支持"整条结果"和"指定 JSON path"，请你判断哪种更稳。
+3. batch plan 的 schema 用 JSON Schema 表达（嵌套 foreach/steps）是否够——还是应当定义一个小的 plan DSL 版本号以便将来演进？
+
+请仍然给明确结论，不要罗列所有可能。另外：如果你认为我的方案（二、三 两处）比你的更好，直接说；我不要客套。
+
+
+**A:**
+这轮结论很明确：**你在 batch 原子性和 deadline 两处的方案都优于我上一轮的建议。** 阶段 4 可以据此收敛。
+
+## 一、跨进程锁：维持“只告警不阻塞”，不改既有决策
+
+我上一轮提出 named mutex / 单实例 broker daemon，确实和你已经拍板并实现的“跨进程只告警、不阻塞”冲突。基于你补充的背景，我**不建议阶段 4 改变这个决策**。
+
+原因是这里已经属于明确的产品语义：
+
+```text
+单进程内：强制串行
+跨进程间：允许共享，检测竞争并告警
+```
+
+硬互斥会直接改变现有使用模型。
+
+但已有实测也说明一个事实：跨进程竞争时可能出现**合法但属于另一请求的响应**。因此 warning 代表的不只是“有人也在用”，它意味着该次测量的完整性可能无法证明。
+
+所以 batch 要做一件额外的事：
+
+> **聚合并显式暴露整个 run 期间观察到的跨进程 contention，绝不能让 warning 淹没在某个中间 step 的返回值里。**
+
+例如最终结果至少带：
+
+```json
+{
+  "ok": true,
+  "warnings": [
+    {
+      "code": "external_session_contention",
+      "address": "...",
+      "steps": [12, 13, 14]
+    }
+  ]
+}
+```
+
+如果愿意再明确一点，可以增加：
+
+```json
+"integrity": "contended"
+```
+
+但不要因此把 `ok` 自动改成 false，因为这又改变了既定的“告警，由调用方裁决”语义。
+
+你准备写入 policy scope 的四条边界是准确的。
+
+---
+
+# 二、batch 调度：**整个 batch 一个 executor job**
+
+这里你的方案对。
+
+正确结构应当是：
+
+```text
+instr_batch
+    │
+    ├─ plan/front-end validation
+    │
+    └─ _DeviceExecutor.run(batch_job)    ← 只提交一次
+                  │
+                  │ BUSY=true 整批保持
+                  ▼
+             batch worker
+                  │
+                  ├─ op1.fn(...)
+                  │    └─ _call()
+                  │         └─ acquire/release _DEVICE_LOCK
+                  │
+                  ├─ op2.fn(...)
+                  │    └─ _call()
+                  │
+                  ...
+                  ▼
+             batch complete
+                  │
+                  └─ BUSY=false
+```
+
+这同时满足三个目标。
+
+第一，**整批期间进程内不可插入其他设备 job**。
+
+对于：
+
+```text
+set_frequency
+measure
+set_frequency
+measure
+```
+
+这是正确性要求。若 step 之间释放 BUSY，其他调用插入：
+
+```text
+batch: set 1 kHz
+other: set 10 kHz
+batch: measure
+```
+
+测量语义直接失效。
+
+第二，batch 本身不持 `_DEVICE_LOCK`，所以每个 operation 内部 `_call()` 正常获取普通 `threading.Lock`，没有重入死锁。
+
+第三，operation 的实际设备调用路径继续完全复用：
+
+```text
+legacy
+instr_call
+instr_batch
+    ↓
+同一个 operation implementation
+    ↓
+_call
+    ↓
+policy / lock / verify / audit
+```
+
+只有**调度粒度**发生变化。
+
+有一点术语我建议写准确：
+
+> batch 提供的是 **进程内 non-interleaving / exclusive sequence**，不要称为事务原子性。
+
+因为：
+
+```text
+step 1 成功
+step 2 成功
+step 3 失败
+```
+
+前两步不会回滚。
+
+而且跨进程仍然可能插入。
+
+所以它的保证准确表述应当是：
+
+```text
+同一个 instrument MCP server 进程内，
+batch 从第一个 step 到最后一个 step 期间不会被其他 device executor job 插入。
+```
+
+---
+
+## 一个实现上的关键点
+
+batch worker 内不要重新调用公开的：
+
+```python
+instr_call(...)
+```
+
+如果 `instr_call` 自己还会：
+
+```python
+_DeviceExecutor.run(...)
+```
+
+就会形成 executor 自调用。
+
+应该调用 executor 内部原本用于执行单个 operation 的那层函数。
+
+如果目前还没有明确分层，我会整理成类似：
+
+```python
+def _invoke_operation(op, args):
+    # 已进入 worker
+    return op.fn(**args)
+```
+
+于是：
+
+```text
+instr_call
+    -> executor.run(lambda: _invoke_operation(...))
+
+instr_batch
+    -> executor.run(lambda: _run_batch(...))
+                              |
+                              +-> _invoke_operation(...)
+                              +-> _invoke_operation(...)
+```
+
+这样结构最干净。
+
+---
+
+# 三、deadline：选择 **(b) step 边界协作式停止**
+
+这里你的判断也更好。
+
+我明确排除：
+
+### (c) 真取消
+
+如果 worker 已经进入：
+
+```text
+pyvisa
+vendor DLL
+USB backend
+socket recv
+native driver
+```
+
+Python 层没有可靠手段把这个调用安全中断。
+
+声称“cancelled”会制造错误事实。
+
+### (a) 单纯沿用“调用方放弃等待”
+
+对于单 operation 可以接受。
+
+对于 1000 step batch，语义过差：
+
+```text
+调用方 30 秒 timeout
+返回“放弃等待”
+worker 又运行 20 分钟
+继续不断修改仪器状态
+```
+
+调用方几乎无法判断设备未来还会执行多少动作。
+
+因此 batch 应增加一个**执行侧 cooperative deadline**。
+
+---
+
+## 我推荐的精确定义
+
+假设：
+
+```json
+"deadline_s": 120
+```
+
+worker 在**每个 leaf operation 开始之前**检查：
+
+```python
+if monotonic() >= deadline:
+    stop_batch(reason="deadline_reached")
+```
+
+已经开始的 operation：
+
+```text
+不尝试中断
+等待它自然返回
+随后不再开始下一步
+```
+
+因此上界是：
+
+> deadline 到达以后，最多继续完成一个已经启动的 batch step。
+
+这里还要再精确一层：
+
+**一个 step 可能内部发送多条 SCPI。**
+
+所以真正保证的是：
+
+```text
+最多继续完成一个 canonical operation
+```
+
+不能承诺：
+
+```text
+最多再发一条 SCPI
+```
+
+这点值得直接写进文档。
+
+---
+
+## 不要把两种 timeout 混成一个概念
+
+你目前已有：
+
+```text
+wait timeout
+```
+
+语义：
+
+```text
+调用方停止等待
+worker 继续运行
+BUSY 保持
+```
+
+batch 新增的是：
+
+```text
+execution deadline
+```
+
+语义：
+
+```text
+worker 在 operation 边界停止启动新 step
+当前 operation 不可强杀
+```
+
+我甚至建议字段名称不要继续叫裸的 `timeout_s`。
+
+例如明确区分：
+
+```json
+{
+  "execution_deadline_s": 120
+}
+```
+
+已有 executor 的：
+
+```text
+wait_timeout
+```
+
+继续保持原语义。
+
+这样以后日志不会出现这种模糊描述：
+
+```text
+batch timeout
+```
+
+让人不知道到底是 caller 不等了，还是 execution 已进入停止状态。
+
+---
+
+# 四、变量替换：**先结构校验，再变量解析，再 operation schema 校验**
+
+你指出的 `$freq` 问题成立。
+
+如果：
+
+```json
+"frequency_hz": "$freq"
+```
+
+直接送入 FastMCP schema：
+
+```json
+"type": "number"
+```
+
+必然应该失败。
+
+所以 operation 级别的校验顺序必须是：
+
+```text
+plan structural validation
+        ↓
+变量解析 / foreach binding
+        ↓
+得到实际 JSON value
+        ↓
+operation schema validation
+        ↓
+execute
+```
+
+但我会改掉上一轮那个字符串 `$freq` 设计。
+
+## 不建议字符串模板变量
+
+不要：
+
+```json
+"frequency_hz": "$freq"
+```
+
+建议用显式 typed reference：
+
+```json
+"frequency_hz": {
+  "$var": "freq"
+}
+```
+
+如果：
+
+```text
+freq = 1000.0
+```
+
+替换以后节点就是 JSON number：
+
+```json
+"frequency_hz": 1000.0
+```
+
+类型天然正确。
+
+这还能避免：
+
+```text
+"$freq"
+"abc-$freq"
+"$$freq"
+```
+
+这一类模板字符串转义和类型转换问题。
+
+v1 最好完全不支持字符串插值。
+
+如果需要字符串参数，就让变量本身是字符串：
+
+```json
+{
+  "path": {"$var": "output_path"}
+}
+```
+
+---
+
+# 五、capture：不要依赖模型猜结果结构
+
+我不建议把正确性建立在：
+
+> 模型先看 `instr_describe`，记住返回字段，再写 capture
+
+这个方式上。
+
+`instr_describe` 可以帮助模型，但它属于知识提示层，不适合成为执行语义的依赖。
+
+我推荐的 v1 capture 只有两种：
+
+```text
+1. 整个 result
+2. result 内明确 JSON Pointer
+```
+
+例如：
+
+```json
+"capture": {
+  "var": "measurement",
+  "source": "result"
+}
+```
+
+捕获完整：
+
+```json
+response["result"]
+```
+
+或者：
+
+```json
+"capture": {
+  "var": "voltage",
+  "source": "result",
+  "pointer": "/value"
+}
+```
+
+使用 RFC 6901 JSON Pointer。
+
+我会选 **JSON Pointer，不选 JSONPath**。
+
+原因很简单：
+
+```text
+JSON Pointer：确定、简单、标准化、实现小
+JSONPath：查询语言更强，同时也复杂很多
+```
+
+batch v1 不需要过滤器、通配符和表达式。
+
+---
+
+## 返回体先由 server 解析
+
+既然 operation 当前统一返回 JSON 字符串：
+
+```json
+{
+  "ok": true,
+  "model": "...",
+  "result": ...
+}
+```
+
+batch 应在 server 内：
+
+```python
+outcome = json.loads(operation_return)
+```
+
+然后 capture 操作结构化对象。
+
+不要让 plan 针对序列化字符串操作。
+
+如果：
+
+```text
+pointer 不存在
+result 不是预期 JSON 类型
+返回体不是合法 JSON
+```
+
+直接产生明确的 step failure，例如：
+
+```text
+capture_pointer_not_found
+invalid_operation_response
+```
+
+不要尝试猜字段。
+
+---
+
+## `instr_describe` 的角色
+
+仍然值得在 describe 中逐步加入：
+
+```text
+result description
+常用 capture pointer
+example
+```
+
+例如：
+
+```json
+{
+  "result": {
+    "description": "...",
+    "common_pointers": [
+      "/value",
+      "/unit"
+    ]
+  }
+}
+```
+
+但这是**可发现性增强**。
+
+batch engine 本身只认识：
+
+```text
+完整 result
+JSON Pointer
+```
+
+两者要分开。
+
+---
+
+# 六、plan 应定义为 **版本化 JSON DSL**
+
+这一点我建议直接定下来：
+
+> **JSON 是语法载体，JSON Schema 是结构验证器，整个 plan 应从 v1 起就定义为一个有版本号的小 DSL。**
+
+例如：
+
+```json
+{
+  "plan_version": 1,
+  "steps": [...]
+}
+```
+
+不需要创造文本语言。
+
+继续用 JSON 即可。
+
+原因是 JSON Schema 只能很好地表达：
+
+```text
+字段类型
+required
+oneOf
+嵌套结构
+递归 steps
+```
+
+但下面这些属于**语言语义**：
+
+```text
+变量作用域
+foreach 绑定
+capture 生命周期
+变量遮蔽
+step 执行顺序
+deadline 检查点
+错误传播
+跨进程 warning 聚合
+最大展开步数
+```
+
+这些无法仅靠 JSON Schema 定义完整。
+
+因此应有：
+
+```text
+Batch Plan DSL v1
+```
+
+以及配套：
+
+```text
+plan.schema.json
+execution_semantics.md
+```
+
+---
+
+# 七、我建议 v1 把语义再收紧一点
+
+我会给 v1 定下面这些硬规则。
+
+### 变量作用域
+
+```text
+foreach var：仅其 steps 内可见
+capture var：capture 后的后续 sibling steps 可见
+```
+
+禁止隐式全局污染。
+
+### 禁止同层变量覆盖
+
+例如已经存在：
+
+```text
+freq
+```
+
+再次 capture：
+
+```text
+freq
+```
+
+直接 plan validation error。
+
+不要悄悄覆盖。
+
+### 展开上限
+
+即使不用安全沙箱，也应防止意外：
+
+```text
+1000 × 1000 nested foreach
+```
+
+建议 execution 前或运行中强制：
+
+```text
+max_leaf_steps
+max_nesting_depth
+```
+
+这属于工程资源保护。
+
+### 每个实际 operation 调用前重新 schema validate
+
+即：
+
+```text
+foreach binding
+capture substitution
+        ↓
+最终 args
+        ↓
+FastMCP-derived schema
+```
+
+你的阶段 1 已经保证 schema 单一来源，这里正好复用，不需要另写规则。
+
+---
+
+# 八、最终建议的阶段 4 结构
+
+我现在会把阶段 4 定义成下面这样：
+
+```text
+instr_batch(plan)
+        │
+        ├─ validate Batch Plan DSL v1
+        │
+        └─ submit ONE executor job
+                    │
+                    │ BUSY held for whole batch
+                    ▼
+              batch interpreter
+                    │
+       ┌────────────┼────────────┐
+       │            │            │
+   foreach       capture      deadline
+       │            │       boundary check
+       └────────────┼────────────┘
+                    ▼
+              resolve variables
+                    ▼
+            FastMCP schema validate
+                    ▼
+          canonical operation invoke
+                    ▼
+       policy / _DEVICE_LOCK / verify / audit
+```
+
+最终保证写成四条就很清楚：
+
+1. **单进程内 batch 整体不可被其他 executor job 插入。**
+2. **跨进程继续只告警，不提供互斥保证。**
+3. **execution deadline 仅在 operation 边界停止后续步骤，不强杀已开始的 operation。**
+4. **所有 operation 在变量解析后继续使用现有 FastMCP 派生 schema 与同一执行路径。**
+
+所以这一轮对争议点的裁决是：
+
+- 跨进程：**维持现有 warning-only 决策，我上一轮的 mutex 建议撤回。**
+- batch 调度：**你的一整个 batch 一个 executor job 更正确。**
+- deadline：**你提出的 (b) 更正确。**
+- 变量：**先解析成真实 typed value，再做 operation schema 校验。**
+- capture：**整 result + 显式 JSON Pointer，describe 只帮助发现，不承担正确性。**
+- plan：**从第一版就叫/version 成 JSON Batch Plan DSL v1，同时用 JSON Schema 校验结构。**
+
+这套已经足够开始阶段 4，实现边界也比较干净。

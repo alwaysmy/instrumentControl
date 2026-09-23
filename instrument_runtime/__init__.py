@@ -7,7 +7,7 @@
         与进程内设备锁）——这些**不依赖 MCP wrapper**，供 compact profile、CLI、
         代码运行时共用。依赖仅标准库，由 verify_broker_offline.py 断言。
 """
-from . import audit, broker, policy, validate, verify
+from . import audit, batch, broker, plan, policy, validate, verify
 from .broker import (
     DEVICE_LOCK,
     ScpiDecision,
@@ -28,6 +28,13 @@ from .catalog import (
     safety_for_tool,
     unclassified,
 )
+from .plan import (
+    PLAN_VERSION,
+    SERVER_MAX_LEAF_STEPS,
+    SERVER_MAX_NESTING_DEPTH,
+    ValidatedPlan,
+    validate_plan,
+)
 from .policy import classify_forbidden, is_forbidden, is_query_only
 from .registry import (
     RISK_LEVELS,
@@ -46,16 +53,21 @@ __all__ = [
     "DEVICE_BY_PREFIX",
     "DEVICE_LOCK",
     "NOTES_BY_TOOL",
+    "PLAN_VERSION",
     "RAW_SCPI_TOOLS",
     "RISK_BY_TOOL",
     "RISK_LEVELS",
+    "SERVER_MAX_LEAF_STEPS",
+    "SERVER_MAX_NESTING_DEPTH",
     "VERIFY_BY_TOOL",
     "Operation",
     "Registry",
     "Safety",
     "ScpiDecision",
+    "ValidatedPlan",
     "acquire_device_lock",
     "audit",
+    "batch",
     "broker",
     "check_query_channel",
     "check_write_channel",
@@ -65,6 +77,7 @@ __all__ = [
     "get_registry",
     "is_forbidden",
     "is_query_only",
+    "plan",
     "policy",
     "register_operation",
     "release_device_lock",
@@ -74,5 +87,6 @@ __all__ = [
     "split_tool_name",
     "unclassified",
     "validate",
+    "validate_plan",
     "verify",
 ]

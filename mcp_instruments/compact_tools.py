@@ -1,14 +1,15 @@
-"""compact profile 的 MCP 前端——4 个按需发现工具。
+"""compact profile 的 MCP 前端——5 个按需工具。
 
-背景（docs/gpt_qa/2026-09-23-instrument-gateway-arch.md，方案 C 阶段 3）：
+背景（docs/gpt_qa/2026-09-23-instrument-gateway-arch.md，方案 C 阶段 3/4）：
 legacy profile 把 68 个工具定义全部塞进每次请求（实测 ≈19.8k token，占该 harness
-静态注入的 44%），而多数会话根本不碰仪器。compact profile 只暴露 4 个稳定工具，
+静态注入的 44%），而多数会话根本不碰仪器。compact profile 只暴露 5 个稳定工具，
 把"有哪些能力"变成**按需数据**：
 
     instr_devices()                     当前有哪些仪器（复用 legacy 的网络发现）
     instr_search(query, device, limit)  按关键词找操作
     instr_describe(ids)                 取某个操作的完整 schema/说明/安全属性
     instr_call(op, args)                执行一次操作
+    instr_batch(plan)                   一次提交多个操作（扫频/批采/参数矩阵）
 
 三点设计约定：
 
@@ -17,11 +18,12 @@ legacy profile 把 68 个工具定义全部塞进每次请求（实测 ≈19.8k 
   避免两个 profile 之间出现同名不同义的陷阱。
 * **执行语义完全复用 legacy**：`instr_call` 经注入的 `run_fn` 走同一个执行器
   （单 worker 串行、device_busy 闸门、墙钟预算），**不另起一条执行路径**——
-  否则"compact 下超时行为不一样"这类差异会极难排查。
-* **安全不经前端**：`instr_call` 不做任何放行判断，护栏仍在操作实现与 policy 层
-  （`instr_query`/`instr_write`/`dg_query` 自带黑名单，DG832 的保护联锁在库里）。
-  所以绕过 compact 前端直接调 `instr_call` 也不会跳过任何门——这正是"护栏下沉"
-  的意义（阶段 2）。前端只负责**入参校验**，把参数错误在离开模型时就说清楚。
+  否则"compact 下超时行为不一样"这类差异会极难排查。`instr_batch` 同理：整批作为
+  **一个** executor job 提交（见 instrument_runtime/batch.py 顶部第 1 条）。
+* **安全不经前端**：`instr_call` / `instr_batch` 都不做放行判断，护栏仍在操作实现与
+  policy 层（`instr_query`/`instr_write`/`dg_query` 自带黑名单，DG832 的保护联锁在库里）。
+  所以绕过 compact 前端直接调也不会跳过任何门——这正是"护栏下沉"的意义（阶段 2）。
+  前端只负责**入参校验**（含 plan 的结构/作用域 preflight），把错误在离开模型时就说清楚。
 """
 from __future__ import annotations
 
@@ -33,7 +35,8 @@ from instrument_runtime.validate import format_issues, validate_for_operation
 __all__ = ["register", "COMPACT_TOOL_NAMES"]
 
 #: compact profile 暴露的工具名（legacy 与之互斥，由 profile 决定注册哪一套）。
-COMPACT_TOOL_NAMES = ("instr_devices", "instr_search", "instr_describe", "instr_call")
+COMPACT_TOOL_NAMES = ("instr_devices", "instr_search", "instr_describe", "instr_call",
+                      "instr_batch")
 
 _MAX_DESCRIBE = 8   # 单次 describe 的操作数上限（防止一次拉回半张表）
 _MAX_LIMIT = 20     # search 返回条数上限
@@ -70,11 +73,12 @@ def _score(op, query: str) -> int:
 
 
 def register(mcp, *, registry, run_fn: Callable[[str, dict], Awaitable[str]],
+             run_batch_fn: Callable[[dict], Awaitable[str]],
              devices_op: str = "instr_discover") -> tuple[str, ...]:
-    """把 4 个 compact 工具注册到给定的 FastMCP 实例，返回工具名元组。
+    """把 compact 工具注册到给定的 FastMCP 实例，返回工具名元组。
 
-    run_fn(op_id, args) 由 server.py 注入——它负责用**既有执行器**跑操作并回填
-    统一返回体；本模块不碰设备、不碰执行器。
+    run_fn(op_id, args) / run_batch_fn(plan) 由 server.py 注入——它们负责用**既有执行器**
+    跑操作并回填统一返回体；本模块不碰设备、不碰执行器。
     """
 
     @mcp.tool()
@@ -191,5 +195,37 @@ def register(mcp, *, registry, run_fn: Callable[[str, dict], Awaitable[str]],
                           "expected": list((target.schema.get("properties") or {}).keys()),
                           "required": list(target.schema.get("required") or [])})
         return await run_fn(target.tool_name, dict(payload))
+
+    @mcp.tool()
+    async def instr_batch(plan: dict) -> str:
+        """一次提交多个操作（扫频、批量采集、参数矩阵），由服务端循环执行。
+
+        plan: Batch Plan DSL v1（版本化 JSON）。最小形态——
+        {"plan_version": 1, "on_error": "stop", "max_leaf_steps": 100,
+         "max_nesting_depth": 1, "execution_deadline_s": 120,
+         "steps": [
+           {"foreach": {"var": "f", "values": [100, 200]},
+            "steps": [
+              {"op": "sdg.set_wave", "args": {"ch": 1, "shape": "sine",
+                                              "freq_hz": {"$var": "f"}, "amp_v": 2.0}},
+              {"op": "dmm.measure", "args": {"function": "volt_ac"},
+               "capture": {"var": "v", "source": "result"}}]}]}
+        必填：plan_version / steps / on_error / max_leaf_steps / max_nesting_depth。
+        on_error ∈ {stop, continue}；max_leaf_steps 是展开后的叶子数自有上限（服务器另有硬上限）。
+
+        变量用**类型化引用** {"$var": "名字"}（不支持字符串模板）；capture 用整 result，
+        或加 "pointer" 取 RFC 6901 JSON Pointer（如 "/value"）。作用域严格：foreach 变量
+        只在其 body 内可见，capture 只对其后的同级步骤可见，**foreach 内捕获的值不能带到
+        外层**（多轮迭代会有多个同名值）。作用域/未定义变量/重名/超限都在执行前一次性拒绝。
+
+        整批作为**一个执行单元**提交：期间进程内其它设备调用得到 device_busy，不会插进
+        序列中间（扫频需要的正是这个）。但它**不是事务**：不回滚，跨进程也不互斥。
+        执行超时只在叶子边界停止后续步骤、不强杀已开始的那个。失败时**已产生的部分结果
+        一并返回**——仪器侧副作用已经发生，隐瞒会让调用方无法判断设备当前状态。
+        """
+        if not isinstance(plan, dict):
+            return _json({"ok": False, "error_type": "param_validation",
+                          "error": f"plan 必须是 JSON 对象，收到 {type(plan).__name__}"})
+        return await run_batch_fn(plan)
 
     return COMPACT_TOOL_NAMES

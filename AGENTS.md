@@ -337,6 +337,8 @@ instrument_runtime/         能力与护栏（**不依赖 MCP/FastMCP/pyvisa**�
   broker.py                 放行口 decide_scpi() + 进程内设备锁
   audit.py  verify.py       审计落盘、回读配名、错误队列排空
   validate.py               按操作 schema 校验 instr_call 入参
+  plan.py                   Batch Plan DSL v1：结构/作用域/规模 preflight（纯函数）
+  batch.py                  batch 解释器（在**一个** executor job 内跑完整批）
 *_control/                  设备库（既有，未改动）
 ```
 
@@ -350,10 +352,39 @@ mcp/fastmcp/pyvisa）。
 | | 工具数 | 工具定义体量 | 说明 |
 |---|---|---|---|
 | `legacy` | 68 | 59677 字符 ≈ 19.9k token | 现状；skill 与文档里的工具名都指这套 |
-| `compact` | 4 | 2674 字符 ≈ 0.9k token | **省约 19.0k token/请求（95.5%）** |
+| `compact` | 5 | 4211 字符 ≈ 1.4k token | **省约 18.5k token/请求（92.9%）** |
 
-compact 的 4 个工具：`instr_devices`（列仪器）、`instr_search`（按关键词找操作）、
-`instr_describe`（取完整参数表/说明/安全属性）、`instr_call`（执行一次操作）。
+compact 的 5 个工具：`instr_devices`（列仪器）、`instr_search`（按关键词找操作）、
+`instr_describe`（取完整参数表/说明/安全属性）、`instr_call`（执行一次操作）、
+`instr_batch`（一次提交多个操作）。
+
+### `instr_batch` 与 Batch Plan DSL v1
+
+组合执行（扫频、批采、参数矩阵）用 `instr_batch(plan)`，plan 是**版本化** JSON
+（`plan_version: 1`）。设计契约与取舍见
+`docs/gpt_qa/2026-09-23-instrument-gateway-arch.md` 的 Q3/Q4；改这条路径前必须读。
+
+**三条不许破的语义**：
+
+1. **整批是一个 executor job**。BUSY 在整批期间保持，进程内其它设备调用拿到
+   `device_busy` 而**不会插进序列中间**——扫频需要的正是这个。它保证的是进程内
+   **non-interleaving**，**不是事务原子性**：不回滚，跨进程也不互斥。
+   若改成"每个叶子各提交一个 job"，BUSY 会在步间释放，别的调用能插进来改频率。
+2. **batch 自己不持 `_DEVICE_LOCK`**，叶子经 `_invoke_operation` 直接用 canonical
+   operation 的实现（各自 `_call` 照常取锁，无嵌套 → 无死锁）。**绝不能**再走一次
+   executor 或走公开的 `instr_call`（那是 executor 自调用）。
+3. **deadline 是协作式的**：只在叶子**开始前**检查，到期不再启动新叶子，已启动的
+   允许自然结束。上界是"最多再完成一个 canonical operation"——**不能**承诺"最多再发
+   一条 SCPI"。底层 native 调用无法安全中断，声称"已取消"是错误事实。
+
+**其它裁定**：变量用类型化引用 `{"$var": "名字"}`（不支持字符串模板）；capture 用整
+result 或 RFC 6901 JSON Pointer，pointer 取不到就报 `capture_pointer_not_found`，
+**绝不猜字段**；作用域严格且**静态拒绝**（foreach 内 capture 不能逃逸到外层、禁止
+shadowing、未定义变量）；`max_leaf_steps` **精确计数但不展开**（超限时零仪器调用），
+服务器另有硬上限；失败时**已产生的部分结果全部返回**（仪器侧副作用已发生，隐瞒会让
+调用方无法判断设备状态）；capture 以**事件日志**返回而非扁平 dict（foreach 同名变量
+在多轮中合法共存）；跨进程争用告警聚合到 run 级的 `contention` 字段并置
+`integrity=contended`，但**不**把 `ok` 改成 false（既有口径是只告警、由调用方裁决）。
 
 **两条不变量**（改 profile 相关代码时勿破）：
 
@@ -369,6 +400,7 @@ compact 的 4 个工具：`instr_devices`（列仪器）、`instr_search`（按�
 校验脚本（全部离线，不碰仪器）：
 `verify_registry_parity.py`（工具表逐字节一致 + 分类覆盖）、`verify_broker_offline.py`
 （分层边界 + 判据等价）、`verify_compact_profile.py`（compact 形态 + 能力不丢 + 成本）、
-`dump_mcp_tools.py`（固化 tools/list 快照）。
+`verify_batch_offline.py`（plan preflight / 作用域 / 规模 / 指针 / 执行 / **"整批一个 job"**
+这条核心不变量）、`dump_mcp_tools.py`（固化 tools/list 快照）。
 
 设计与取舍见 `docs/gpt_qa/2026-09-23-instrument-gateway-arch.md`。

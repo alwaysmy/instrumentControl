@@ -594,6 +594,59 @@ async def _run_operation_by_name(tool_name: str, args: dict) -> str:
                                  label=op.tool_name, args=(), kwargs=args)
 
 
+def _invoke_operation(tool_name: str, args: dict) -> str:
+    """**已处于 executor worker 内**时的叶子调用入口（batch 专用）。
+
+    刻意**不**走 `_executor().run`（那就是 executor 自调用），也**不**走公开的
+    `instr_call`——那两者都会再排一次队。batch 的每个叶子经这里直接调用 canonical
+    operation 的实现，于是各自的 `_call` 照常获取 `_DEVICE_LOCK`（batch 自己不持锁，
+    所以没有重入死锁），执行语义与 legacy / instr_call 完全一致。
+    """
+    from instrument_runtime import get_registry
+
+    op = get_registry().require(tool_name)
+    return op.fn(**args)
+
+
+async def _run_batch(plan_dict: dict) -> str:
+    """compact 的 `instr_batch`：preflight → **一个** executor job 跑完整批 → run 摘要。
+
+    为什么整批只提交一个 job（见 instrument_runtime/batch.py 顶部第 1 条）：
+    BUSY 在整批期间保持，进程内其它设备调用会拿到 device_busy 而**不会插进序列中间**
+    —— 扫频需要的正是这个。若每个叶子各提交一个 job，BUSY 会在步与步之间释放，
+    别的调用就能插进来改频率，扫频结果被污染。
+    """
+    from instrument_runtime import batch as batch_mod
+    from instrument_runtime import get_registry
+    from instrument_runtime.plan import validate_plan
+
+    reg = get_registry()
+    vp, issues = validate_plan(
+        plan_dict,
+        op_exists=lambda oid: (reg.by_id(oid) or reg.get(oid)) is not None,
+    )
+    if issues or vp is None:
+        return json.dumps({
+            "ok": False, "error_type": "plan_validation",
+            "error": "plan 未通过 preflight（结构/操作存在性/作用域/规模），"
+                     "**未执行任何仪器操作**",
+            "issues": [{"path": i.path, "code": i.code, "message": i.message} for i in issues],
+        }, ensure_ascii=False, default=str)
+
+    deadline = vp.execution_deadline_s
+    budget_s = (float(deadline) + 120.0) if deadline else max(_CALL_BUDGET_S, 300.0)
+
+    def job() -> str:
+        summary = batch_mod.run_plan(
+            vp, invoke=_invoke_operation, registry=reg,
+            artifact_dir=Path(ROOT) / "TEST_DATA" / "common" / "batch",
+        )
+        return json.dumps(summary, ensure_ascii=False, default=str)
+
+    _fix_stdout_once()
+    return await _executor().run(job, budget_s, label="instr_batch", args=(), kwargs={})
+
+
 def _preserve_signature(wrapper, fn) -> None:
     """让包装器的签名/注解与原函数逐字一致，保证 FastMCP 生成的 JSON Schema 不变。
 
@@ -2553,7 +2606,8 @@ if __name__ == "__main__":
             from instrument_runtime import get_registry as _get_registry
 
             register_compact_tools(mcp, registry=_get_registry(),
-                                   run_fn=_run_operation_by_name)
+                                   run_fn=_run_operation_by_name,
+                                   run_batch_fn=_run_batch)
         except Exception as e:
             print("[instrumentControl] compact profile registration failed: "
                   f"{type(e).__name__}: {ascii(e)}",

@@ -54,18 +54,24 @@ def main() -> int:
     # ---------------- S1 compact 工具表形态 ----------------
     print("S1 compact surface shape")
     calls: list[tuple[str, dict]] = []
+    batch_calls: list[dict] = []
 
     async def fake_run(op_name: str, args: dict) -> str:
         calls.append((op_name, args))
         return json.dumps({"ok": True, "model": "FAKE", "result": "stub"}, ensure_ascii=False)
 
+    async def fake_batch(plan: dict) -> str:
+        batch_calls.append(plan)
+        return json.dumps({"ok": True, "status": "completed", "run_id": "FAKE"}, ensure_ascii=False)
+
     mcp = FastMCP("compact-verify")
     import compact_tools
 
-    names = compact_tools.register(mcp, registry=reg, run_fn=fake_run)
+    names = compact_tools.register(mcp, registry=reg, run_fn=fake_run, run_batch_fn=fake_batch)
     tools = {t.name: t for t in mcp._tool_manager.list_tools()}
-    check("compact exposes exactly the 4 documented tools",
-          set(tools) == {"instr_devices", "instr_search", "instr_describe", "instr_call"},
+    check("compact exposes exactly the 5 documented tools",
+          set(tools) == {"instr_devices", "instr_search", "instr_describe", "instr_call",
+                         "instr_batch"},
           str(sorted(tools)))
     check("register() returns the same names it registered",
           set(names) == set(tools), str(names))
@@ -161,6 +167,14 @@ def main() -> int:
     r = json.loads(_call(mcp, "instr_devices"))
     check("instr_devices dispatches to the legacy discovery operation",
           r["ok"] and calls and calls[-1][0] == "instr_discover", str(calls[-1:]))
+    # instr_batch：前端只做形态检查并把 plan 交给注入的执行入口（preflight 在 server 侧）
+    r = json.loads(_call(mcp, "instr_batch", plan={"plan_version": 1}))
+    check("instr_batch hands the plan to the injected runner",
+          r["ok"] and batch_calls == [{"plan_version": 1}], str(batch_calls))
+    r = json.loads(_call(mcp, "instr_batch", plan="not-an-object"))
+    check("instr_batch rejects a non-object plan before dispatching",
+          not r["ok"] and r["error_type"] == "param_validation" and len(batch_calls) == 1,
+          r.get("error", "")[:70])
 
     # ---------------- S4 成本对比 ----------------
     print("\nS4 tool-definition cost (the point of this phase)")

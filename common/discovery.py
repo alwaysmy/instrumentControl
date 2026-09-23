@@ -43,10 +43,17 @@ PROBE_ALIVE_CONCURRENCY = 256
 # 分块后峰值内存与块大小成正比（2026-09-16 实机踩到，见 probe_open_ports）。
 PROBE_CHUNK = 2048
 
-# 串口探测挂起硬超时（驱动层 open 可能不受 open_timeout 约束）。
-# 实测（9 口）：并发 8 会让子进程互相争抢串口资源、多数误报超时；并发 4 正常，
-# 全量探测约 15s 完成。
-SERIAL_PROBE_TIMEOUT_S = 8.0
+# 串口探测的超时（2026-09-23 收紧；用户实测口径：0.5s 足够）。
+#
+# 原来内层 open_timeout=2000ms、VISA timeout=1500ms、外层硬杀 8s，一个死口就要 ~2s；
+# 本机 6 个 ASRL 口全空，白等约 3~10s/轮（首次；之后由 _HANGING_PORTS 缓存跳过）。
+# 现在内层 0.5s、外层 2s。**外层为什么不是 0.5s**：它是"连子进程一起杀"的硬超时，
+# 必须覆盖「python 解释器启动（Windows 约 0.3~0.5s）+ 内层 0.5s 超时后正常退出」，
+# 设成 0.5s 会把**所有**串口（含好设备）一律误判成"驱动挂起"——那是正确性回归。
+# 两个值都可用环境变量覆盖（接真实串口仪器且响应慢时调大）。
+SERIAL_PROBE_TIMEOUT_S = 2.0
+SERIAL_PROBE_OPEN_TIMEOUT_MS = 500
+SERIAL_PROBE_VISA_TIMEOUT_MS = 500
 
 # 本进程内探测挂起的串口：后续发现跳过，避免每轮重复空等（子进程隔离已保证
 # 不会污染本进程，这里纯粹是速度优化）。显式重新发现用 forget_hanging_ports() 清空。
@@ -70,12 +77,12 @@ def forget_hanging_ports() -> None:
 _SERIAL_PROBE_SCRIPT = r'''
 import json, sys
 import pyvisa
-res, timeout_ms = sys.argv[1], int(sys.argv[2])
+res, timeout_ms, open_ms = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
 out = {"resource": res, "idn": None, "note": None}
 rm = None
 try:
     rm = pyvisa.ResourceManager()
-    inst = rm.open_resource(res, open_timeout=2000)
+    inst = rm.open_resource(res, open_timeout=open_ms)
     inst.timeout = timeout_ms
     inst.write_termination = "\n"
     inst.read_termination = "\n"
@@ -102,14 +109,16 @@ print(json.dumps(out, ensure_ascii=False))
 '''
 
 
-def probe_serial_isolated(resource: str, timeout_ms: int = 1500,
-                          hard_timeout_s: float = SERIAL_PROBE_TIMEOUT_S) -> dict:
+def probe_serial_isolated(resource: str, timeout_ms: int = SERIAL_PROBE_VISA_TIMEOUT_MS,
+                          hard_timeout_s: float = SERIAL_PROBE_TIMEOUT_S,
+                          open_timeout_ms: int = SERIAL_PROBE_OPEN_TIMEOUT_MS) -> dict:
     """在**子进程**里探测一个串口，超时即杀。返回 {resource,idn,note}。
 
     这是唯一安全的串口探测方式——详见 `_SERIAL_PROBE_SCRIPT` 上方说明
     （本进程线程探测会留下卡死线程，导致后续任何 VISA 调用令进程崩溃）。
     """
-    cmd = [sys.executable, "-c", _SERIAL_PROBE_SCRIPT, resource, str(int(timeout_ms))]
+    cmd = [sys.executable, "-c", _SERIAL_PROBE_SCRIPT, resource,
+           str(int(timeout_ms)), str(int(open_timeout_ms))]
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=hard_timeout_s,
                            encoding="utf-8", errors="replace")
@@ -130,13 +139,13 @@ def probe_serial_isolated(resource: str, timeout_ms: int = 1500,
     return {"resource": resource, "idn": None, "note": "子进程无有效输出"}
 
 
-def probe_serials_isolated(resources: list[str], timeout_ms: int = 1500,
+def probe_serials_isolated(resources: list[str], timeout_ms: int = SERIAL_PROBE_VISA_TIMEOUT_MS,
                            hard_timeout_s: float = SERIAL_PROBE_TIMEOUT_S,
                            workers: int = 4) -> list[dict]:
     """并行探测多个串口（每个一口子进程），保持入参顺序返回。
 
-    已确认挂起的口（`_HANGING_PORTS`）直接跳过返回占位结果——省下每轮 8s×N 的
-    空等（实测 9 口中 4 个挂起，全量 55s → 跳过挂起口后约 10s）。子进程隔离
+    已确认挂起的口（`_HANGING_PORTS`）直接跳过返回占位结果——省下每轮的空等
+    （实测 9 口中 4 个挂起，全量 55s → 跳过挂起口后约 10s）。子进程隔离
     已保证挂起口不会污染本进程，缓存只是加速；`forget_hanging_ports()` 可清空。
     """
     if not resources:

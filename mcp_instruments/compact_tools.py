@@ -170,21 +170,31 @@ def _score(op, query: str) -> int:
 
 def register(mcp, *, registry, run_fn: Callable[[str, dict], Awaitable[str]],
              run_batch_fn: Callable[[dict], Awaitable[str]],
+             devices_quick_fn: Callable[[], str],
              devices_op: str = "instr_discover") -> tuple[str, ...]:
     """把 compact 工具注册到给定的 FastMCP 实例，返回工具名元组。
 
-    run_fn(op_id, args) / run_batch_fn(plan) 由 server.py 注入——它们负责用**既有执行器**
-    跑操作并回填统一返回体；本模块不碰设备、不碰执行器。
+    run_fn / run_batch_fn / devices_quick_fn 由 server.py 注入——它们负责用**既有执行器**
+    或既有解析层取数；本模块不碰设备、不碰执行器。
     """
 
     @mcp.tool()
-    async def instr_devices() -> str:
-        """列出当前可用的仪器（扫描本机各网段与已注册地址）。
+    async def instr_devices(full: bool = False) -> str:
+        """列出仪器。
 
-        等价于 legacy profile 的 `instr_discover`，但**不含 cidr 参数**——compact 下
-        默认扫全部本机网段即可。返回各设备的标识、地址与状态；不做任何设备操作。
+        full=False（默认，**推荐**）：**瞬时**返回已知地址 —— `devices.json` 配置 +
+        `last_good_resources.json` 上次成功缓存。不做任何扫描。
+        full=True：做**全量发现** —— 扫描本机各网段与所有 VISA 接口，能发现新接入或
+        换了地址的仪器。代价很大：本机实测 **355.9s**（两个 /16 共 13 万台主机），
+        期间会**占住设备执行器**（其它仪器调用一律返回 device_busy），而且很可能超过
+        MCP 客户端默认 60s 的工具超时。
+
+        何时需要 full=True：新接了仪器、仪器换了 IP/网段、或已知地址全部连不上。
+        日常"我现在能用哪些仪器"用默认的快速路径即可。
         """
-        return await run_fn(devices_op, {})
+        if full:
+            return await run_fn(devices_op, {})
+        return devices_quick_fn()
 
     @mcp.tool()
     async def instr_search(query: str, device: str | None = None,

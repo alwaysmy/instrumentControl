@@ -18,6 +18,7 @@ import asyncio
 import ipaddress
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -25,6 +26,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Optional
 
 import pyvisa
@@ -417,6 +419,55 @@ def local_cidrs(max_prefix: int = 16) -> list[str]:
     return seen
 
 
+def excluded_cidrs() -> list[str]:
+    """用户配置的「不要扫」网段（**只影响扫描范围，不影响地址解析**）。
+
+    来源（后者补充前者）：
+      * 环境变量 `INSTRUMENT_EXCLUDE_CIDRS`（逗号/分号分隔）
+      * 配置目录 `devices.json` 的 `exclude_cidrs` 数组
+
+    动机（2026-09-23 实测）：本机同时挂着公司网与仪器网，`local_cidrs()` 会返回
+    两个 /16（合计 131,830 台主机），而仪器根本不在公司网那一侧——每轮白扫数分钟，
+    期间还占着执行器 BUSY。排除后扫描范围只留真正可能有仪器的网段。
+
+    已配置（devices.json）与已缓存（last_good_resources.json）的地址**不受影响**：
+    排除只作用在"自动扫描"这一步。
+    """
+    out: list[str] = []
+    raw = os.environ.get("INSTRUMENT_EXCLUDE_CIDRS", "")
+    for part in re.split(r"[,;]", raw):
+        part = part.strip()
+        if part:
+            out.append(part)
+    try:
+        from .resolver import CONFIG_DIR  # noqa: PLC0415  （同包，避免import期循环）
+        cfg = _load_json_quiet(Path(CONFIG_DIR) / "devices.json")
+        for part in (cfg.get("exclude_cidrs") or []):
+            if isinstance(part, str) and part.strip():
+                out.append(part.strip())
+    except Exception:
+        pass
+    seen: list[str] = []
+    for c in out:
+        try:
+            norm = str(ipaddress.ip_network(c, strict=False))
+        except ValueError:
+            continue                                  # 写错的项忽略，不让它拖垮扫描
+        if norm not in seen:
+            seen.append(norm)
+    return seen
+
+
+def _load_json_quiet(path: "Path") -> dict:
+    """读 JSON，任何异常都返回空 dict（配置读不到不该影响扫描）。"""
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
 def local_scan_segments(cidrs: Optional[list[str]] = None) -> list[str]:
     """把 `local_cidrs()` 的结果排成**由窄到宽**的扫描顺序（近邻 /24 优先）。
 
@@ -425,8 +476,25 @@ def local_scan_segments(cidrs: Optional[list[str]] = None) -> list[str]:
     就在与 PC **同一个 /24** 里。先扫近邻 /24（~5s）命中即返回，未命中才放宽到
     整个网段，兼顾"常见情形快"与"宽网段不漏"。显式传入 `cidrs` 时原样返回
     （调用方自己指定了范围，不要替他改）。
+
+    另外**剔除 `excluded_cidrs()` 里配置的网段**（2026-09-23 加）：公司网/Tailscale
+    那一侧不会有仪器，扫它纯属浪费（本机因此每轮白扫两个 /16）。
     """
     nets = list(cidrs) if cidrs else local_cidrs()
+    excl: list[ipaddress.IPv4Network] = []
+    for c in excluded_cidrs():
+        try:
+            excl.append(ipaddress.ip_network(c, strict=False))
+        except ValueError:
+            continue
+
+    def _excluded(net_str: str) -> bool:
+        try:
+            n = ipaddress.ip_network(net_str, strict=False)
+        except ValueError:
+            return False
+        return any(n.subnet_of(e) for e in excl)
+
     out: list[str] = []
     for net in nets:
         try:
@@ -434,15 +502,15 @@ def local_scan_segments(cidrs: Optional[list[str]] = None) -> list[str]:
         except ValueError:
             continue
         if network.prefixlen >= 24:
-            if net not in out:
+            if net not in out and not _excluded(net):
                 out.append(net)
             continue
         # 宽网段：把它包含的"接口所在 /24"排前面（用接口地址定位，而不是猜第一个 /24）
         narrows = [str(n) for n in _interface_slash24s() if n.subnet_of(network)]
         for n in narrows:
-            if n not in out:
+            if n not in out and not _excluded(n):
                 out.append(n)
-        if net not in out:                       # 兜底：宽网段本身排最后
+        if net not in out and not _excluded(net):    # 兜底：宽网段本身排最后
             out.append(net)
     return out
 

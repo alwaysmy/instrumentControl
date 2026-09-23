@@ -647,6 +647,40 @@ async def _run_batch(plan_dict: dict) -> str:
     return await _executor().run(job, budget_s, label="instr_batch", args=(), kwargs={})
 
 
+def _known_devices_quick() -> str:
+    """compact `instr_devices` 的**快速路径**：只报已配置 + 上次成功缓存的地址，**不扫描**。
+
+    为什么要它（2026-09-23 实测）：全量发现要扫本机各网段——本机两个 /16 合计
+    131,830 台主机，实测 **355.9s**。它既超过 MCP 客户端默认的 60s 工具超时
+    （客户端直接报 -32001），又全程占着执行器 BUSY（期间**所有**其它仪器调用都返回
+    device_busy）。而多数时候调用方只想知道"我现在能用哪些仪器"——这个答案就在
+    配置与缓存里，取它是瞬时的。
+    """
+    from common import resolver
+
+    known = resolver.known_resources()
+    devices = [{"kind": k, "resource": v} for k, v in sorted(known.items())]
+    excluded: list[str] = []
+    try:
+        from common import discovery
+        excluded = discovery.excluded_cidrs()
+    except Exception:                                            # noqa: BLE001
+        pass
+    payload = {
+        "ok": True,
+        "mode": "known",
+        "count": len(devices),
+        "devices": devices,
+        "source": "devices.json 配置 + last_good_resources.json 缓存",
+        "scanned": False,
+        "hint": "这是**已知地址**，未做实时扫描。要看当前真正在线、且能发现新接入/换地址"
+                "的仪器，用 instr_devices(full=true)（本机实测 355.9s，会占用设备执行器）。",
+    }
+    if excluded:
+        payload["excluded_cidrs"] = excluded
+    return json.dumps(payload, ensure_ascii=False, default=str)
+
+
 def _preserve_signature(wrapper, fn) -> None:
     """让包装器的签名/注解与原函数逐字一致，保证 FastMCP 生成的 JSON Schema 不变。
 
@@ -2607,7 +2641,8 @@ if __name__ == "__main__":
 
             register_compact_tools(mcp, registry=_get_registry(),
                                    run_fn=_run_operation_by_name,
-                                   run_batch_fn=_run_batch)
+                                   run_batch_fn=_run_batch,
+                                   devices_quick_fn=_known_devices_quick)
         except Exception as e:
             print("[instrumentControl] compact profile registration failed: "
                   f"{type(e).__name__}: {ascii(e)}",

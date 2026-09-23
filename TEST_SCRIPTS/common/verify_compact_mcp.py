@@ -19,6 +19,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -130,6 +131,19 @@ def main() -> int:
               all((t.get("description") or "").strip() for t in tools.values()), "ok")
 
         print("\nS2 pure-registry tools over the wire (no device contact)")
+        # instr_devices 快速路径：只读配置+缓存，**不扫描**。全量发现实测 355.9s 且会占住
+        # 执行器 BUSY——所以默认必须是瞬时的那条路。
+        t0 = time.perf_counter()
+        r = p.call("instr_devices", {})
+        dt = time.perf_counter() - t0
+        check("instr_devices defaults to the known-address path",
+              r.get("mode") == "known" and r.get("scanned") is False, str(r.get("mode")))
+        check("known-address path is instant (no network scan)", dt < 3.0, f"{dt:.2f}s")
+        check("known-address result names its source",
+              bool(r.get("source")), str(r.get("source"))[:60])
+        check("known-address result lists the cached/configured devices",
+              isinstance(r.get("devices"), list), f"count={r.get('count')}")
+
         r = p.call("instr_search", {"query": "measure vpp"})
         check("instr_search returns hits", r.get("ok") and r.get("count", 0) > 0,
               f"count={r.get('count')}")

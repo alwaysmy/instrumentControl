@@ -64,10 +64,19 @@ def main() -> int:
         batch_calls.append(plan)
         return json.dumps({"ok": True, "status": "completed", "run_id": "FAKE"}, ensure_ascii=False)
 
+    quick_calls: list[int] = []
+
+    def fake_devices_quick() -> str:
+        quick_calls.append(1)
+        return json.dumps({"ok": True, "mode": "known", "count": 2,
+                           "devices": [{"kind": "dg", "resource": "USB0::FAKE::INSTR"}],
+                           "scanned": False}, ensure_ascii=False)
+
     mcp = FastMCP("compact-verify")
     import compact_tools
 
-    names = compact_tools.register(mcp, registry=reg, run_fn=fake_run, run_batch_fn=fake_batch)
+    names = compact_tools.register(mcp, registry=reg, run_fn=fake_run, run_batch_fn=fake_batch,
+                                   devices_quick_fn=fake_devices_quick)
     tools = {t.name: t for t in mcp._tool_manager.list_tools()}
     check("compact exposes exactly the 5 documented tools",
           set(tools) == {"instr_devices", "instr_search", "instr_describe", "instr_call",
@@ -196,8 +205,16 @@ def main() -> int:
                          args={"ch": 1, "wvtp": "sine", "freq_hz": 1000, "amp_v": 2.0}))
     check("canonical id dispatches to the underlying tool name",
           calls and calls[0][0] == "sdg_set_wave", str(calls))
+    # instr_devices：默认走**快速路径**（配置+缓存，不扫描），full=True 才全量发现。
+    calls.clear(); quick_calls.clear()
     r = json.loads(_call(mcp, "instr_devices"))
-    check("instr_devices dispatches to the legacy discovery operation",
+    check("instr_devices defaults to the fast (no-scan) path",
+          r.get("mode") == "known" and r.get("scanned") is False and len(quick_calls) == 1,
+          f"mode={r.get('mode')} scanned={r.get('scanned')}")
+    check("fast path does NOT touch the executor (no scan, no BUSY)",
+          calls == [], str(calls))
+    r = json.loads(_call(mcp, "instr_devices", full=True))
+    check("full=True dispatches to the real discovery operation",
           r["ok"] and calls and calls[-1][0] == "instr_discover", str(calls[-1:]))
     # instr_batch：前端只做形态检查并把 plan 交给注入的执行入口（preflight 在 server 侧）
     r = json.loads(_call(mcp, "instr_batch", plan={"plan_version": 1}))

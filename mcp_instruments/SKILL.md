@@ -19,12 +19,19 @@ MCP server：`mcp_instruments/server.py`。**能力共 68 个操作（八台设�
 按下述方式换用即可——**能力完全一样，路径同一条**：
 
 ```
-instr_devices()                      先看有哪些仪器在线（等价 instr_discover，无参数）
+instr_devices()                      有哪些仪器（默认**瞬时**：只读配置+上次成功缓存）
+instr_devices(full=true)             全量发现（扫各网段；本机实测 355.9s，且会占住执行器）
 instr_search("设置的词")              找操作，返回规范 id + 一句话摘要
+instr_search("")                      **列出全部能力目录**（按设备族分组）——不知道用什么词时先用它
 instr_describe("sds_measure")        取该操作的完整参数表 / 说明 / 安全属性 / 关键约束
 instr_call(op, args)                 执行一次（op 用规范 id 或 legacy 名都行）
 instr_batch(plan)                    组合执行（扫频 / 批采 / 参数矩阵）
 ```
+
+**`instr_devices` 默认不做扫描**：它读 `devices.json` 配置 + `last_good_resources.json`
+缓存，瞬时返回（实测 0.03s）。只有**新接仪器 / 换了 IP 网段 / 已知地址全连不上**时才
+值得用 `full=true` —— 那会扫本机所有网段（本机两个 /16 共 13 万台主机，355.9s），
+期间**其它仪器调用一律返回 device_busy**，还可能超出客户端默认 60s 的工具超时。
 
 **规范 id = legacy 工具名把首个下划线换成点**：
 

@@ -184,7 +184,43 @@ def main() -> int:
         check("instr_batch rejects exceeding max_nesting_depth",
               r.get("error_type") == "plan_validation" and "too_deep" in codes, str(codes))
 
-        print("\nS4 startup self-check")
+        print("\nS4 device path through compact, against an unreachable loopback resource")
+        # 关键：用**故意不可达**的回环资源（127.0.0.1 的关闭端口）走一遍完整链路——
+        # compact → executor job → _invoke_operation → 操作实现 → _call → VISA connect
+        # → 错误分类 → 返回体。它会在"连不上"处停下，**因此不接触任何真实仪器**，
+        # 却足以证明设备路径真的被打通了（而不是只验证了调度层）。
+        # 选 instr.query 是因为它同时经过 policy（raw_scpi 通道的纯查询判据）。
+        DEAD = "TCPIP0::127.0.0.1::9::SOCKET"
+        r = p.call("instr_call", {"op": "instr.query",
+                                  "args": {"resource": DEAD, "cmd": "*IDN?",
+                                           "timeout_ms": 500}}, timeout=120)
+        check("dead-resource call fails (not silently ok)", r.get("ok") is False, str(r)[:90])
+        check("failure is classified as a connection problem (VISA layer was reached)",
+              r.get("error_type") == "connection", str(r.get("error_type")))
+        check("response echoes the probed resource (no device was actually touched)",
+              r.get("resource") == DEAD, str(r.get("resource"))[:60])
+
+        # 同一个死资源走 batch：验证批量路径也真的驱动了操作实现
+        dead_plan = {"plan_version": 1, "on_error": "continue", "max_leaf_steps": 8,
+                     "max_nesting_depth": 1,
+                     "steps": [{"foreach": {"var": "i", "values": [1, 2, 3]},
+                                "steps": [{"op": "instr.query",
+                                           "args": {"resource": DEAD, "cmd": "*IDN?",
+                                                    "timeout_ms": 500}}]}]}
+        b = p.call("instr_batch", {"plan": dead_plan}, timeout=300)
+        check("batch drove all 3 leaves through the device path",
+              b.get("leaf_count") == 3, str(b.get("leaf_count")))
+        check("each leaf failed at the connection layer",
+              all((x.get("error_type") == "connection")
+                  for x in (b.get("leaf_results") or [])),
+              str([x.get("error_type") for x in (b.get("leaf_results") or [])]))
+        check("on_error=continue kept every leaf result",
+              b.get("failure_count") == 3 and b.get("success_count") == 0,
+              f"fail={b.get('failure_count')} ok={b.get('success_count')}")
+        check("batch summary was persisted", bool(b.get("result_artifact")),
+              str(b.get("result_artifact"))[:70])
+
+        print("\nS5 startup self-check")
         log = p.close()
         reg = [l for l in log.splitlines() if "runtime registry" in l]
         check("startup self-check reports profile=compact and 68 operations",

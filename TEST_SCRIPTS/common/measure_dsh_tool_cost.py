@@ -59,7 +59,7 @@ def measure(path: Path) -> dict | None:
     with open(path, "rb") as f:
         raw = d.stream_reader(f).read()
     lines = [l for l in raw.decode("utf-8", "replace").splitlines() if l.strip()]
-    best: dict | None = None
+    recs: list[dict] = []
     for line in lines:
         try:
             o = json.loads(line)
@@ -71,22 +71,31 @@ def measure(path: Path) -> dict | None:
         tools = hdr.get("tools") or []
         cfg = hdr.get("config") or {}
         blob = json.dumps(tools, ensure_ascii=False)
-        rec = {
+        recs.append({
             "session": path.parent.name,
             "provider": cfg.get("provider"),
             "model": cfg.get("model"),
             "tool_count": len(tools),
             "tool_def_chars": len(blob),
             "tool_def_tokens_est": len(blob) // CHARS_PER_TOKEN,
+            # 仪器工具单独计数：这正是 profile 切换所改变的那一组
+            "instrument_tools": sum(1 for t in tools
+                                    if str(t.get("name", "")).startswith("mcp__instrument__")),
             "top_tools": sorted(
                 ({"name": t.get("name"),
                   "chars": len(json.dumps(t, ensure_ascii=False))} for t in tools),
                 key=lambda x: -x["chars"])[:5],
-        }
-        # 同一会话可能有多条（换模型/换 profile）；取工具定义最大的那条代表切换前状态
-        if best is None or rec["tool_def_chars"] > best["tool_def_chars"]:
-            best = rec
-    return best
+        })
+    if not recs:
+        return None
+    # ⚠ 取**最新**一条，不是最大的那条：同一会话可能跨 profile 切换（重启后继续同一个会话），
+    # 最大值会永远停在切换前那张大表上，拿它做 after 对比会得出"没变化"的错误结论。
+    out = dict(recs[-1])
+    out["request_count"] = len(recs)
+    out["max_tool_def_chars"] = max(r["tool_def_chars"] for r in recs)
+    out["max_tool_count"] = max(r["tool_count"] for r in recs)
+    out["changed_during_session"] = len({r["tool_count"] for r in recs}) > 1
+    return out
 
 
 def main() -> int:
@@ -102,15 +111,19 @@ def main() -> int:
     if args.compare:
         a = json.loads(Path(args.compare[0]).read_text(encoding="utf-8"))
         b = json.loads(Path(args.compare[1]).read_text(encoding="utf-8"))
-        ra, rb = a["best"], b["best"]
-        print(f"before: {ra['tool_count']:4d} tools  {ra['tool_def_chars']:7d} chars"
-              f"  ~{ra['tool_def_tokens_est']:6d} tok  ({ra.get('provider')}/{ra.get('model')})")
-        print(f"after : {rb['tool_count']:4d} tools  {rb['tool_def_chars']:7d} chars"
-              f"  ~{rb['tool_def_tokens_est']:6d} tok  ({rb.get('provider')}/{rb.get('model')})")
+        ra, rb = a["latest"], b["latest"]
+        for tag, r in (("before", ra), ("after ", rb)):
+            print(f"{tag}: {r['tool_count']:4d} tools (instrument {r.get('instrument_tools', '?'):>2}) "
+                  f"{r['tool_def_chars']:7d} chars ~{r['tool_def_tokens_est']:6d} tok"
+                  f"  ({r.get('provider')}/{r.get('model')})")
         if ra["tool_def_chars"]:
             saved = ra["tool_def_tokens_est"] - rb["tool_def_tokens_est"]
             pct = 100.0 * (1 - rb["tool_def_chars"] / ra["tool_def_chars"])
             print(f"saved : ~{saved} tok per request ({pct:.1f}% smaller)")
+        if rb.get("changed_during_session"):
+            print(f"note  : the 'after' session spans a profile change "
+                  f"(tool counts seen: up to {rb.get('max_tool_count')}); "
+                  f"using its LATEST request, which is the current state")
         return 0
 
     files = session_files(args.home, args.workspace, args.limit)
@@ -118,29 +131,33 @@ def main() -> int:
         print(f"no session logs found (home={args.home})")
         return 2
 
-    print(f"{'session':40s} {'tools':>6s} {'chars':>8s} {'~tok':>7s}  model")
+    print(f"{'session':38s} {'tools':>6s} {'instr':>6s} {'chars':>8s} {'~tok':>7s}  model")
     recs = []
     for p in files:
         rec = measure(p)
         if not rec:
             continue
         recs.append(rec)
-        print(f"{rec['session'][:40]:40s} {rec['tool_count']:6d} "
-              f"{rec['tool_def_chars']:8d} {rec['tool_def_tokens_est']:7d}  {_ascii(rec['model'])}")
+        flag = "  <- spanned a profile change" if rec.get("changed_during_session") else ""
+        print(f"{rec['session'][:38]:38s} {rec['tool_count']:6d} "
+              f"{rec.get('instrument_tools', -1):6d} "
+              f"{rec['tool_def_chars']:8d} {rec['tool_def_tokens_est']:7d}  "
+              f"{_ascii(rec['model'])}{flag}")
 
     if not recs:
         print("no request/header events in these sessions (likely empty sessions)")
         return 2
 
-    best = max(recs, key=lambda r: r["tool_def_chars"])
-    print(f"\nlargest tool table: {best['tool_count']} tools / {best['tool_def_chars']} chars"
-          f" ~= {best['tool_def_tokens_est']} tok (session {best['session']})")
-    print(f"  biggest single tools: {_ascii(best['top_tools'])}")
+    latest = recs[0]   # 列表按 mtime 倒序，第一条即最近使用的会话
+    print(f"\nlatest session ({latest['session']}): {latest['tool_count']} tools"
+          f" (instrument {latest.get('instrument_tools', '?')}) / "
+          f"{latest['tool_def_chars']} chars ~= {latest['tool_def_tokens_est']} tok")
+    print(f"  biggest single tools: {_ascii(latest['top_tools'])}")
 
     if args.out:
         payload = {"measured_at": datetime.now().isoformat(timespec="seconds"),
                    "home": args.home, "workspace": args.workspace,
-                   "sessions": recs, "best": best}
+                   "sessions": recs, "latest": latest}
         Path(args.out).write_text(json.dumps(payload, ensure_ascii=False, indent=2),
                                   encoding="utf-8")
         print(f"\nartifact: {args.out}")

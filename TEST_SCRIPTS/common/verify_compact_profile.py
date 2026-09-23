@@ -116,6 +116,16 @@ def main() -> int:
     check("search on a miss returns an empty result with a hint",
           r["ok"] and r["count"] == 0 and "hint" in r, "ok")
 
+    # 中文查询（2026-09-23 实测缺陷回归）：原实现按空白切词，中文整句当一个词，
+    # 于是中文提问恒返回 0 条命中——而使用者平时就用中文。现按 CJK 二元组切分。
+    for q in ("读信号源当前状态", "波形发生器", "示波器测量", "万用表电压"):
+        r = json.loads(_call(mcp, "instr_search", query=q))
+        check(f"CJK query finds hits: {q}", r["ok"] and r["count"] > 0,
+              f"count={r.get('count')}")
+    r = json.loads(_call(mcp, "instr_search", query="信号源 输出"))
+    check("mixed CJK query with a space still works",
+          r["ok"] and r["count"] > 0, f"count={r.get('count')}")
+
     r = json.loads(_call(mcp, "instr_describe", ids="sds_measure"))
     check("describe accepts a tool name and returns the parameter table",
           r["ok"] and r["count"] == 1

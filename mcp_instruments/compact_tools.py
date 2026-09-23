@@ -28,6 +28,7 @@ legacy profile 把 68 个工具定义全部塞进每次请求（实测 ≈19.8k 
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Awaitable, Callable
 
 from instrument_runtime.validate import format_issues, validate_for_operation
@@ -46,30 +47,125 @@ def _json(payload: Any) -> str:
     return json.dumps(payload, ensure_ascii=False, default=str)
 
 
+#: 中文 → 英文 token 的别名表（查询期扩展用）。
+#:
+#: 为什么需要它：工具名与参数是英文/缩写（`dmm_measure(function=volt_dc)`），而使用者用中文
+#: 提问。只做子串匹配会让**切题的操作反而匹配不上**，而描述里恰好含某个中文词的无关操作
+#: 却排到前面（实测 `万用表 电压` 会把 `dg.get_protect`——描述里有"电压"两字——排在
+#: `dmm.measure` 之前，因为后者的参数叫 `volt_dc`）。所以查询时把中文词扩成英文 token。
+_CJK_ALIASES: dict[str, tuple[str, ...]] = {
+    # 设备族
+    "示波器": ("sds", "dho", "mho", "scope"),
+    "信号源": ("sdg", "dg"),
+    "波形发生器": ("sdg", "dg"),
+    "函数发生器": ("sdg", "dg"),
+    "万用表": ("dmm", "ks3458a"),
+    "八位半": ("ks3458a",),
+    "电源": ("psu", "dh1766"),
+    "仪器": ("instr",),
+    # 动作
+    "状态": ("status",),
+    "快照": ("status",),
+    "测量": ("measure", "meas"),
+    "读取": ("read",),
+    "读": ("read", "get"),
+    "查询": ("query", "status"),
+    "查": ("status", "query"),
+    "设置": ("set", "configure"),
+    "配置": ("configure", "set"),
+    "输出": ("output", "outp"),
+    "开关": ("output", "outp"),
+    "复位": ("reset",),
+    "保护": ("protect",),
+    "扫频": ("sweep",),
+    "截图": ("screenshot",),
+    "波形": ("wave", "waveform", "shape"),
+    "采样": ("sample", "acq"),
+    "触发": ("trigger", "trig"),
+    "通道": ("ch", "channel", "chan"),
+    "时基": ("timebase",),
+    "自动定标": ("auto_scale", "autoset"),
+    "错误": ("error", "err"),
+    "发现": ("discover",),
+    # 量/参数
+    "电压": ("volt", "vdc", "vac"),
+    "电流": ("curr",),
+    "频率": ("freq", "frequency"),
+    "周期": ("period", "per"),
+    "幅度": ("amp", "ampl"),
+    "偏移": ("offset",),
+    "相位": ("phase",),
+    "峰峰": ("vpp", "pkpk"),
+    "有效值": ("rms",),
+    "电阻": ("res",),
+}
+
+
+def query_terms(query: str) -> list[str]:
+    """把查询切成可匹配的词元，并把中文词**扩展**为对应的英文 token。
+
+    为什么要 CJK 二元组（2026-09-23 实测缺陷）：原实现按**空白**切词，而中文没有空格——
+    整句被当成一个词，永远匹配不上任何工具名或摘要，实测 `读信号源当前状态` 返回 0 条
+    命中（同一时刻英文 `status` 返回 5 条），而使用者平时就用中文提问。
+
+    为什么要别名扩展：二元组只解决"能不能匹配上中文描述"，解决不了"切题的操作里
+    压根没有那个中文词"——见 `_CJK_ALIASES` 的注释。
+    """
+    q = (query or "").lower().strip()
+    if not q:
+        return []
+    terms: list[str] = []
+    for chunk in re.split(r"[\s,，、;；/|]+", q):
+        if not chunk:
+            continue
+        for run in re.findall(r"[\u4e00-\u9fff]+", chunk):
+            if len(run) == 1:
+                terms.append(run)
+            else:
+                terms.extend(run[i:i + 2] for i in range(len(run) - 1))
+            # 在 2~4 字的窗口里查别名（覆盖 电压/扫频/自动定标/波形发生器 这类词）
+            for size in (2, 3, 4):
+                for i in range(0, max(0, len(run) - size + 1)):
+                    alias = _CJK_ALIASES.get(run[i:i + size])
+                    if alias:
+                        terms.extend(alias)
+        terms.extend(re.findall(r"[a-z0-9_]+", chunk))
+    seen: dict[str, None] = {}
+    for t in terms:
+        if t:
+            seen.setdefault(t, None)
+    return list(seen)
+
+
 def _score(op, query: str) -> int:
-    """极简关键词打分（68 个操作的规模不需要 embeddings，见讨论存档 §2.3）。"""
+    """极简关键词打分（68 个操作的规模不需要 embeddings，见讨论存档 §2.3）。
+
+    每个字段的命中数**设有上限**：操作描述往往很长（本仓 docstring 动辄几百字），
+    若不封顶，长描述会靠一堆偶然的二元组命中把精确匹配淹掉——实测中文查询
+    `万用表 电压` 会把 `dg.get_protect` 排到 `dmm.measure` 前面，正是这个原因。
+    """
     q = query.lower().strip()
     if not q:
         return 0
-    score = 0
     if q == op.id.lower() or q == op.tool_name.lower():
         return 1000
-    if q in op.id.lower() or q in op.tool_name.lower():
-        score += 50
-    for word in q.replace(",", " ").split():
-        if not word:
-            continue
-        if word in op.tool_name.lower():
-            score += 20
-        if word in (op.summary or "").lower():
-            score += 8
-        if word in (op.description or "").lower():
-            score += 3
-        if word in op.device.lower():
-            score += 10
-        if any(word == k for k in op.keywords):
-            score += 6
-    return score
+    score = 50 if (q in op.id.lower() or q in op.tool_name.lower()) else 0
+    name = op.tool_name.lower()
+    summary = (op.summary or "").lower()
+    description = (op.description or "").lower()
+    device = (op.device or "").lower()
+    # 参数名也要参与匹配：很多人是按"要设什么"来找的（"设频率" → freq → dg.set_wave），
+    # 而操作名里未必有那个词（`dg_set_wave` 的频率参数就叫 `freq`）。
+    params = " ".join(op.parameters).lower()
+    terms = query_terms(q)
+    name_hits = sum(1 for w in terms if w in name)
+    sum_hits = min(sum(1 for w in terms if w in summary), 3)
+    desc_hits = min(sum(1 for w in terms if w in description), 2)
+    dev_hits = min(sum(1 for w in terms if w in device), 2)
+    param_hits = min(sum(1 for w in terms if w in params), 2)
+    kw_hits = sum(1 for w in terms if any(w == k for k in op.keywords))
+    return (20 * name_hits + 8 * sum_hits + 3 * desc_hits + 10 * dev_hits
+            + 6 * param_hits + 6 * kw_hits)
 
 
 def register(mcp, *, registry, run_fn: Callable[[str, dict], Awaitable[str]],

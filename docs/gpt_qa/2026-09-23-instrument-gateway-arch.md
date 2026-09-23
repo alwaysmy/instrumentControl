@@ -1,6 +1,6 @@
 # GPT 讨论：仪器控制 MCP 网关化架构（2026-09-23）
 
-<!-- chatgpt-discuss: session=instrument-gateway-arch conv=https://chatgpt.com/c/6ab37be8-9a44-83e9-a274-4e487364b947 updated=2026-09-23 16:13:36 rounds=3 -->
+<!-- chatgpt-discuss: session=instrument-gateway-arch conv=https://chatgpt.com/c/6ab37be8-9a44-83e9-a274-4e487364b947 updated=2026-09-23 16:13:36 rounds=4 -->
 - 会话: instrument-gateway-arch | 链接: https://chatgpt.com/c/6ab37be8-9a44-83e9-a274-4e487364b947
 
 ## Q1 2026-09-23 15:16:34
@@ -2546,3 +2546,1021 @@ instr_batch(plan)
 - plan：**从第一版就叫/version 成 JSON Batch Plan DSL v1，同时用 JSON Schema 校验结构。**
 
 这套已经足够开始阶段 4，实现边界也比较干净。
+
+## Q4 2026-09-23 16:35:06
+**Q:** 设计已经收敛，这轮请给可实现的**具体产物**，不要再说原则。
+
+## 一、请给出 Batch Plan DSL v1 的完整 JSON Schema
+
+要求：
+- 直接给出可用的 `plan.schema.json` 文本（JSON Schema draft 2020-12 即可）；
+- 覆盖你已经裁定的机制：`plan_version`、`steps`（含嵌套）、`foreach`、`capture`、`on_error`、`execution_deadline_s`、`max_leaf_steps`、`max_nesting_depth`；
+- 变量引用用你裁定的 typed reference `{"$var": "..."}`——请把它的 schema 写清楚，并说明它**允许出现在哪些位置**（只能作整个值？还是允许出现在数组元素里？）；
+- capture 用整 result 或 `result` + RFC 6901 JSON Pointer 两种形态，也用 schema 表达。
+
+## 二、给 3 个真实示例 plan（针对本仓已登记的 operation）
+
+本仓的 operation 命名是 `<设备族>.<操作>`，例如 `sdg.set_wave`、`sds_measure`、`dmm_measure`、`psu_output`、`dg_protect`（参数表可用 instr_describe 取）。请写：
+
+1. **单设备扫频**：SDG 逐频点设波形 → DMM 测电压 → 收集 (频率, 电压)，约 20 点。
+2. **示波器批采**：SDS 改时基/档位若干次 → 每次 `sds_measure` 取一个量 → 只保留统计。
+3. **一个反例**：一个**应当被 v1 拒绝**的 plan（例如含 while、或变量作用域越界、或 capture 到未定义变量），并说明拒绝发生在哪一步（结构校验 / 绑定期 / operation schema 校验）。
+
+## 三、请你裁定三个我自己拿不准的边界
+
+1. **`max_leaf_steps` 何时算**：预展开（先把 foreach 全部展开再校验总数）还是边执行边计数？预展开的好处是"超限就不开始执行"（不会做到一半才失败），坏处是嵌套很深时展开本身可能巨大。你会选哪个？
+2. **`capture` 的可见范围**：你说"capture 后的后续 sibling steps 可见"。那**嵌套 foreach 的内层**能否 capture 给外层后续步骤用？如果不能，模型很容易写出"内层捕获、外层使用"这种看不出错的 plan 而静默拿不到值。请给一个不会静默出错的规则（要么允许并明确定义，要么在**校验期**就拒绝）。
+3. **错误传播与 `on_error`**：`on_error: stop` 时，已 capture 的变量与已产生的 partial results 是丢弃、还是随 run 一起返回？我倾向"随 run 返回并标记 run 未完成"（仪器侧的副作用已经发生，隐瞒 partial 结果会让调用方误判设备状态），请你判断。
+
+请直接给 schema 文本与示例，边界问题给结论。
+
+**A:**
+你的二、三处裁决我按上一轮结论固定下来。下面这版可以直接作为 v1 实现基线。
+
+先说明一个局限：我这里拿不到你本机 `instr_describe` 的具体函数签名，所以示例中的 canonical op 按你给出的命名规则写，`args` 键采用典型命名。DSL、作用域和验证顺序可以直接落地，具体参数键需要用本仓 `instr_describe` 对齐一次。`sds_measure`、`dmm_measure` 等 legacy 名在 plan 中应使用 canonical `sds.measure`、`dmm.measure`。
+
+## 一、`plan.schema.json`
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:instrument-runtime:batch-plan:v1",
+  "title": "Instrument Batch Plan DSL v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "plan_version",
+    "steps",
+    "on_error",
+    "max_leaf_steps",
+    "max_nesting_depth"
+  ],
+  "properties": {
+    "plan_version": {
+      "const": 1
+    },
+    "steps": {
+      "$ref": "#/$defs/steps"
+    },
+    "on_error": {
+      "$ref": "#/$defs/onError"
+    },
+    "execution_deadline_s": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "max_leaf_steps": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "max_nesting_depth": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "minLength": 1,
+      "maxLength": 64
+    },
+
+    "operationId": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_]*\\.[A-Za-z][A-Za-z0-9_]*$"
+    },
+
+    "onError": {
+      "type": "string",
+      "enum": [
+        "stop",
+        "continue"
+      ]
+    },
+
+    "varRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "$var"
+      ],
+      "properties": {
+        "$var": {
+          "$ref": "#/$defs/identifier"
+        }
+      }
+    },
+
+    "literalScalar": {
+      "type": [
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    },
+
+    "literalArray": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/literalValue"
+      }
+    },
+
+    "literalObject": {
+      "type": "object",
+      "propertyNames": {
+        "not": {
+          "const": "$var"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/literalValue"
+      }
+    },
+
+    "literalValue": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/literalScalar"
+        },
+        {
+          "$ref": "#/$defs/literalArray"
+        },
+        {
+          "$ref": "#/$defs/literalObject"
+        }
+      ]
+    },
+
+    "runtimeArray": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/runtimeValue"
+      }
+    },
+
+    "runtimeObject": {
+      "type": "object",
+      "propertyNames": {
+        "not": {
+          "const": "$var"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/runtimeValue"
+      }
+    },
+
+    "runtimeValue": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/varRef"
+        },
+        {
+          "$ref": "#/$defs/literalScalar"
+        },
+        {
+          "$ref": "#/$defs/runtimeArray"
+        },
+        {
+          "$ref": "#/$defs/runtimeObject"
+        }
+      ]
+    },
+
+    "args": {
+      "type": "object",
+      "propertyNames": {
+        "not": {
+          "const": "$var"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/runtimeValue"
+      }
+    },
+
+    "captureWholeResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "var",
+        "source"
+      ],
+      "properties": {
+        "var": {
+          "$ref": "#/$defs/identifier"
+        },
+        "source": {
+          "const": "result"
+        }
+      }
+    },
+
+    "captureResultPointer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "var",
+        "source",
+        "pointer"
+      ],
+      "properties": {
+        "var": {
+          "$ref": "#/$defs/identifier"
+        },
+        "source": {
+          "const": "result"
+        },
+        "pointer": {
+          "type": "string",
+          "pattern": "^(?:/(?:[^~/]|~[01])*)+$"
+        }
+      }
+    },
+
+    "capture": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/captureWholeResult"
+        },
+        {
+          "$ref": "#/$defs/captureResultPointer"
+        }
+      ]
+    },
+
+    "operationStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "op"
+      ],
+      "properties": {
+        "op": {
+          "$ref": "#/$defs/operationId"
+        },
+        "args": {
+          "$ref": "#/$defs/args"
+        },
+        "capture": {
+          "$ref": "#/$defs/capture"
+        }
+      }
+    },
+
+    "foreachSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "var",
+        "values"
+      ],
+      "properties": {
+        "var": {
+          "$ref": "#/$defs/identifier"
+        },
+        "values": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/literalValue"
+          }
+        }
+      }
+    },
+
+    "foreachStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "foreach",
+        "steps"
+      ],
+      "properties": {
+        "foreach": {
+          "$ref": "#/$defs/foreachSpec"
+        },
+        "steps": {
+          "$ref": "#/$defs/steps"
+        }
+      }
+    },
+
+    "step": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/operationStep"
+        },
+        {
+          "$ref": "#/$defs/foreachStep"
+        }
+      ]
+    },
+
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/step"
+      }
+    }
+  }
+}
+```
+
+### `$var` 的精确定义
+
+v1 中：
+
+```json
+{"$var": "freq_hz"}
+```
+
+必须占据一个**完整 JSON value 节点**。
+
+这些合法：
+
+```json
+{
+  "frequency": {"$var": "freq_hz"},
+  "channels": [1, {"$var": "channel"}],
+  "config": {
+    "scale": {"$var": "scale_v"}
+  }
+}
+```
+
+这些非法或不具有变量语义：
+
+```json
+{
+  "frequency": "${freq_hz}",
+  "name": "freq=$freq_hz",
+  "$var": "freq_hz",
+  "other": 1
+}
+```
+
+允许 `$var` 出现的位置限定为：
+
+```text
+operationStep.args 的任意 value 节点
+包括嵌套 object value
+包括 array element
+```
+
+v1 **不允许** `$var` 出现在：
+
+```text
+foreach.values
+foreach.var
+op
+capture.var
+capture.pointer
+execution_deadline_s
+max_leaf_steps
+max_nesting_depth
+```
+
+特别是 `foreach.values` 必须全部静态可知，这使 leaf 数量可以在执行前精确计算。
+
+---
+
+# 二、三个示例 plan
+
+## 1. SDG 扫频，加 DMM 测量
+
+20 个频点，每个频点两次 leaf operation，所以精确 leaf 数为 40。
+
+```json
+{
+  "plan_version": 1,
+  "on_error": "stop",
+  "execution_deadline_s": 120,
+  "max_leaf_steps": 40,
+  "max_nesting_depth": 1,
+  "steps": [
+    {
+      "foreach": {
+        "var": "freq_hz",
+        "values": [
+          100,
+          150,
+          220,
+          330,
+          470,
+          680,
+          1000,
+          1500,
+          2200,
+          3300,
+          4700,
+          6800,
+          10000,
+          15000,
+          22000,
+          33000,
+          47000,
+          68000,
+          100000,
+          150000
+        ]
+      },
+      "steps": [
+        {
+          "op": "sdg.set_wave",
+          "args": {
+            "channel": 1,
+            "waveform": "SINE",
+            "frequency_hz": {
+              "$var": "freq_hz"
+            },
+            "amplitude_vpp": 1.0,
+            "offset_v": 0.0
+          }
+        },
+        {
+          "op": "dmm.measure",
+          "args": {
+            "mode": "ac_voltage"
+          },
+          "capture": {
+            "var": "voltage_result",
+            "source": "result"
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+这里建议运行器自动给每个 leaf result 附当前 foreach bindings：
+
+```json
+{
+  "op": "dmm.measure",
+  "bindings": {
+    "freq_hz": 1000
+  },
+  "result": {
+    "...": "..."
+  }
+}
+```
+
+这样频率和测量结果天然形成对应关系，无需给 DSL 增加 `append()`。
+
+`voltage_result` 的 capture 在本次 iteration 内可供后续 step 使用；foreach 结束后失效。
+
+如果你的 `dmm.measure` 实际 result 明确为：
+
+```json
+{
+  "value": 1.0023,
+  "unit": "V"
+}
+```
+
+可以改成：
+
+```json
+"capture": {
+  "var": "voltage_v",
+  "source": "result",
+  "pointer": "/value"
+}
+```
+
+---
+
+## 2. SDS 多组时基和垂直档位，只执行 measurement
+
+这里用两层 foreach：
+
+```text
+4 timebases × 3 scales ×
+    1 set_scale
+    1 measure
++
+4 set_timebase
+= 28 leaf operations
+```
+
+```json
+{
+  "plan_version": 1,
+  "on_error": "stop",
+  "execution_deadline_s": 90,
+  "max_leaf_steps": 28,
+  "max_nesting_depth": 2,
+  "steps": [
+    {
+      "foreach": {
+        "var": "timebase_s",
+        "values": [
+          0.000001,
+          0.00001,
+          0.0001,
+          0.001
+        ]
+      },
+      "steps": [
+        {
+          "op": "sds.set_timebase",
+          "args": {
+            "timebase_s": {
+              "$var": "timebase_s"
+            }
+          }
+        },
+        {
+          "foreach": {
+            "var": "scale_v",
+            "values": [
+              0.1,
+              0.5,
+              1.0
+            ]
+          },
+          "steps": [
+            {
+              "op": "sds.set_scale",
+              "args": {
+                "channel": 1,
+                "scale_v": {
+                  "$var": "scale_v"
+                }
+              }
+            },
+            {
+              "op": "sds.measure",
+              "args": {
+                "channel": 1,
+                "item": "VPP"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+这里“只保留统计”的 v1 解释建议定成：
+
+```text
+不调用 waveform/raw acquisition
+只保存 sds.measure 的结构化 leaf result
+```
+
+batch DSL 本身暂时不增加 `mean/min/max/reduce` 运算。服务端最终 summary 可以统计：
+
+```text
+total
+success
+failed
+elapsed
+```
+
+具体测量值仍存在 `leaf_results` 中。
+
+如果你这里的“只保留统计”是指 **12 次 VPP 只返回 min/max/mean，连每次 VPP 都不返回模型**，那属于 result presentation 层，建议后续单独加 `result_mode`，不要塞进执行 DSL v1。
+
+---
+
+## 3. 应拒绝的作用域越界 plan
+
+```json
+{
+  "plan_version": 1,
+  "on_error": "stop",
+  "max_leaf_steps": 10,
+  "max_nesting_depth": 1,
+  "steps": [
+    {
+      "foreach": {
+        "var": "freq_hz",
+        "values": [
+          1000,
+          2000
+        ]
+      },
+      "steps": [
+        {
+          "op": "dmm.measure",
+          "args": {},
+          "capture": {
+            "var": "measured",
+            "source": "result"
+          }
+        }
+      ]
+    },
+    {
+      "op": "sdg.set_wave",
+      "args": {
+        "frequency_hz": {
+          "$var": "measured"
+        }
+      }
+    }
+  ]
+}
+```
+
+这个 plan：
+
+```text
+JSON Schema 结构校验：通过
+operation registry lookup：通过
+静态变量绑定/作用域校验：失败
+```
+
+失败原因：
+
+```text
+undefined_variable: measured
+```
+
+`measured` 只存在于 foreach 每个 iteration 的局部作用域。foreach 退出后没有唯一的 `measured` 值，因为实际上产生了两个：
+
+```text
+iteration 0 -> measured₀
+iteration 1 -> measured₁
+```
+
+必须在**提交 executor job 之前**拒绝，所以仪器调用次数应为 0。
+
+我建议错误位置直接输出 JSON Pointer 风格路径：
+
+```text
+/steps/1/args/frequency_hz/$var
+```
+
+返回类似：
+
+```json
+{
+  "ok": false,
+  "error": "undefined_variable",
+  "variable": "measured",
+  "path": "/steps/1/args/frequency_hz/$var"
+}
+```
+
+---
+
+# 三、三个边界的最终裁决
+
+## 1. `max_leaf_steps`：执行前精确计数，但不展开
+
+我选：
+
+> **预计算 cardinality，不 materialize 展开的 plan。**
+
+这是第三种实现方式，比“完整预展开”和“边执行边计数”都合适。
+
+计数函数：
+
+```python
+def count_steps(steps, limit):
+    total = 0
+
+    for step in steps:
+        if "op" in step:
+            total += 1
+
+        else:
+            n = len(step["foreach"]["values"])
+            inner = count_steps(step["steps"], limit)
+
+            if inner > limit // n:
+                raise TooManyLeafSteps()
+
+            total += n * inner
+
+        if total > limit:
+            raise TooManyLeafSteps()
+
+    return total
+```
+
+例如：
+
+```text
+foreach 20
+    set_wave       1
+    measure        1
+
+count = 20 × (1 + 1) = 40
+```
+
+嵌套：
+
+```text
+foreach 4
+    set_timebase                       1
+    foreach 3
+        set_scale                      1
+        measure                        1
+
+count = 4 × (1 + 3 × (1 + 1))
+      = 28
+```
+
+内存复杂度跟 AST 大小相关，不跟展开后的 leaf 数相关。
+
+因此：
+
+```text
+max_leaf_steps 超限
+```
+
+一定发生在：
+
+```text
+提交 executor job 之前
+仪器调用次数 = 0
+```
+
+而且建议服务端还有独立 hard limit，例如：
+
+```python
+effective_limit = min(
+    plan["max_leaf_steps"],
+    SERVER_MAX_LEAF_STEPS
+)
+```
+
+plan 不能通过写一个巨大 `max_leaf_steps` 绕过服务器资源限制。
+
+---
+
+## 2. capture 作用域：禁止从 foreach 内逃逸到外层
+
+我选择严格词法作用域。
+
+规则定成：
+
+```text
+外层变量
+    ↓
+foreach 内可见
+
+foreach var
+    ↓
+当前 foreach body 内可见
+    ↓
+其嵌套 foreach 内也可见
+
+capture
+    ↓
+同一 lexical block 中，其后的 sibling steps 可见
+    ↓
+这些 sibling 的子块也可见
+
+foreach 内产生的 capture
+    ↓
+foreach 外不可见
+```
+
+例如合法：
+
+```text
+foreach freq
+    measure -> capture v
+    configure_using(v)        OK
+
+    foreach gain
+        use(freq)              OK
+        use(v)                 OK
+```
+
+非法：
+
+```text
+foreach freq
+    measure -> capture v
+
+use(v)                         ERROR
+```
+
+原因是多个 iteration 会产生多个 `v`，没有合理的单值提升规则。
+
+### 必须静态拒绝
+
+这里不能运行到那里才发现。
+
+建议 preflight semantic validator 维护 scope stack：
+
+```python
+scope = [
+    root_scope,
+    foreach_scope,
+    nested_scope
+]
+```
+
+遍历 `$var` 时查当前可见符号表。
+
+这样：
+
+```text
+未定义变量
+越界 capture
+变量重复声明
+foreach var 重名
+```
+
+全部在执行前发现。
+
+我进一步建议 v1 **禁止 shadowing**：
+
+```text
+foreach freq
+    foreach freq       reject
+```
+
+以及：
+
+```text
+capture v
+capture v              reject in same scope
+```
+
+这能省掉很多模型和日志层面的歧义。
+
+如果未来需要把循环结果送到外层，新增显式 aggregate 机制，例如：
+
+```text
+collect / reduce
+```
+
+再升级 DSL 版本，不给 v1 增加隐式变量提升。
+
+---
+
+## 3. `on_error: stop`：返回全部 partial state
+
+你的倾向正确。
+
+执行到：
+
+```text
+step 0 success
+step 1 success
+step 2 success
+step 3 failure
+```
+
+返回必须明确表达：
+
+```json
+{
+  "ok": false,
+  "status": "stopped_on_error",
+  "completed": false,
+  "failed_step": "...",
+  "leaf_results": [
+    "... step 0 ...",
+    "... step 1 ...",
+    "... step 2 ...",
+    "... step 3 failure ..."
+  ],
+  "capture_log": [
+    "..."
+  ],
+  "warnings": [
+    "..."
+  ]
+}
+```
+
+已经产生的结果绝不能丢。
+
+仪器状态已经发生变化。例如：
+
+```text
+set 1 kHz     success
+measure       success
+set 2 kHz     success
+measure       failed
+```
+
+此时隐藏前三步会让调用方失去判断当前设备状态所需的信息。
+
+### capture 不建议返回成一个扁平 dict
+
+因为 foreach 中：
+
+```text
+capture voltage
+capture voltage
+capture voltage
+...
+```
+
+合法，并且属于不同 iteration scope。
+
+建议返回事件日志：
+
+```json
+{
+  "capture_log": [
+    {
+      "path": "/steps/0/iterations/0/steps/1",
+      "bindings": {
+        "freq_hz": 100
+      },
+      "var": "voltage_result",
+      "value": {
+        "...": "..."
+      }
+    },
+    {
+      "path": "/steps/0/iterations/1/steps/1",
+      "bindings": {
+        "freq_hz": 150
+      },
+      "var": "voltage_result",
+      "value": {
+        "...": "..."
+      }
+    }
+  ]
+}
+```
+
+这样没有作用域歧义。
+
+对于 deadline 同样遵循这个原则：
+
+```json
+{
+  "ok": false,
+  "status": "deadline_reached",
+  "completed": false,
+  "leaf_results": [...],
+  "capture_log": [...],
+  "warnings": [...]
+}
+```
+
+当前已经启动的 canonical operation 允许自然结束，记录它的最终结果，然后停止启动下一 step。
+
+---
+
+# 四、建议固定的验证流水线
+
+实现时我建议严格按这个次序，后面不要再互换：
+
+```text
+1. JSON parse
+2. plan.schema.json structural validation
+3. plan_version check
+4. registry lookup，确认所有 op 存在
+5. lexical scope / variable binding validation
+6. max_nesting_depth validation
+7. exact max_leaf_steps cardinality calculation
+8. server hard-limit validation
+9. submit 整个 batch 为 ONE executor job
+10. 每个 operation 开始前：
+    a. execution deadline check
+    b. resolve {"$var": "..."}
+    c. FastMCP-derived operation schema validation
+    d. invoke canonical operation
+    e. parse JSON response
+    f. capture result / JSON Pointer
+    g. append leaf result / warning / audit data
+11. batch 结束后 BUSY clear
+```
+
+这里有一个刻意保留的动态验证点：
+
+```text
+operation schema validation
+```
+
+需要在变量绑定后执行，因为：
+
+```json
+{"$var": "freq_hz"}
+```
+
+在 plan 层是合法引用，解析成：
+
+```json
+1000
+```
+
+以后才能验证它是否满足 operation 的真实 schema。
+
+而 `op` 是否存在、变量是否在作用域内、leaf 总数、嵌套深度，都应该在仪器执行开始前一次性排干净。
+
+这版已经可以直接作为 **Batch Plan DSL v1 的 schema + semantic validator contract**。memcite

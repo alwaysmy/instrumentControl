@@ -1,11 +1,59 @@
 ---
 name: instrument-mcp
-description: instrument MCP 服务器使用指引 — 七台仪器（SDS 示波器/SDG 信号源/Keysight 34465A 万用表/DHO 示波器/MHO900 示波器/DG832 信号源/DH1766 电源）的 MCP 工具选择、参数语义、安全门、典型工作流。触发条件：使用 instrument MCP 工具、sds_/sdg_/dmm_/dho_/mho_/dg_/psu_ 前缀工具、仪器测量/定标/截图/关机决策。
+description: instrument MCP 服务器使用指引 — 七台仪器（SDS 示波器/SDG 信号源/Keysight 34465A 万用表/DHO 示波器/MHO900 示波器/DG832 信号源/DH1766 电源）的 MCP 工具选择、参数语义、安全门、典型工作流。触发条件：使用 instrument MCP 工具、compact profile 的 instr_devices/instr_search/instr_describe/instr_call/instr_batch、或 legacy profile 的 sds_/sdg_/dmm_/dho_/mho_/dg_/psu_/ks3458a_/instr_ 前缀工具、仪器测量/定标/截图/关机决策。
 ---
 
 # instrument MCP 使用指引
 
-MCP server：`mcp_instruments/server.py`（65 工具 = 61 专用 + 3 通用护栏 + 1 故障兜底，八台设备）。
+MCP server：`mcp_instruments/server.py`。**能力共 68 个操作（八台设备）**，但**暴露方式取决于 profile**
+（`--profile=` 或环境变量 `INSTRUMENT_MCP_PROFILE`）：
+
+| profile | 模型看到的工具 | 本文的用法 |
+|---|---|---|
+| `legacy` | 68 个操作各一个工具（`sds_measure`、`dg_set_wave` …） | 下文决策树里的名字**直接可用** |
+| `compact` | 只有 5 个：`instr_devices` / `instr_search` / `instr_describe` / `instr_call` / `instr_batch` | 下文的名字是**操作**，需经 `instr_call` 调用，见下 |
+
+## 零、如果你在 compact profile 下（先读这一节）
+
+本文下文用 legacy 工具名书写，因为那是最短、最稳定的称呼。在 compact 下**不要直接调它们**，
+按下述方式换用即可——**能力完全一样，路径同一条**：
+
+```
+instr_devices()                      先看有哪些仪器在线（等价 instr_discover，无参数）
+instr_search("设置的词")              找操作，返回规范 id + 一句话摘要
+instr_describe("sds_measure")        取该操作的完整参数表 / 说明 / 安全属性 / 关键约束
+instr_call(op, args)                 执行一次（op 用规范 id 或 legacy 名都行）
+instr_batch(plan)                    组合执行（扫频 / 批采 / 参数矩阵）
+```
+
+**规范 id = legacy 工具名把首个下划线换成点**：
+
+```
+sds_measure      →  sds.measure
+dg_set_wave      →  dg.set_wave
+instr_query      →  instr.query
+ks3458a_status   →  ks3458a.status
+```
+
+所以本文里任何 `sds_xxx` / `dg_xxx` / `ks3458a_xxx` 都可以照此翻译后用 `instr_call` 调用，
+例如本文写 `sds_measure(item="PKPK", ch=1)`，compact 下就是：
+
+```
+instr_call(op="sds.measure", args={"item": "PKPK", "ch": 1})
+```
+
+两点必须知道：
+
+- **参数名与默认值完全一致**，照 `instr_describe` 给的参数表填；必填缺失或类型不符会**在本地被拒**，
+  不会下发到设备。
+- **安全门一样生效**（`confirm=True`、黑名单、DG832 保护联锁都在操作实现与库层，不经前端放行）。
+  换句话说：在 compact 下调用有副作用的操作，**同样**要按本文的 `confirm` / 前置保护要求来。
+
+组合任务（扫频、批量采集）优先用 `instr_batch` 而不是反复 `instr_call`：前者**整批一个执行单元**，
+期间别的调用不会插进来（扫频需要这个），也不会为每一步付一次模型往返。
+
+---
+
 本文是 AI 选择工具/参数时的决策依据。DG832 的详细 SOP/踩坑见 skill `dg832-control`。
 
 ## 一、工具选择决策树

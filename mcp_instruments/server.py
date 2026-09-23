@@ -479,8 +479,44 @@ def device_tool(budget_s=None):
                                          args=args, kwargs=kwargs)
         _preserve_signature(wrapper, fn)   # 保 50 个工具的入参 schema 不变
         mcp.tool()(wrapper)
+        _register_runtime_operation(fn, budget_s)
         return fn
     return deco
+
+
+def _register_runtime_operation(fn, budget_s) -> None:
+    """把刚注册的 MCP 工具登记进 `instrument_runtime`（阶段 1：零行为变更）。
+
+    设计见 docs/gpt_qa/2026-09-23-instrument-gateway-arch.md（方案 C 阶段 1）。
+    两条纪律：
+
+    * **schema / description 从 FastMCP 生成好的 Tool 对象原样取**，不在 runtime 里
+      按签名重算一遍——重算就等于把 FastMCP 的 schema 规则复制一份，将来必然漂移。
+      取原对象使得"legacy 工具表逐字节不变"是构造保证。
+    * **未分类的工具直接报错**（safety_for_tool 抛 KeyError）。宁可服务起不来，也不要
+      一个没被风险分级、没有确认门的工具悄悄上线——本仓的护栏都是这么被误伤事件逼出来的。
+
+    requires_confirm 取**函数签名实测值**，与 catalog 的 CONFIRM_TOOLS 复核；两处不一致
+    立即抛错（少一道确认门比多一道危险得多）。
+    """
+    from instrument_runtime import device_for_tool, register_operation, safety_for_tool
+
+    tool = mcp._tool_manager.get_tool(fn.__name__)
+    if tool is None:
+        raise RuntimeError(
+            f"tool {fn.__name__!r} was not found in the FastMCP registry right after "
+            f"registration; instrument_runtime cannot record it"
+        )
+    requires_confirm = "confirm" in inspect.signature(fn).parameters
+    register_operation(
+        tool_name=fn.__name__,
+        description=tool.description or "",
+        schema=tool.parameters or {},
+        device=device_for_tool(fn.__name__),
+        safety=safety_for_tool(fn.__name__, requires_confirm=requires_confirm),
+        budget=budget_s,
+        fn=fn,
+    )
 
 
 def _preserve_signature(wrapper, fn) -> None:
@@ -2534,10 +2570,33 @@ if __name__ == "__main__":
         print("[instrumentControl] startup self-check failed: "
               f"{type(e).__name__}: {ascii(e)}",
               file=sys.stderr, flush=True)
+    # runtime registry 覆盖自检（2026-09-23 加，方案 C 阶段 1）：registry 必须与
+    # MCP 工具表**一一对应**——少一个（未分类）或多一个（目录残留）都要在启动时报出来。
+    # 同口径的离线断言在 TEST_SCRIPTS/common/verify_registry_parity.py。
+    try:
+        from instrument_runtime import get_registry, unclassified
+
+        _reg = get_registry()
+        _stale, _unclassified = unclassified(_reg.tool_names())
+        print(f"[instrumentControl] startup self-check | runtime registry "
+              f"operations={len(_reg)}, unclassified {len(_unclassified)}, "
+              f"stale catalog entries {len(_stale)}"
+              + (f" unclassified={_unclassified}" if _unclassified else "")
+              + (f" stale={_stale}" if _stale else ""),
+              file=sys.stderr, flush=True)
+    except Exception as e:
+        print("[instrumentControl] runtime registry self-check skipped: "
+              f"{type(e).__name__}: {ascii(e)}",
+              file=sys.stderr, flush=True)
     # 工具元信息自检（2026-09-16 加）：**每个工具的 description 来自其函数 docstring**，
     # 漏写 docstring 的工具会在客户端里显示成"无描述"（历史上退役的 DG832 独立服务器
     # 13 个工具里就有 12 个没描述，被误当成"工具集缺文档"）。这里启动时报出总数与缺口。
     # 同口径的协议级断言在 TEST_SCRIPTS/common/verify_mcp_tools_meta.py（离线可跑）。
+    #
+    # ⚠ **本行必须保持在所有 `[instrumentControl]` 启动行之后（即最后一行）**：
+    # verify_mcp_tools_meta.py 取 `startup[-1]` 再用 `description\s+(\d+)` 判缺口，
+    # 在它之后再追加自检行会让该断言拿到 n/a 而 FAIL（2026-09-23 加 registry 自检时
+    # 实测踩过）。新增启动行请插在本段**之前**。
     try:
         _tools = mcp._tool_manager.list_tools()
         _no_desc = [t.name for t in _tools if not (t.description or "").strip()]

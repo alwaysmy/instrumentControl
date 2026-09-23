@@ -63,7 +63,20 @@ for _req_type in (
 ):
     mcp._mcp_server.request_handlers.pop(_req_type, None)
 
-_DEVICE_LOCK = threading.Lock()
+# ── 护栏本体自 2026-09-23 起归入 instrument_runtime（方案 C 阶段 2）────────────
+# 目的：让「黑名单 / 审计 / 锁 / 回读验证」**不依赖本 MCP wrapper**——compact
+# profile、CLI、代码运行时将来都要放行仪器操作，各自重写一遍判据迟早出现
+# "某个入口忘了拦"。设计见 docs/gpt_qa/2026-09-23-instrument-gateway-arch.md §3。
+#
+# 下面保留**原私有名作为别名**，因此既有调用点一行未改，且
+# TEST_SCRIPTS/common/audit_guardrail_coverage.py（直接引用 S._is_forbidden /
+# S._is_query_only）继续可用——它对本层的全域穷举正好是迁移的等价性证据。
+from instrument_runtime import audit as _audit_mod                    # noqa: E402
+from instrument_runtime import policy as _policy                      # noqa: E402
+from instrument_runtime import verify as _verify_mod                  # noqa: E402
+from instrument_runtime.broker import DEVICE_LOCK as _DEVICE_LOCK     # noqa: E402
+from instrument_runtime.broker import decide_scpi as _decide_scpi     # noqa: E402
+
 _PREWARM_DONE = threading.Event()  # VISA/设备库冷启动完成前置位（看门狗放宽依据）
 
 
@@ -156,21 +169,8 @@ from common.resolver import (  # noqa: E402
 )
 
 
-def _pair_readback(cmd: str | None, resp: str | None) -> list[dict] | None:
-    """多段回读的**字段配名**：':C1:SCALe?;:C1:OFFSet?' → [{cmd,value}, {cmd,value}]。
-
-    现场教训（docs/tool_optimization_20260915.md §P2-6）：`;` 串联的多条回读原先
-    只把响应原样拼成 "a;b" 返回——没有字段名，调用方要自己数字段、**写错顺序不报错**。
-    这里按查询段与返回段一一配对；段数不符时如实说明（不硬配）。
-    """
-    if not cmd or resp is None or ";" not in cmd:
-        return None
-    units = [u.strip() for u in cmd.split(";") if u.strip()]
-    vals = [v.strip() for v in resp.split(";")]
-    if len(units) != len(vals):
-        return [{"cmd": cmd, "value": resp,
-                 "note": f"段数不符（查询 {len(units)} 段 / 返回 {len(vals)} 段），未配对名"}]
-    return [{"cmd": u, "value": v} for u, v in zip(units, vals)]
+# 多段回读配名的实现已迁至 instrument_runtime/verify.py；此处只留别名。
+_pair_readback = _verify_mod.pair_readback
 
 
 def _ok(model, result, resource=None):
@@ -985,121 +985,24 @@ def usb_reset(kind: str | None = None, resource: str | None = None,
 # 设计取舍：不做多设备接口统一——各库专用工具承载人工筛选的语义与安全门；
 # 通用工具只提供"对照手册直发命令"的护栏通道，设备用出价值后再补专用库。
 
-# 复位/存储覆写类黑名单（AGENTS.md 安全红线）：confirm=True 也不放行——
-# 需显式授权的复位场景走测试脚本（如 dh1766 --allow-rst），不经 MCP。
-_FORBIDDEN_COMMON_RE = re.compile(r"\*(RST|SAV|RCL)")  # *RST / *SAV n / *RCL n
-
-# 子系统助记符表：(短形式, 长形式)。SCPI 允许短形式与长形式之间的**任意前缀**
-# （SCPI-99 §6.2.2 命令助记符），只比对两种写法会漏掉中间缩写
-# （实测漏网：`:SYST:RESE`、`:SYST:PRESE`、`:SYST:COMMU:RLST RWL`）。
-_RESET_NODES = (("RES", "RESET"), ("FACT", "FACTORY"), ("PRES", "PRESET"))
-_LOCK_NODES = (("REM", "REMOTE"), ("RWL", "RWL"), ("LOCK", "LOCKED"))
-_COMM_NODES = (("COMM", "COMMUNICATE"),)
-_RLST_NODES = (("RLS", "RLSTATE"),)
-
-
-def _mnemonic(token: str, short: str, long: str) -> bool:
-    """SCPI 助记符匹配（宽松，黑名单用「宁可误拦」的偏置）。
-
-    接受三类写法：① short..long 之间的任意前缀（SCPI-99 §6.2.2）；② 长形式本身；
-    ③ 短形式开头后粘连参数（如 `SYST:REMON` = `SYST:REM ON`，历史实现按正则前缀
-    搜索能拦下，行为必须保持）。
-    """
-    t, lo = token.upper(), long.upper()
-    return len(t) >= len(short) and (lo.startswith(t) or t.startswith(short))
+# 黑名单与查询判据的**实现已迁至** instrument_runtime/policy.py（含其全部注释与
+# 现场教训）。此处只留别名，既有调用点与离线审计脚本无需改动。
+_FORBIDDEN_COMMON_RE = _policy.FORBIDDEN_COMMON_RE
+_RESET_NODES = _policy.RESET_NODES
+_LOCK_NODES = _policy.LOCK_NODES
+_COMM_NODES = _policy.COMM_NODES
+_RLST_NODES = _policy.RLST_NODES
+_QUERY_UNIT_RE = _policy.QUERY_UNIT_RE
+_mnemonic = _policy.mnemonic
+_any_node = _policy.any_node
+_classify_forbidden = _policy.classify_forbidden
+_is_query_only = _policy.is_query_only
+_is_forbidden = _policy.is_forbidden
 
 
-def _any_node(token: str, pairs: tuple[tuple[str, str], ...]) -> bool:
-    return any(_mnemonic(token, s, l) for s, l in pairs)
-
-
-def _classify_forbidden(cmd: str) -> str | None:
-    """逐条（`;` 分段）判定命令是否命中黑名单；命中返回类别，否则 None。
-
-    必须在**分段**上判定：`*RST;*IDN?` 这类多命令消息单看整串会漏判，
-    只看首段又会漏掉后续段（历史缺陷：instr_query 只查 `?` 不看黑名单，
-    `"*IDN?;:SYST:RESE"` 可直接复位仪器）。
-    """
-    for part in cmd.split(";"):
-        # 先切出命令头（空格前）再归一——否则 "SYST:REM ON" 归一成 "SYST:REMON"，
-        # 参数会粘连到助记符上导致漏判。
-        stripped = part.strip()
-        if not stripped:
-            continue
-        head = re.split(r"\s+", stripped)[0].upper().lstrip(":")
-        if not head:
-            continue
-        # 公共命令族（*RST/*SAV/*RCL）在**整段**上搜，不限定在命令头——数据段里混进
-        # 这几个词没有正当用途，宁可误拦（防御"参数位置偷发复位"）。
-        if _FORBIDDEN_COMMON_RE.search(stripped):
-            return "reset"
-        segs = [s for s in head.split(":") if s]
-        if not segs or not _mnemonic(segs[0], "SYST", "SYSTEM"):
-            continue
-        if len(segs) >= 2 and _any_node(segs[1], _RESET_NODES):
-            return "reset"
-        if len(segs) >= 2 and _any_node(segs[1], _LOCK_NODES):
-            return "lock"
-        if len(segs) >= 3 and _any_node(segs[1], _COMM_NODES) and _any_node(segs[2], _RLST_NODES):
-            return "lock"
-    return None
-
-
-# 单条命令单元的形状：命令头以 `?` 结尾，问号后**允许**带参数。
-#
-# `?` 后带参数是标准 SCPI 写法（`:MEASure:ITEM? VPP,CHANnel2`、`SAMPle:COUNt? MAX`），
-# 故不能按"整段以 ? 结尾"判（2026-09-15 曾因此把带参数查询全拒了，用户报障后修正）。
-_QUERY_UNIT_RE = re.compile(r"^[:*]?[A-Za-z][A-Za-z0-9:<>{}_.]*\?(?:\s[\s\S]*)?$")
-
-
-def _is_query_only(cmd: str) -> bool:
-    """整条消息是否**纯查询**：每个 `;` 分段都必须是查询单元（问号后允许带参数）。
-
-    为什么按"分段"而不是"整条"判：SCPI 里 `;` 分隔的是**同一条消息内的多个命令单元**，
-    设备会逐个执行——实测 DG832 `:SOUR1:PHAS?;:SOUR1:PHAS 123` 的写单元真的生效
-    （Keysight 手册明文：`TRIG:SOUR EXT;COUNT 10` 等价于两条命令）。只查首尾会让写命令
-    从查询口溜进去；只允许单条单元又会把**多段回读**（`:CHANnel4:DISPlay?;:CHANnel4:SCALe?`）
-    一起拒掉——那是合法且常用的用法（2026-09-15 曾这样过度收紧，用户报障后修回）。
-
-    逐段判用同一条正则（一条命令单元 = `_QUERY_UNIT_RE`），不解析助记符：
-    写命令（头里无 `?`）、混合消息（`:OUTP1 ON;:OUTP1?`）、复位/锁定类一律拦。
-    """
-    units = [u for u in (p.strip() for p in (cmd or "").split(";"))]
-    if not units or any(not u for u in units):
-        return False
-    return all(_QUERY_UNIT_RE.match(u) for u in units)
-
-
-def _is_forbidden(cmd: str) -> bool:
-    """黑名单判定（复位/存储覆写一律拦；远程锁定类**只拦写**）。
-
-    语义：复位/存储覆写类一律 forbidden；远程锁定类只在**非纯查询**时拦——
-    `SYST:REM?`、`:SYSTem:LOCKed?` 这类纯查询不改变锁定状态，保留用于状态诊断。
-    判定按 `;` 分段做，且接受 SCPI 长短形式之间的任意前缀缩写。
-    """
-    kind = _classify_forbidden(cmd)
-    if kind == "reset":
-        return True
-    if kind == "lock":
-        return not _is_query_only(cmd)
-    return False
-
-
-_ERR_CLEAN_RE = re.compile(r"^\+?0\s*,")
-
-
-def _drain_errors(c) -> list[str]:
-    """排空 SYST:ERR? 队列（铁律2），上限 20 条防死循环。"""
-    errs: list[str] = []
-    for _ in range(20):
-        try:
-            r = c.query("SYST:ERR?").strip()
-        except Exception as e:
-            return errs + [f"(SYST:ERR? 查询失败: {type(e).__name__})"]
-        if _ERR_CLEAN_RE.match(r) or "no error" in r.lower():
-            return errs
-        errs.append(r)
-    return errs + ["(错误队列超过 20 条，停止排空)"]
+# 错误队列排空的实现已迁至 instrument_runtime/verify.py；此处只留别名。
+_ERR_CLEAN_RE = _verify_mod.ERR_CLEAN_RE
+_drain_errors = _verify_mod.drain_errors
 
 
 def _visa(resource: str, timeout_ms: int = 5000):
@@ -1126,16 +1029,10 @@ def _guarded_call(resource: str, timeout_ms: int, fn) -> str:
                  resource=resource)
 
 
-def _audit_scpi(tool: str, resource: str, cmd: str, **extra) -> str:
-    """通用 SCPI 写留痕：TEST_DATA/common/mcp_scpi_audit_YYYYMMDD.jsonl（含拒绝记录）。"""
-    d = Path(ROOT) / "TEST_DATA" / "common"
-    d.mkdir(parents=True, exist_ok=True)
-    p = d / f"mcp_scpi_audit_{datetime.now():%Y%m%d}.jsonl"
-    entry = {"ts": datetime.now().isoformat(timespec="seconds"),
-             "tool": tool, "resource": resource, "cmd": cmd, **extra}
-    with open(p, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
-    return str(p)
+# 审计落盘的实现已迁至 instrument_runtime/audit.py；此处只留别名。
+# 路径一致性：audit 模块按**包位置**推导仓库根（instrument_runtime/ 的上一级），
+# 与本文件的 ROOT 指向同一目录，故审计文件落点不变。
+_audit_scpi = _audit_mod.audit_scpi
 
 
 @device_tool(budget_s=_generic_budget)

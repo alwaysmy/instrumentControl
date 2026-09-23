@@ -199,6 +199,26 @@ def main() -> int:
         check("probe op is classified read_only in the catalog",
               RISK_BY_TOOL.get(op_id.replace(".", "_")) == "read_only",
               str(RISK_BY_TOOL.get(op_id.replace(".", "_"))))
+
+        print("\nS5 guardrails still enforced through the compact path (rejections only)")
+        # 这三条都**不会**改设备状态：前两条在执行前就被拒，第三条在 policy 层被拒
+        # （黑名单判定发生在任何连接之前）。它们验证的是"换了调用入口，安全门没被绕过"。
+        DEAD = "TCPIP0::127.0.0.1::9::SOCKET"     # 只为满足签名；判定在连接之前发生
+        r = p.call("instr_call", {"op": "sdg.output",
+                                  "args": {"ch": 1, "on": True, "expect_load": "HZ"}},
+                   timeout=120)
+        check("output without confirm is still rejected (confirm gate survives compact)",
+              r.get("error_type") == "confirm_required", str(r)[:90])
+        r = p.call("instr_call", {"op": "instr.query",
+                                  "args": {"resource": DEAD, "cmd": "*IDN?;*RST"}},
+                   timeout=120)
+        check("write smuggled into a query is still rejected (blacklist survives compact)",
+              r.get("error_type") == "forbidden", str(r)[:90])
+        r = p.call("instr_call", {"op": "instr.write",
+                                  "args": {"resource": DEAD, "cmd": ":VOLT 1"}},
+                   timeout=120)
+        check("raw write without confirm is still rejected",
+              r.get("error_type") == "confirm_required", str(r)[:90])
         p.close()
     finally:
         try:

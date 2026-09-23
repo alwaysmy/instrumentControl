@@ -137,7 +137,7 @@ ERRSTR?  -> '4.999982055E-01'
 | A | **GPIB I/O 放进可杀死的 worker 子进程** | ✅ **已实现（2026-09-23，3458A）** | `keysight_3458a/worker.py` + `remote.RemoteDMM`：MCP 的 `ks3458a_*` 默认走进程外 worker（`INSTRUMENT_KS3458A_WORKER=0` 可回退进程内）。用例 `TEST_SCRIPTS/ks3458a/verify_worker_isolation.py` 6/6：硬截止 → kill → 句柄回收 → 下次调用自动重启。**详见 §10** |
 | B | **`usb_reset` 支持 82357B 适配器节点**（PnP 重枚举，作为"卡死后不拔插"的兜底） | **暂缓（TODO）** | 用户判断"好像没啥用"：本次实测 `pnputil /restart-device` 直接要求**重启整机**，PnP 层重置对"接口卡死"未必有效；**等真机验证过再决定是否实现** |
 | C | 其余真机验收：burst DINT、ACV、其它档位/量程 | 待做 | burst 现在跑在可 kill 的 worker 里，风险已降（卡死不再拖垮 MCP），但仍建议先在专用会话试 |
-| D | `preflight` 增加"自动区分 Talk Only / 适配器卡死"的更硬判据 | 待做 | 目前靠"`ID?` 是否返回读数"+ 用户看 `TALK` 灯；ADDRESS 无法远程查询（前面板专属） |
+| D | `preflight` 增加"自动区分 Talk Only / 适配器卡死"的更硬判据 | 待做 | 目前靠"`ID?` 是否返回读数"+ 用户看 `TALK` 灯；ADDRESS 无法远程查询（前面板专属）。**可借鉴 SRB 的 `viReadSTB` 串行轮询判活**（见 `docs/3458a_external_usage_srb_20260923.md`）：它不需要设备解析命令，因此对"卡死/流数据"态也能给出"在不在总线上的"判据 |
 
 ## 10. MCP 侧"`viOpen` 访问违例"的真因 = 同进程两套 VISA（2026-09-23 定位并修复）
 

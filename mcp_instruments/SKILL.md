@@ -378,6 +378,30 @@ DH1766 与 SDS 不同：**任何远程会话都会把电源置为 `REM`**——�
 2. `sds_auto_scale` 修正
 3. `sds_screenshot` → **Read 返回的 PNG 看图**确认（测量值超屏被钳制不可信）
 
+### 四.六、现成脚本：AI 自己做自动化测试/集成（**优先用这些，别临时现写**）
+
+仓库里已有可直接跑的脚本（全部 ASCII 输出、证据自动落到 `TEST_DATA/**/*.json`）：
+
+| 脚本 | 用途 | 碰设备? |
+|---|---|---|
+| `python -m keysight_3458a.preflight [--id\|--volts N\|--unstuck\|--watchdog N]` | 3458A **分层诊断**（默认只读）/ 最小电压测试 / 救砖 | 默认只读 |
+| `python TEST_SCRIPTS/ks3458a/verify_3458a_offline.py` | 3458A 离线套件（74 项，含故障注入） | ❌ |
+| `python TEST_SCRIPTS/ks3458a/verify_mcp_ks3458a_tools.py` | MCP 工具面/参数契约（14 项） | ❌ |
+| `python TEST_SCRIPTS/ks3458a/verify_worker_isolation.py` | worker 隔离：硬截止 kill / 句柄回收 / 自动重启（7 项） | ❌ |
+| `python TEST_SCRIPTS/ks3458a/verify_3458a_live.py` | 3458A **真机只读**冒烟（9 项：ID/状态/读数/统计） | ✅ 只读 |
+| `python TEST_SCRIPTS/ks3458a/verify_3458a_live_extended.py` | 真机扩展（13 项：档位/自动挡/DINT 突发/ACV/恢复） | ✅ **改配置** |
+| `python TEST_SCRIPTS/ks3458a/example_script_integration.py` | 脚本集成范例：`--dry-run`（不连设备）/ 库直连 / `--via mcp` | 视参数 |
+| `python TEST_SCRIPTS/common/verify_mcp_tools_meta.py` 等 | 工具面/解析层/锁语义回归（不碰设备） | ❌ |
+
+**建议顺序**（AI 自测或改完代码后）：离线 → 工具面 → worker → `preflight --id` → 真机只读 →
+（确实需要时）扩展套件。每步失败就停，**不要**用 `reset`/`burst` 去"试出来"。
+
+**外部项目集成范式（真实下游用户）**：SuperResistanceBridge（SRB V0.3，AD7190/LHA9954 电压 INL）
+把 3458A 当**源的实测真值**（逐点配对 `ADC码值` + `V_3458A`，全程固定 NPLC，扫描只用单次读数），
+自检顺序 = `PATH → connect(recover=True) → ID 校验 → ERRSTR → 配置 → 与另一台表同点对读`，
+任一步失败即中止。详见 `docs/3458a_external_usage_srb_20260923.md`（含他们踩过的 3 个坑与我们
+现在的对应状态：PATH 注入已由本库内部完成、burst 卡死已三层加固、RSRC_NFOUND/TMO 判据已进 preflight）。
+
 **截图能力（2026-09-09 修复 alpha 后）**：
 - `sds_screenshot` 返回 PNG 路径，**直接 Read 即可看图**（视觉判断最直观）
 - 看得到：波形形态/有无信号/削顶/居中/面板菜单/光标读数/底部测量栏

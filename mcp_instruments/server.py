@@ -97,24 +97,32 @@ _CALL_BUDGET_S = _env_float("INSTRUMENT_CALL_BUDGET_S", 150.0)
 _LOCK_WAIT_S = _env_float("INSTRUMENT_LOCK_WAIT_S", 30.0)
 
 
-# ── MCP profile（2026-09-23，方案 C 阶段 3）───────────────────────────────────
-# legacy  ：暴露全部 68 个工具（现状；兼容旧客户端与既有 skill/文档里的工具名）
-# compact ：只暴露 4 个按需发现工具（instr_devices / instr_search / instr_describe /
-#           instr_call），把"有哪些能力"变成**按需数据**，省掉约 19.8k token 的
-#           常驻工具定义（实测：68 个定义占该 harness 静态注入总量的 44%）。
+# ── MCP profile（2026-09-23，方案 C 阶段 3/5）────────────────────────────────
+# compact ：**默认**。只暴露 5 个按需工具（instr_devices / instr_search /
+#           instr_describe / instr_call / instr_batch），把"有哪些能力"变成
+#           **按需数据**：仪器这一组的工具定义从 59,677 字符 ≈ 19.9k token 降到
+#           4,600 字符 ≈ 1.5k token（省约 18.4k token/请求，由
+#           verify_compact_profile.py 的 S4 现场测量）。
+# legacy  ：暴露全部 68 个工具（每个操作一个名字）。**只为兼容**保留——需要
+#           `sds_measure` 这类固定工具名的客户端/脚本才用。
+#
+# 为什么默认定成 compact：切换 profile 要改客户端配置**并重启**（MCP 工具表不热
+# 重载），每台机器都得做一遍；定成默认后哪里都不用配，legacy 反而成为少数情况下
+# 的例外。
 #
 # **两种 profile 都完整登记 registry**，且都走同一个执行器——因此 compact 下的
 # `instr_call(op, args)` 与 legacy 下的同名工具**共用一条执行路径**，
 # 不存在"换 profile 后超时/并发语义变了"的隐患。安全护栏也不经前端：
 # 黑名单在 policy/操作实现层，DG832 保护联锁在库里，绕过前端同样跳不过。
 #
-# 取值优先级：命令行 `--profile=<legacy|compact>` > 环境变量 INSTRUMENT_MCP_PROFILE
-# > 默认 legacy。**默认保持 legacy**——阶段 5 才在拿到对比数据后翻转默认值。
+# 取值优先级：命令行 `--profile=<compact|legacy>` > 环境变量 INSTRUMENT_MCP_PROFILE
+# > 默认 **compact**。
+_DEFAULT_PROFILE = "compact"
 _PROFILES = ("legacy", "compact")
 
 
 def _resolve_profile(argv: list[str]) -> str:
-    """解析 profile；非法值回退 legacy 并告警（不因为写错一个环境变量就起不来）。"""
+    """解析 profile；非法值回退**默认档**并告警（不因为写错一个环境变量就起不来）。"""
     chosen = ""
     for i, a in enumerate(argv):
         if a.startswith("--profile="):
@@ -123,11 +131,12 @@ def _resolve_profile(argv: list[str]) -> str:
             chosen = argv[i + 1]
     if not chosen:
         chosen = os.environ.get("INSTRUMENT_MCP_PROFILE", "")
-    chosen = (chosen or "legacy").strip().lower()
+    chosen = (chosen or _DEFAULT_PROFILE).strip().lower()
     if chosen not in _PROFILES:
-        print(f"[instrumentControl] unknown profile {chosen!r}; falling back to legacy "
-              f"(expected one of {list(_PROFILES)})", file=sys.stderr, flush=True)
-        return "legacy"
+        print(f"[instrumentControl] unknown profile {chosen!r}; falling back to "
+              f"{_DEFAULT_PROFILE} (expected one of {list(_PROFILES)})",
+              file=sys.stderr, flush=True)
+        return _DEFAULT_PROFILE
     return chosen
 
 

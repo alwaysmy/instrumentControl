@@ -6,14 +6,14 @@ description: instrument MCP 服务器使用指引 — 七台仪器（SDS 示波�
 # instrument MCP 使用指引
 
 MCP server：`mcp_instruments/server.py`。**能力共 68 个操作（八台设备）**，但**暴露方式取决于 profile**
-（`--profile=` 或环境变量 `INSTRUMENT_MCP_PROFILE`）：
+（`--profile=` 或环境变量 `INSTRUMENT_MCP_PROFILE`，默认 `compact`）：
 
 | profile | 模型看到的工具 | 本文的用法 |
 |---|---|---|
+| `compact` | 只有 5 个：`instr_devices` / `instr_search` / `instr_describe` / `instr_call` / `instr_batch` | **默认档**；下文的名字是**操作**，需经 `instr_call` 调用，见下 |
 | `legacy` | 68 个操作各一个工具（`sds_measure`、`dg_set_wave` …） | 下文决策树里的名字**直接可用** |
-| `compact` | 只有 5 个：`instr_devices` / `instr_search` / `instr_describe` / `instr_call` / `instr_batch` | 下文的名字是**操作**，需经 `instr_call` 调用，见下 |
 
-## 零、如果你在 compact profile 下（先读这一节）
+## 零、compact 是默认档（先读这一节）
 
 本文下文用 legacy 工具名书写，因为那是最短、最稳定的称呼。在 compact 下**不要直接调它们**，
 按下述方式换用即可——**能力完全一样，路径同一条**：

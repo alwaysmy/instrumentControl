@@ -347,12 +347,14 @@ instrument_runtime/         能力与护栏（**不依赖 MCP/FastMCP/pyvisa**�
 `verify_broker_offline.py` 会在子进程里断言这条边界（import broker 不得牵入
 mcp/fastmcp/pyvisa）。
 
-**profile**（`--profile=<legacy|compact>` 或环境变量 `INSTRUMENT_MCP_PROFILE`，默认 `legacy`）：
+**profile**（`--profile=<legacy|compact>` 或环境变量 `INSTRUMENT_MCP_PROFILE`，默认 `compact`）：
 
 | | 工具数 | 工具定义体量 | 说明 |
 |---|---|---|---|
-| `legacy` | 68 | 59677 字符 ≈ 19.9k token | 现状；skill 与文档里的工具名都指这套 |
-| `compact` | 5 | 4211 字符 ≈ 1.4k token | **省约 18.5k token/请求（92.9%）** |
+| `compact` | 5 | 4600 字符 ≈ 1.5k token | **默认档**；比 legacy 省约 18.4k token/请求（92.3%） |
+| `legacy` | 68 | 59677 字符 ≈ 19.9k token | 具名工具面；skill 与文档里的工具名都指这套 |
+
+（体量由 `verify_compact_profile.py` 的 S4 现场测量，随描述文案变动。）
 
 compact 的 5 个工具：`instr_devices`（列仪器）、`instr_search`（按关键词找操作）、
 `instr_describe`（取完整参数表/说明/安全属性）、`instr_call`（执行一次操作）、
@@ -453,18 +455,36 @@ python TEST_SCRIPTS/common/switch_dsh_instrument_profile.py --profile compact --
 python TEST_SCRIPTS/common/switch_dsh_instrument_profile.py --profile legacy --apply
 ```
 
-它做的就是在 `mcp-instrument` 条目的 `env:` 下加/删一行 `INSTRUMENT_MCP_PROFILE: compact`。
+它做的就是在 `mcp-instrument` 条目的 `env:` 下加/删一行 `INSTRUMENT_MCP_PROFILE`。
+compact 已是**代码默认档**，所以正常情况下配置里不需要这一行；脚本现在的用途是
+把某一档**显式钉死**（例如回退 `--profile legacy --apply`），或临时试验另一档。
 
 **切换后必须重启 DSH**：MCP 子进程的工具表不会热重载（HMR 只重载插件配置），
 与 `cordis.patch.yml` 里既有的那条注记同因。重启会中断当前会话，故这一步只能由人做。
 
-切换前的验证（都离线、不碰仪器）：
+校验套件（全部离线、不碰仪器，除最后一条）：
 
 ```bash
+python TEST_SCRIPTS/common/verify_registry_parity.py   # registry <-> legacy 工具表 + 基线快照
+python TEST_SCRIPTS/common/verify_broker_offline.py    # 护栏/锁的唯一真源
 python TEST_SCRIPTS/common/verify_compact_profile.py   # 进程内：形态/能力/成本
-python TEST_SCRIPTS/common/verify_compact_mcp.py       # 协议级 + 设备路径（死回环资源）
+python TEST_SCRIPTS/common/verify_batch_offline.py     # Batch Plan DSL 语义
+python TEST_SCRIPTS/common/verify_compact_mcp.py       # 协议级 + 默认档 + 设备路径（死回环）
+python TEST_SCRIPTS/common/verify_mcp_tools_meta.py    # legacy 工具表元数据
+python TEST_SCRIPTS/common/audit_guardrail_coverage.py # 黑名单误伤 / 白名单出处
 python TEST_SCRIPTS/common/dump_mcp_tools.py           # 固化线上工具表快照
 ```
+
+**校验脚本自己钉 profile**：断言 legacy 具名工具面的那几个（`verify_registry_parity`、
+`verify_compact_profile`、`verify_mcp_tools_meta`、`dump_mcp_tools`、`verify_session_lock_live`、
+`ks3458a/` 下两个）在 import / spawn 之前**显式**设 `INSTRUMENT_MCP_PROFILE=legacy`。
+默认档改动后若不这样钉，它们会静默对着 compact 的 5 个工具做断言——要么失败得莫名其妙，
+要么（成本对比那种）算出没有意义的数字。`verify_compact_mcp.py` 的 S0 反过来测默认档：
+它把环境变量**摘掉**（而不是设成 compact），否则测的是环境变量而不是 `_DEFAULT_PROFILE`。
+
+FastMCP 派生漂移（`Tool.from_function` 的结果与真实注册对象不一致）只在 legacy 下做启动期
+比对——compact 的服务实例里没有这 68 个工具，无从比对。所以这道守卫现在由
+`verify_registry_parity.py` 承担（对着冻结快照逐字节断言），**FastMCP 升级后必须跑它**。
 
 切换前后的**真实对比数据**（读 DSH 会话日志里那次请求真正带了什么）：
 
@@ -476,14 +496,18 @@ python TEST_SCRIPTS/common/measure_dsh_tool_cost.py --compare before.json after.
 ```
 
 实测切换前基线（真实会话，非合成快照）：整个工具表 108 个 / 92629 字符 ≈ 30876 token，
-其中 `mcp__instrument__*` 57 个 / 40991 字符 ≈ 13663 token = **44.4%**；切换后仪器组
-降到约 4211 字符（5 个工具）。
+其中 `mcp__instrument__*` 57 个 / 40991 字符 ≈ 13663 token = **44.4%**。
+
+另一组是**合成对比**（`verify_compact_profile.py` 的 S4 现场测量，只看仪器这一组）：
+68 个工具 59,677 字符 ≈ 19.9k token → 5 个工具 4,600 字符 ≈ 1.5k token，省约 18.4k。
+**两组数字不可混用**：会话那一组是当时实际注册的工具集，且整个工具表里还有其它
+MCP 服务器的工具。
 
 回滚不留不一致状态：legacy 的 68 个工具名与 schema 在任何阶段都**未变过**
 （`verify_registry_parity.py` 对着基线快照逐字节断言）。
 
-**当前状态**：compact 尚未成为默认（默认仍是 legacy）。切换与重启待使用者执行；
-重启用真实会话跑一轮后才有静态工具定义之外的对比数据（总输入 token、工具选择失败率、
-参数错误率、往返次数）。
+**当前状态**：compact 是**代码默认档**，任何地方都不必再配 profile（`cordis.patch.yml` 里
+那行 `INSTRUMENT_MCP_PROFILE: compact` 已属冗余，留着无害）。静态工具定义之外的对比数据
+（总输入 token、工具选择失败率、参数错误率、往返次数）需要重启用真实会话跑一轮才有。
 
 设计与取舍见 `docs/gpt_qa/2026-09-23-instrument-gateway-arch.md`。

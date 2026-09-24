@@ -106,10 +106,33 @@ class Probe:
         return self.proc.stderr.read().decode("utf-8", "replace")
 
 
-def _read_only_probe_op(device: str | None) -> tuple[str, dict] | None:
+def _reachable_kinds(p) -> list[str]:
+    """从 `instr_devices` 快路径取"已知地址"里的设备族，**USB 直连的排前面**。
+
+    为什么需要它：下面的候选表只保证操作是 read_only，**不保证那台仪器接着**。本机只连
+    了 DG832 时，按固定顺序会挑中 `dmm.status`，于是 S1/S2 报一串 connection 失败——
+    看起来像回归，其实只是选错了设备。
+
+    USB 资源是本机直连，比 LAN 资源可靠得多，所以优先；只读配置+缓存，不触发网络扫描。
+    拿不到列表就返回空，调用方退回固定顺序。
+    """
+    try:
+        r = p.call("instr_devices", {})
+    except Exception:                                            # noqa: BLE001
+        return []
+    if not r.get("ok") or r.get("mode") != "known":
+        return []
+    devs = [d for d in (r.get("devices") or []) if d.get("kind")]
+    devs.sort(key=lambda d: 0 if str(d.get("resource", "")).upper().startswith("USB") else 1)
+    return [d["kind"] for d in devs]
+
+
+def _read_only_probe_op(device: str | None, preferred: list[str] | None = None
+                        ) -> tuple[str, dict] | None:
     """挑一个**只读**的、不需要复杂参数的探测操作。
 
     逐个候选都过安全分级（catalog.RISK_BY_TOOL）；任何一个不是 read_only 就跳过。
+    `preferred`（来自 `_reachable_kinds`）只影响**尝试顺序**，不放松只读约束。
     """
     from instrument_runtime import RISK_BY_TOOL
 
@@ -123,10 +146,15 @@ def _read_only_probe_op(device: str | None) -> tuple[str, dict] | None:
         ("sdg.status", {}),
         ("ks3458a.status", {}),
     ]
-    for op_id, args in candidates:
+    if device:
+        order = [c for c in candidates if c[0].split(".")[0] == device]
+    elif preferred:
+        order = ([c for c in candidates if c[0].split(".")[0] in preferred]
+                 + [c for c in candidates if c[0].split(".")[0] not in preferred])
+    else:
+        order = candidates
+    for op_id, args in order:
         tool = op_id.replace(".", "_")
-        if device and op_id.split(".")[0] != device:
-            continue
         if RISK_BY_TOOL.get(tool) != "read_only":
             continue        # 运行期强制：只碰只读操作
         return op_id, args
@@ -155,17 +183,17 @@ def main() -> int:
 
     from instrument_runtime import RISK_BY_TOOL
 
-    probe_op = _read_only_probe_op(args.device)
-    if probe_op is None:
-        print(f"no eligible read-only probe operation found (device={args.device})")
-        return 2
-    op_id, op_args = probe_op
-    print(f"== compact live smoke (read-only) ==\nprobe op: {op_id} args={op_args} "
-          f"| batch repeats={args.repeat}\n")
-
     p = Probe()
     try:
         p.handshake()
+
+        probe_op = _read_only_probe_op(args.device, _reachable_kinds(p))
+        if probe_op is None:
+            print(f"no eligible read-only probe operation found (device={args.device})")
+            return 2
+        op_id, op_args = probe_op
+        print(f"== compact live smoke (read-only) ==\nprobe op: {op_id} args={op_args} "
+              f"| batch repeats={args.repeat}\n")
 
         print("S1 single read-only call (instr_call)")
         r = p.call("instr_call", {"op": op_id, "args": op_args})

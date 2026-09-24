@@ -16,12 +16,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "mcp_instruments"))
+
+# `import server` 必须落在 legacy 档：S2 要确认 registry 在两种 profile 下都是全部 68 个
+# 操作，S4 要拿 `server.mcp` 里的 68 个工具当 legacy 基准算压缩比。server.py 的默认档
+# 已改为 compact，不钉住的话 S4 会变成 "compact 对比 compact"（比值 ~0%，静默失真）。
+# compact 那一侧由本脚本自己建 FastMCP 实例（见 S1），与这个环境变量无关。
+os.environ["INSTRUMENT_MCP_PROFILE"] = "legacy"
 
 fails: list[str] = []
 

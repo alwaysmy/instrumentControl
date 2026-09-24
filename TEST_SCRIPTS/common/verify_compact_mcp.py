@@ -42,9 +42,15 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 class Probe:
     """最小 stdio JSON-RPC 客户端（与 dump_mcp_tools.py 同一套手法）。"""
 
-    def __init__(self, profile: str, timeout: float = 180.0) -> None:
+    def __init__(self, profile: str | None, timeout: float = 180.0) -> None:
         env = dict(os.environ)
-        env["INSTRUMENT_MCP_PROFILE"] = profile
+        if profile is None:
+            # profile=None 用来测**代码默认档**：必须把环境变量摘掉，而不是写成 "compact"
+            # —— 否则测的是环境变量，不是 server.py 的 _DEFAULT_PROFILE（本机 shell 里
+            # 可能恰好也设了它，那样这个检查就永远为真、失去意义）。
+            env.pop("INSTRUMENT_MCP_PROFILE", None)
+        else:
+            env["INSTRUMENT_MCP_PROFILE"] = profile
         self.timeout = timeout
         self.proc = subprocess.Popen([PY_EXE, str(SERVER)], stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -113,6 +119,24 @@ class Probe:
 
 def main() -> int:
     print("== compact profile over real MCP stdio ==")
+
+    print("\nS0 the code default is compact (INSTRUMENT_MCP_PROFILE removed from the env)")
+    d = Probe(None)
+    dtools: dict = {}
+    dlog = ""
+    try:
+        d.handshake()
+        dtools = {t["name"]: t for t in d.tools()}
+    finally:
+        dlog = d.close()
+    check("omitting INSTRUMENT_MCP_PROFILE yields the compact table",
+          set(dtools) == {"instr_devices", "instr_search", "instr_describe",
+                          "instr_call", "instr_batch"}, str(sorted(dtools)))
+    dreg = [line for line in dlog.splitlines() if "runtime registry" in line]
+    check("default startup self-check reports profile=compact",
+          bool(dreg) and "profile=compact" in dreg[-1],
+          dreg[-1][:100] if dreg else "(none)")
+
     p = Probe("compact")
     try:
         info = p.handshake()

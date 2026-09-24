@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -28,6 +29,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SERVER = ROOT / "mcp_instruments" / "server.py"
 PY_EXE = sys.executable
+
+# 快照的对象是 **legacy 具名工具面**（68 个工具）。server.py 的默认档已改为 compact，
+# 不在这里钉住就会只抓到 5 个 compact 工具，基准快照失真而校验脚本无从察觉。
+SERVER_ENV = {**os.environ, "INSTRUMENT_MCP_PROFILE": "legacy"}
 
 
 def _ascii(text) -> str:
@@ -46,6 +51,7 @@ class ServerProbe:
             stderr=subprocess.PIPE,
             bufsize=0,
             cwd=str(ROOT),
+            env=SERVER_ENV,
         )
 
     def send(self, obj: dict) -> None:

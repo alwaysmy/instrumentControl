@@ -20,12 +20,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "mcp_instruments"))
+
+# 本脚本比对的是 **legacy 工具面**：S1 直接读 `server.mcp` 的工具表，S2 把 registry 的
+# description / inputSchema 与重构前的冻结快照逐字节比对。server.py 的默认档已改为
+# compact，不钉住 legacy 的话 `server.mcp` 里只剩 5 个 compact 工具，S1 必然失败。
+#
+# 这里还承担着**唯一**一道 FastMCP 派生漂移守卫：server.py 只在 legacy 下把
+# `Tool.from_function` 的派生结果与真实注册对象比对（compact 下服务实例里没有这些
+# 工具，无从比对）。所以本脚本必须显式跑在 legacy 下，并且要跟着 FastMCP 升级一起跑。
+os.environ["INSTRUMENT_MCP_PROFILE"] = "legacy"
 
 DEFAULT_BASELINE = ROOT / "TEST_DATA" / "common" / "mcp_tools_baseline_v2dev.json"
 

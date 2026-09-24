@@ -7,12 +7,12 @@ keysight_3458a / dho_control / mho_control / dg832_control / dh1766_control
 ## 暴露方式：两种 profile
 
 **能力共 68 个操作**，但**模型看到几个工具取决于 profile**（`--profile=<legacy|compact>`
-或环境变量 `INSTRUMENT_MCP_PROFILE`，默认 `legacy`）：
+或环境变量 `INSTRUMENT_MCP_PROFILE`，默认 `compact`）：
 
 | profile | 工具数 | 工具定义体量 | 说明 |
 |---|---|---|---|
+| `compact` | 5 | ≈1.5k token | **默认**；`instr_devices` / `instr_search` / `instr_describe` / `instr_call` / `instr_batch` |
 | `legacy` | 68 | ≈19.9k token | 每个操作一个工具（`sds_measure`、`dg_set_wave` …），下文工具清单即这一套 |
-| `compact` | 5 | ≈1.4k token | `instr_devices` / `instr_search` / `instr_describe` / `instr_call` / `instr_batch` |
 
 **两种 profile 的能力完全相同、执行路径相同**（都经 registry → policy → 同一个执行器），
 差别只在"多少工具定义常驻上下文"。compact 下本文的 legacy 名字是**操作**，

@@ -83,7 +83,7 @@ MCP 注册（示例，路径按需替换）：
 
 | 设备 | 库 | 发现入口（库函数 · 解析层 · MCP 工具前缀） |
 |---|---|---|
-| DH1766A-1 三路电源 | `dh1766_control` | `find_dh1766()` · `resolve("psu")` · `psu_*` |
+| DH1766 系列三路电源（现机 DH1766-2） | `dh1766_control` | `find_dh1766()` · `resolve("psu")` · `psu_*` |
 | RIGOL DHO924S | `dho_control` | `find_dho()` · `resolve("dho")` · `dho_*` |
 | RIGOL MHO984D | `mho_control` | `find_mho()` · `resolve("mho")` · `mho_*` |
 | RIGOL DG832 | `dg832_control` | `DG832()`（自动发现） · `resolve("dg")` · `dg_*` |

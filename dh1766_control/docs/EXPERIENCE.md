@@ -22,9 +22,25 @@
 
 - VID 0x0957 是 **Keysight** 的 ID —— DH1766A 伪装之以便用 Keysight VISA 驱动，属国产仪器常见做法。
   **不要以 VID/PID 判定设备身份，以 `*IDN?` 为准。**
-- `*IDN?` = `BJDH,DH1766A-1,0,V0.1.4.3`（IEEE 488.2 四字段：厂商,型号,序列号,版本）。
-  BJDH = 北京大华（Beijing DHTECH）。
+- `*IDN?` = `BJDH,DH1766A-1,0,V0.1.4.3`（老机，2026-08 实测）｜
+  `BJDH,DH1766-2,<serial>,V0.2.4.7.0`（**现机**，2026-10-22；序列号见 `docs/DEVICE_FACTS.local.md`）。
+  IEEE 488.2 四字段：厂商,型号,序列号,版本。BJDH = 北京大华（Beijing DHTECH）。
 - Windows 设备类 `USBTestAndMeasurementDevice`（友好名 "USB Test and Measurement Device (IVI)"）。
+
+### 2.1 现机型号与"结论适用范围"（2026-10-22）
+
+台面**换过机**：现在挂的是 **DH1766-2 / V0.2.4.7.0**，本文 §3 固件差异、§5.1 上电过渡态、
+§7 safe_mode 与模式切换等结论**都来自老机 DH1766A-1 / V0.1.4.3**，不是同一台。
+
+已在新机复验（只读）：`snapshot()` 全链路——`APPL:VOLT?`/`APPL:CURR?`、`MEAS:*:ALL?`、
+`SYST:COMM:RLST?`、`output_mode()`/`track_mode()`/`series_mode()`/`parallel_mode()`、
+`OUTP` 状态、OVP/OCP、定时器——全部正常返回（当时 CH1/CH2 设定 3.5 V / 24 V、`NORM`、
+三路输出关）。**说明新机仍有 `APPLy:*` 查询**（§8 说的"DH1766 系列无 APPLy"不适用于判定它）。
+
+**未复验**：§3 的固件差异表（`VOLT:MODE?`/`INIT:DEL?` 空串、`OUTP:TIM:DATA 0` 被静默忽略、
+`APPL:OUT` 不存在）、§4 写间隔、§5.1 输出上电过渡态、§7 的 safe_mode / 模式切换 / `*RST` 行为。
+→ **在新机上做写操作前，先跑 `TEST_SCRIPTS/dh1766/test_dh1766_full.py`（备份-恢复留痕），
+不要直接照抄老机结论。**
 
 ## 3. 固件差异（V0.1.4.3 vs 手册基于的 V0.1.2.8）
 

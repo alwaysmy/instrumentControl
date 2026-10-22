@@ -392,3 +392,31 @@
   `verify_mcp_tools_meta.py` 存成了 **CRLF**，故提交用 `core.autocrlf=false` 保持 CRLF，避免
   全文件行尾抖动）。重放后 `verify_mcp_tools_meta.py` **全部 PASS**（68 工具、`description gap = 0`、
   stdout 纯净），`py_compile` 通过；自检行文案按上游断言保留 `description <n>` 空格写法。
+
+- 2026-10-22（**"整台实验台离线"实为台面未上电；并纠正一条错误结论**）：用户报 DH1766 连不上，
+  10-20 首轮排查 ICMP/ARP/TCP 三路都打空——本机仪器网段零主机应答、ARP 无邻居、VISA 只枚举到
+  串口、`Get-PnpDevice` 里连 **DG832 的 USBTMC 节点都不存在**（`VID_0957`/`VID_1AB1` 都查不到）。
+  当时据此写下"仪器网络不可达"，**并顺手记了一条"该电源不应答 ping"的错误结论**。10-22 复测证明
+  问题在物理侧、与地址/协议无关：
+  - **"不回 ping"不成立**：设备在线时 ICMP **3/3 应答（0~1 ms）**、ARP 有动态表项。当时的零应答
+    是**整台（含 USB 侧）没上电/没接线**，不是设备特性——**不要把那次现象写成任何"设备行为"结论**。
+  - 三条通路同时可用：USB TMC、LAN raw `5025`、LAN VXI-11 `inst0`；另 **UDP 广播 `*IDN?` 到 5025
+    会被应答**——不知道 IP 时一条广播即可定位（实测 <1 s 回包，回包来源即设备地址）。
+  - 链路质量：LAN / USB 各 25 次混合查询（`*IDN?` / `MEAS:VOLT:ALL?` / `MEAS:CURR:ALL?` /
+    `SYST:COMM:RLST?`）**0 错误**（LAN 中位 2 ms、USB 中位 1 ms）；PC 侧网卡 1 Gbps、收发
+    **0 错误 0 丢弃**。
+  - **判据（可复用）**：判"仪器离线"要**两类独立证据**——① USB 侧 PnP 有没有仪器节点（没有 =
+    台面没上电/没插，与地址无关）；② `common/discovery.py` 的 TCP 端口预筛（111/4880/5025/5555）。
+    ICMP/ARP 只能作辅助；**"全段零应答 + USB 侧也无节点"应优先怀疑供电与接线，而不是地址漂移
+    或协议变化**。历史同型：2026-09-16 MHO 也是"ICMP 只有本机、ARP 无邻居"，最后**插上网线**
+    即恢复（见当日记录）——两次都是物理侧。
+  - **设备换机**：现挂 `DH1766-2` / 固件 `V0.2.4.7.0`，与此前实测的 `DH1766A-1` / `V0.1.4.3`
+    **不是同一台**（型号/序列号/资源串见 `docs/DEVICE_FACTS.local.md`，不入库）。新机**只验证了
+    只读路径**：`snapshot()` 全链路（`APPL:VOLT?`/`APPL:CURR?`、`MEAS:*:ALL?`、
+    `SYST:COMM:RLST?`、`output_mode()`）正常（CH1/CH2 设定 3.5 V / 24 V、`NORM`、三路输出关）。
+    **写路径与 `EXPERIENCE.md` §3 固件差异表未在新机复验**——沿用老机结论前先跑
+    `TEST_SCRIPTS/dh1766/test_dh1766_full.py`（备份-恢复留痕）。
+  - 工具链补正两条：① LAN raw SOCKET **现在能直接用系统 VISA（`system32\visa32.dll`）打开**，
+    `test_dh1766_readonly_lan.py` 里"NI-VISA 打不开 SOCKET 资源"的前提**已过时**；② 该脚本
+    依赖 `pyvisa-py`（`@py` 后端），本机未安装 → 报 `No module named 'pyvisa_py'`；要用先
+    `pip install pyvisa-py`，否则走统一库 / MCP `psu_status`。

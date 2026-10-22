@@ -230,7 +230,7 @@ AI/Agent 操作仪器必须遵守以下规范。
 
 | 设备 | 库 | 发现入口（库函数 · 解析层 · MCP 前缀） |
 |---|---|---|
-| DH1766A-1 电源 | dh1766_control | `find_dh1766()` · `resolve("psu")` · `psu_*` |
+| DH1766 系列电源（现机 DH1766-2） | dh1766_control | `find_dh1766()` · `resolve("psu")` · `psu_*` |
 | RIGOL DHO924S 示波器 | dho_control | `find_dho()` · `resolve("dho")` · `dho_*` |
 | RIGOL MHO984D 示波器 | mho_control | `find_mho()` · `resolve("mho")` · `mho_*` |
 | RIGOL DG832 信号源 | dg832_control | `DG832()`（自动发现）· `resolve("dg")` · `dg_*` |
@@ -265,10 +265,10 @@ AI/Agent 操作仪器必须遵守以下规范。
 - **连接后会核对 `*IDN?`**：地址若已被 DHCP 分配给别的设备，工具直接拒绝操作
   （报"地址校验失败…请先 instr_discover"），绝不把 SCPI 发给未知设备。
 
-DH1766 现场状态备注（2026-09-13 实测留痕 `TEST_DATA/dh1766/psu_lock_probe_*.json`）：
-该机长期挂在 **TRAC 跟踪模式**、CH1/CH2 带电（±12V、CH1 ≈0.39A 带载）——
-CH2 的 −11.99V 是跟踪跟随，不是故障；同时任何远程会话都把它置为 `REM`
-（面板可能不可操作），收尾统一 `SYST:LOC` 交还。**动它之前先 `psu_status` 查模式与带电状态。**
+DH1766 现场状态备注（**2026-10-22 已换机，现机现场状态看 `docs/DEVICE_FACTS.local.md`**）：
+该系列在 **TRAC 跟踪模式**下 CH2 跟随 CH1 输出同等值负压（早期实测 CH1 +12V / CH2 −12V、
+CH1 ≈0.39A 带载）——**CH2 的 −11.99V 是跟踪跟随，不是故障**；同时任何远程会话都把它置为
+`REM`（面板可能不可操作），收尾统一 `SYST:LOC` 交还。**动它之前先 `psu_status` 查模式与带电状态。**
 
 ## 五、分析方法选择（2026-09-09 教训）
 

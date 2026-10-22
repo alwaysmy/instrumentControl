@@ -60,7 +60,7 @@ archive/             历史版本归档（旧驱动）
 
 | 设备 | 库 | `resolve(kind)` | MCP 工具前缀 | 手册提取版 |
 |---|---|---|---|---|
-| DH1766A-1 电源 | `dh1766_control` | `psu` | `psu_*` | `dh1766_control/docs/SCPI_COMMANDS_DH1766A.md` |
+| DH1766 系列电源（现机 DH1766-2） | `dh1766_control` | `psu` | `psu_*` | `dh1766_control/docs/SCPI_COMMANDS_DH1766A.md` |
 | RIGOL DHO924S | `dho_control` | `dho` | `dho_*` | `dho_control/docs/DHO800编程手册_output/` |
 | Siglent SDS824X HD | `sds_control` | `sds` | `sds_*` | `sds_control/docs/SDS800XHD_…_output/` |
 | Siglent SDG2122X | `sdg_control` | `sdg` | `sdg_*` | `sdg_control/docs/SDG_…_output/` |

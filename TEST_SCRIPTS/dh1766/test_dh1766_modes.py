@@ -53,8 +53,8 @@ def drain(ps: DH1766) -> list[str]:
 
 def main() -> int:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    with VisaClient(RES, timeout_ms=5000) as client:
-        ps = DH1766(client)
+    with VisaClient(RES, timeout_ms=5000) as client, DH1766(client) as ps:
+        # 退出（含异常）时默认 SYST:LOC 归还面板再关连接
         rec("idn", value=ps.idn())
         base_modes = modes(ps)
         base_out = ps.get_output_state()

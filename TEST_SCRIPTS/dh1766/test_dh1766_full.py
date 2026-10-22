@@ -100,12 +100,16 @@ def main() -> None:
     resource = hit.resource
     print(f"\n== 连接 {resource}  source={hit.source}  safe_mode={args.safe} ==")
 
-    with VisaClient(resource, timeout_ms=5000) as client:
-        ps = DH1766(client, safe_mode=args.safe)
+    with VisaClient(resource, timeout_ms=5000) as client, \
+            DH1766(client, safe_mode=args.safe) as ps:
+        # DH1766 作为上下文管理器：退出（含异常）时默认 SYST:LOC 归还面板再关连接
 
         # ---------- Phase A 只读快照 ----------
         print("\n-- Phase A 只读快照 --")
         before = ps.snapshot()
+        # VOLT:MODE / CURR:MODE 是**按通道**存的，snapshot() 不含它们；单独读三路，
+        # 让 Phase C 能抓到"模式没恢复"（2026-10-22 实测：CH1 曾被写成 FIX 而无人发现）
+        before["channel_modes"] = ps.channel_modes()
         for k, v in before.items():
             print(f"  {k:20s}: {v}")
 
@@ -282,6 +286,7 @@ def main() -> None:
         # ---------- Phase C 最终快照比对 ----------
         print("\n-- Phase C 恢复完整性比对 --")
         after = ps.snapshot()
+        after["channel_modes"] = ps.channel_modes()
         # 回读值（MEAS）天然零漂波动，不参与设定恢复比对；
         # 设定类数值用 0.01 容差（手册编程精度 10mV/1mA 级，浮点尾差正常）
         MEAS_KEYS = {"measure_voltage_v", "measure_current_a", "measure_power_w"}

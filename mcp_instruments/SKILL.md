@@ -415,8 +415,12 @@ DH1766 与 SDS 不同：**任何远程会话都会把电源置为 `REM`**——�
 **无响应**，不是"返回空串"）。这是设备行为，不是锁定命令被误发。
 
 - 发 `SYST:LOC` 立即回到 `LOC`（只交还面板控制权，**不影响输出/电压/模式**）；
-- MCP 电源工具已内置：每次调用收尾自动补发 `SYST:LOC`（`server.py::_psu_close`），
+- MCP 电源工具已内置：每次调用收尾自动补发 `SYST:LOC`（`server.py::_psu_close` → `DH1766.close()`），
   所以 AI 用过之后现场面板仍可用；
+- **默认归还、显式才保留**（2026-10-22 用户口径）：确实要让电源留在远程态时设环境变量
+  `INSTRUMENT_PSU_KEEP_REMOTE=1`；自己写脚本用库时，`with DH1766(client) as ps:` 退出即自动
+  `SYST:LOC`，要保留远程态用 `DH1766(client, release_panel=False)`；
+- ⚠ `SYST:LOC` **必须是会话里最后一条命令**：发完 LOC 再发任何命令，设备会重新回到 `REM`；
 - 用 `psu_status` 前不必纠结 REM，它会如实回报当前模式（TRAC/SERI/PARA/NORM）。
 
 ## 四、典型工作流

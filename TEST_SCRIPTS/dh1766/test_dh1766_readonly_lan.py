@@ -57,8 +57,8 @@ def main() -> None:
     resource = f"TCPIP0::{ip}::{PORT}::SOCKET" if ip else resolve("psu")
     print(f"\n== 连接 {resource} ==")
 
-    with PyVisaClient(resource, timeout_ms=3000) as client:
-        ps = DH1766(client)
+    with PyVisaClient(resource, timeout_ms=3000) as client, DH1766(client) as ps:
+        # 退出（含异常）时默认 SYST:LOC 归还面板再关连接
         idn = ps.idn()
         print(f"IDN : {idn}")
 

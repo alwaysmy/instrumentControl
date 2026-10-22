@@ -268,7 +268,10 @@ AI/Agent 操作仪器必须遵守以下规范。
 DH1766 现场状态备注（**2026-10-22 已换机，现机现场状态看 `docs/DEVICE_FACTS.local.md`**）：
 该系列在 **TRAC 跟踪模式**下 CH2 跟随 CH1 输出同等值负压（早期实测 CH1 +12V / CH2 −12V、
 CH1 ≈0.39A 带载）——**CH2 的 −11.99V 是跟踪跟随，不是故障**；同时任何远程会话都把它置为
-`REM`（面板可能不可操作），收尾统一 `SYST:LOC` 交还。**动它之前先 `psu_status` 查模式与带电状态。**
+`REM`（面板可能不可操作，现场要长按 LOCK 解锁），收尾统一 `SYST:LOC` 交还。
+**收尾归还是默认行为**：库 `DH1766.close()`/`with` 退出与 MCP 全部 `psu_*` 工具都会先发
+`SYST:LOC`；要让它留在远程态须显式关掉（库 `release_panel=False`、MCP `INSTRUMENT_PSU_KEEP_REMOTE=1`）。
+**动它之前先 `psu_status` 查模式与带电状态。**
 
 ## 五、分析方法选择（2026-09-09 教训）
 

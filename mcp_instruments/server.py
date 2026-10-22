@@ -825,22 +825,21 @@ def _psu_connect(resource: str | None = None) -> DH1766:
 
 
 def _psu_close(p: DH1766) -> None:
-    """DH1766 会话收尾：先把面板控制权还给现场，再关连接。
+    """DH1766 会话收尾：默认先把面板控制权还给现场，再关连接。
 
     2026-09-13 实测（V0.1.4.3）：**任何远程会话都会把电源置为 REM（远程模式）**
     ——`SYST:COMM:RLST?` 在新会话的第一条命令即返回 'REM'（此前手册/库用的
     `SYST:COMM:RLST:STAT?` 在本机无响应，已修正）。REM 下现场面板可能不可操作，
     故每次 DH1766 工具调用结束都补发一次 `SYST:LOC`（LOC 只归还面板控制权，
     **不改动输出/电压/模式**；同一会话内后续 SCPI 查询实测仍正常）。
+
+    用户口径（2026-10-22）：收尾**默认解锁面板**；确实要让电源留在远程态时，
+    显式设 `INSTRUMENT_PSU_KEEP_REMOTE=1`。
     """
+    keep_remote = os.environ.get("INSTRUMENT_PSU_KEEP_REMOTE", "").strip().lower() in (
+        "1", "true", "yes", "on")
     try:
-        if getattr(p, "client", None) is not None:
-            p.local()
-    except Exception:
-        pass
-    try:
-        if getattr(p, "client", None) is not None:
-            p.client.close()
+        p.close(release_panel=not keep_remote)   # 内含 SYST:LOC + client.close
     except Exception:
         pass
 
@@ -1059,8 +1058,7 @@ def instr_discover(cidr: str | None = None) -> str:
                 from dh1766_control.visa import VisaClient
 
                 p = DH1766(VisaClient(psu_res, timeout_ms=2000))
-                p.local()
-                p.client.close()
+                p.close()   # 默认 SYST:LOC 归还面板，再关连接
                 restored_local = True
             except Exception:
                 restored_local = False

@@ -61,8 +61,8 @@ def main() -> None:
     resource = hit.resource
     print(f"\n== 连接 {resource} (source={hit.source}) ==")
 
-    with VisaClient(resource, timeout_ms=5000) as client:
-        ps = DH1766(client)
+    with VisaClient(resource, timeout_ms=5000) as client, DH1766(client) as ps:
+        # 退出（含异常）时默认 SYST:LOC 归还面板再关连接
         print(f"IDN : {ps.idn()}")
 
         # ---- 只读：电压/电流/设定值/状态 ----

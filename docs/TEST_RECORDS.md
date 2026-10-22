@@ -429,3 +429,15 @@
     `track_mode`）；② `VOLT:MODE`/`CURR:MODE` 原本无条件 PASS（老固件查不回值），新机有回值后
     改成「写→查 `SYST:ERR?`→回读→恢复」真校验；③ `*TRG` 原本无条件 PASS，改成读错误队列后
     如实记录（老固件时代也从未单独核对过）。新增 `drain_errors()` 辅助落实铁律 3。
+  - **面板控制权改为默认归还**（用户 2026-10-22 口径：用完就解锁，除非显式要求保留）：
+    `DH1766.close()` / `with` 退出**默认先发 `SYST:LOC` 再关连接**，`release_panel=False`
+    才保留远程态；MCP `psu_*` 同样默认 LOC，`INSTRUMENT_PSU_KEEP_REMOTE=1` 显式保留。
+    实测：`with` 退出后新开会话**第一条命令**读 `SYST:COMM:RLST?` = `LOC`；
+    ⚠ LOC 之后不得再发命令（会重回 `REM`），所以它必须是收尾最后一条。
+    四支 DH1766 测试脚本改为 `with VisaClient(...) as client, DH1766(client) as ps:`，
+    异常路径也会解锁（首跑崩溃那次就是因为没有收尾，把面板留在了 REM）。
+  - **复测**（收尾策略改完后）：再次 **44/45 PASS**（`*TRG` 仍 FAIL，属设备行为）。
+    Phase A 新增 `channel_modes()`（逐路读三路 `VOLT:MODE`/`CURR:MODE`，读完恢复选中通道）
+    并纳入 Phase C 比对 → 仍 0 diff；留痕 `TEST_DATA/dh1766/dh1766_full_20261022_154611.json`。
+    现场复核：CH1 的 `VOLT:MODE` 已改回 `LIST`（三路均 LIST，`CURR:MODE` 均 FIX）；
+    timer=1、`INST:COUP:TRIG`=NONE、OVP/OCP/电压电流设定、三路输出全 OFF 均与测试前一致。

@@ -32,15 +32,27 @@
 台面**换过机**：现在挂的是 **DH1766-2 / V0.2.4.7.0**，本文 §3 固件差异、§5.1 上电过渡态、
 §7 safe_mode 与模式切换等结论**都来自老机 DH1766A-1 / V0.1.4.3**，不是同一台。
 
-已在新机复验（只读）：`snapshot()` 全链路——`APPL:VOLT?`/`APPL:CURR?`、`MEAS:*:ALL?`、
-`SYST:COMM:RLST?`、`output_mode()`/`track_mode()`/`series_mode()`/`parallel_mode()`、
-`OUTP` 状态、OVP/OCP、定时器——全部正常返回（当时 CH1/CH2 设定 3.5 V / 24 V、`NORM`、
-三路输出关）。**说明新机仍有 `APPLy:*` 查询**（§8 说的"DH1766 系列无 APPLy"不适用于判定它）。
+**2026-10-22 已在新机跑全功能套件** `TEST_SCRIPTS/dh1766/test_dh1766_full.py`：
+**44/45 PASS**（唯一 FAIL 是 `*TRG`），Phase C「设定恢复完整性」PASS，结束时三路输出 OFF。
+留痕 `TEST_DATA/dh1766/dh1766_full_20261022_145955.json`。
 
-**未复验**：§3 的固件差异表（`VOLT:MODE?`/`INIT:DEL?` 空串、`OUTP:TIM:DATA 0` 被静默忽略、
-`APPL:OUT` 不存在）、§4 写间隔、§5.1 输出上电过渡态、§7 的 safe_mode / 模式切换 / `*RST` 行为。
-→ **在新机上做写操作前，先跑 `TEST_SCRIPTS/dh1766/test_dh1766_full.py`（备份-恢复留痕），
-不要直接照抄老机结论。**
+新机与老机的实测差异（其余命令读写行为一致）：
+
+| 项 | 老机 V0.1.4.3 | 新机 V0.2.4.7.0（2026-10-22 实测） |
+|---|---|---|
+| `VOLT:MODE?` / `CURR:MODE?` | 返回空串，没法验证读写 | **有值且可写**（FIX/LIST）；**按通道各存一份**——`INST:NSEL` 切到哪路就读哪路（实测 CH1=FIX，CH2/CH3=LIST） |
+| `INIT:DEL?` | 返回空串 | `0.000000`，可写可读 |
+| `INIT:SOUR?` | 返回空串 | `BUS` / **`IMMediate`（长格式，不是 `IMM`）** |
+| `*PSC 1` | 写后读仍为 0 | 相同（写后读 0） |
+| `*TRG` | 未单独核对（老脚本无条件 PASS） | **恒回 `-200 "Execution error"`**，FIX/LIST 都一样 → 不能当"触发成功" |
+| `APPL:VOLT?`/`APPL:CURR?`、`MEAS:*:ALL?`、`OUTP:TIM:DATA`、`INST:COUP:TRIG`、`OUTP:TRAC/SERI/PARA`、OVP/OCP、`*ESE`/`*SRE`/`*OPC?`/`*STB?`/`STAT:*` | 正常 | 正常（同上 44/45） |
+
+**仍未复验**：`*RST`（要 `--allow-rst`，会恢复出厂设定与蜂鸣器状态）、§5.1 输出上电过渡态、
+§4 写间隔的边界、`OUTP:TIM:DATA 0` 是否仍被静默忽略。
+
+⚠ **`;` 串联多段查询必须每段带前导冒号**：`:VOLT:MODE?;:CURR:MODE?` 正常回 `LIST;FIX`；
+而 `VOLT:MODE?;CURR:MODE?` 只回第一段并积压 `-113 "Undefined header"`——SCPI 的 `;` 继承当前
+路径，第二段被解析成 `VOLT:CURR:MODE?`。批量查询一律写全 `:xxx?;:yyy?`。
 
 ## 3. 固件差异（V0.1.4.3 vs 手册基于的 V0.1.2.8）
 

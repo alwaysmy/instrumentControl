@@ -303,7 +303,7 @@ DG832 信号源（RIGOL DG800 系列）：
 
 | 工具 | 用法要点 |
 |---|---|
-| `instr_query(resource, cmd, timeout_ms?)` | cmd 必须含 `?`；**问号后允许带参数**（`:MEASure:ITEM? VPP,CHANnel1`）；**可用 `;` 串联多段纯查询**（如 `:CHANnel4:DISPlay?;:CHANnel4:SCALe?`），但夹带写/复位/锁定会被拒；只读不留痕 |
+| `instr_query(resource, cmd, timeout_ms?)` | cmd 必须含 `?`；**问号后允许带参数**（`:MEASure:ITEM? VPP,CHANnel1`）；**可用 `;` 串联多段纯查询**（如 `:CHANnel4:DISPlay?;:CHANnel4:SCALe?`），但夹带写/复位/锁定会被拒；只读不留痕。⚠ **每段必须带前导冒号**：SCPI 里 `;` 是"继承当前路径"，`VOLT:MODE?;CURR:MODE?` 的第二段会被解析成 `VOLT:CURR:MODE?`——DH1766-2 实测只回第一段并积压 `-113 Undefined header`（2026-10-22）；写成 `:VOLT:MODE?;:CURR:MODE?` 就正常回 `LIST;FIX` |
 | `instr_write(resource, cmd, readback_cmd?, confirm, timeout_ms?)` | **必须 confirm=True**；写前 drain、写后 SYST:ERR?、readback_cmd 给定即自动回读（铁律2/3）；每次调用含拒绝均落盘 `TEST_DATA/common/mcp_scpi_audit_*.jsonl` |
 
 护栏语义：查询判据＝**逐段检查每段都是查询单元**（命令头以 `?` 结尾、问号后可带参数）——多段纯查询放行，夹带写命令即拒（SCPI 里 `;` 是同消息内的命令单元分隔符、设备逐个执行，实测写单元会生效）；原写法偶有歧义（不是"整条以 ? 结尾"——SCPI 允许问号后带参数）；复位/存储覆写类（`*RST`/`*SAV`/`*RCL`/`:SYST:RES|FACT|PRES`，长短形式均拦）

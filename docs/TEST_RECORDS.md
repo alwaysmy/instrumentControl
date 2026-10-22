@@ -420,3 +420,12 @@
     `test_dh1766_readonly_lan.py` 里"NI-VISA 打不开 SOCKET 资源"的前提**已过时**；② 该脚本
     依赖 `pyvisa-py`（`@py` 后端），本机未安装 → 报 `No module named 'pyvisa_py'`；要用先
     `pip install pyvisa-py`，否则走统一库 / MCP `psu_status`。
+  - **全功能复验（同日）**：`TEST_SCRIPTS/dh1766/test_dh1766_full.py` 在新机上 **44/45 PASS**，
+    唯一 FAIL 是 `*TRG`（`-200 "Execution error"`，FIX/LIST 都一样）；Phase C 设定恢复完整性
+    PASS，结束时三路输出 OFF。新老固件差异表与"`;` 多段查询必须每段带前导冒号"两条已写进
+    `dh1766_control/docs/EXPERIENCE.md` §2.1。
+  - 顺带修掉测试脚本三处问题（否则跑不完 / 假 PASS）：① 输出模式那步用
+    `f"{mode.lower()}_mode"` 拼快照键，`TRAC` → `trac_mode` 直接 `KeyError` 崩（应为
+    `track_mode`）；② `VOLT:MODE`/`CURR:MODE` 原本无条件 PASS（老固件查不回值），新机有回值后
+    改成「写→查 `SYST:ERR?`→回读→恢复」真校验；③ `*TRG` 原本无条件 PASS，改成读错误队列后
+    如实记录（老固件时代也从未单独核对过）。新增 `drain_errors()` 辅助落实铁律 3。

@@ -262,7 +262,7 @@ AI/Agent 操作仪器必须遵守以下规范。
 
 | 设备 | 库 | 发现入口（库函数 · 解析层 · MCP 前缀） |
 |---|---|---|
-| DH1766A-1 电源 | dh1766_control | `find_dh1766()` · `resolve("psu")` · `psu_*` |
+| DH1766 系列电源（现机 DH1766-2） | dh1766_control | `find_dh1766()` · `resolve("psu")` · `psu_*` |
 | RIGOL DHO924S 示波器 | dho_control | `find_dho()` · `resolve("dho")` · `dho_*` |
 | RIGOL MHO984D 示波器 | mho_control | `find_mho()` · `resolve("mho")` · `mho_*` |
 | RIGOL DG832 信号源 | dg832_control | `DG832()`（自动发现）· `resolve("dg")` · `dg_*` |
@@ -297,11 +297,17 @@ AI/Agent 操作仪器必须遵守以下规范。
 - **连接后会核对 `*IDN?`**：地址若已被 DHCP 分配给别的设备，工具直接拒绝操作
   （报"地址校验失败…请先 instr_discover"），绝不把 SCPI 发给未知设备。
 
-**动 DH1766 之前先 `psu.status` 查当前模式与带电状态**——现场模式/带电是**会变动的快照**
-（历史踩过 TRAC 跟踪模式把 CH2 跟随出负压的坑，2026-09-13；同机 2026-10-08 已实测回到
-NORM），不在此记录固定值；最新状态一律以工具实查为准，快照类信息归
-`docs/DEVICE_FACTS.local.md`。收尾纪律不变：远程会话会把面板置 `REM`，工具收尾统一
-`SYST:LOC` 交还。
+**动 DH1766 之前先 `psu_status` 查当前模式与带电状态**——现场模式/带电是**会变动的快照**，
+不在此记录固定值；最新状态一律以工具实查为准，快照类信息归 `docs/DEVICE_FACTS.local.md`
+（**2026-10-22 已换机为 DH1766-2 / 固件 V0.2.4.7.0**，与此前实测的 DH1766A-1 / V0.1.4.3
+不是同一台；老机时代的"已回到 NORM"等快照不要套到新机）。
+- **TRAC 跟踪语义（系列行为，不是故障）**：TRAC 下 CH2 跟随 CH1 输出同等值负压
+  （早期实测 CH1 +12V / CH2 −12V、CH1 ≈0.39A 带载）——**CH2 的 −11.99V 是跟踪跟随**。
+- **收尾归还已是默认行为（2026-10-22）**：任何远程会话都会把面板置 `REM`（面板可能不可操作，
+  现场要长按 LOCK 解锁）。库 `DH1766.close()`/`with` 退出与 MCP 全部 `psu_*` 工具都会先发
+  `SYST:LOC`；要让它留在远程态须显式关掉（库 `release_panel=False`、
+  MCP `INSTRUMENT_PSU_KEEP_REMOTE=1`）。⚠ `SYST:LOC` 之后不得再发命令（会重回 `REM`），
+  所以它必须是会话最后一条——脚本收尾用 `with VisaClient(...) as client, DH1766(client) as ps:`。
 
 ## 五、分析方法选择（2026-09-09 教训）
 

@@ -377,7 +377,7 @@ MRNG = manual range 指示符（手册：不在自动挡时点亮），不是故
 
 | 工具 | 用法要点 |
 |---|---|
-| `instr_query(resource, cmd, timeout_ms?)` | cmd 必须含 `?`；**问号后允许带参数**（`:MEASure:ITEM? VPP,CHANnel1`、`:TRIGger:EDGE:LEVel? MAX`、`:VOLT:DC?`）；**可用 `;` 串联多段纯查询**（如 `:CHANnel4:DISPlay?;:CHANnel4:SCALe?`），但夹带写/复位/锁定会被拒；只读不留痕 |
+| `instr_query(resource, cmd, timeout_ms?)` | cmd 必须含 `?`；**问号后允许带参数**（`:MEASure:ITEM? VPP,CHANnel1`、`:TRIGger:EDGE:LEVel? MAX`、`:VOLT:DC?`）；**可用 `;` 串联多段纯查询**（如 `:CHANnel4:DISPlay?;:CHANnel4:SCALe?`），但夹带写/复位/锁定会被拒；只读不留痕。⚠ **每段必须带前导冒号**：SCPI 里 `;` 是"继承当前路径"，`VOLT:MODE?;CURR:MODE?` 的第二段会被解析成 `VOLT:CURR:MODE?`——DH1766-2 实测只回第一段并积压 `-113 Undefined header`（2026-10-22）；写成 `:VOLT:MODE?;:CURR:MODE?` 就正常回 `LIST;FIX` |
 | `instr_write(resource, cmd, readback_cmd?, confirm, timeout_ms?)` | **必须 confirm=True**；写前 drain、写后 SYST:ERR?、readback_cmd 给定即自动回读（铁律2/3）；每次调用含拒绝均落盘 `TEST_DATA/common/mcp_scpi_audit_*.jsonl` |
 
 护栏语义：查询判据＝**逐段检查每段都是查询单元**（命令头以 `?` 结尾、问号后可带参数）——多段纯查询放行，夹带写命令即拒（SCPI 里 `;` 是同消息内的命令单元分隔符、设备逐个执行，实测写单元会生效）；原写法偶有歧义（不是"整条以 ? 结尾"——SCPI 允许问号后带参数）；复位/存储覆写类（`*RST`/`*SAV`/`*RCL`/`:SYST:RES|FACT|PRES`，长短形式均拦）
@@ -528,8 +528,12 @@ DH1766 与 SDS 不同：**任何远程会话都会把电源置为 `REM`**——�
 **无响应**，不是"返回空串"）。这是设备行为，不是锁定命令被误发。
 
 - 发 `SYST:LOC` 立即回到 `LOC`（只交还面板控制权，**不影响输出/电压/模式**）；
-- MCP 电源工具已内置：每次调用收尾自动补发 `SYST:LOC`（`server.py::_psu_close`），
+- MCP 电源工具已内置：每次调用收尾自动补发 `SYST:LOC`（`server.py::_psu_close` → `DH1766.close()`），
   所以 AI 用过之后现场面板仍可用；
+- **默认归还、显式才保留**（2026-10-22 用户口径）：确实要让电源留在远程态时设环境变量
+  `INSTRUMENT_PSU_KEEP_REMOTE=1`；自己写脚本用库时，`with DH1766(client) as ps:` 退出即自动
+  `SYST:LOC`，要保留远程态用 `DH1766(client, release_panel=False)`；
+- ⚠ `SYST:LOC` **必须是会话里最后一条命令**：发完 LOC 再发任何命令，设备会重新回到 `REM`；
 - 用 `psu_status` 前不必纠结 REM，它会如实回报当前模式（TRAC/SERI/PARA/NORM）。
 
 ## 四、典型工作流

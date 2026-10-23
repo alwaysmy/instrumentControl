@@ -22,9 +22,37 @@
 
 - VID 0x0957 是 **Keysight** 的 ID —— DH1766A 伪装之以便用 Keysight VISA 驱动，属国产仪器常见做法。
   **不要以 VID/PID 判定设备身份，以 `*IDN?` 为准。**
-- `*IDN?` = `BJDH,DH1766A-1,0,V0.1.4.3`（IEEE 488.2 四字段：厂商,型号,序列号,版本）。
-  BJDH = 北京大华（Beijing DHTECH）。
+- `*IDN?` = `BJDH,DH1766A-1,0,V0.1.4.3`（老机，2026-08 实测）｜
+  `BJDH,DH1766-2,<serial>,V0.2.4.7.0`（**现机**，2026-10-22；序列号见 `docs/DEVICE_FACTS.local.md`）。
+  IEEE 488.2 四字段：厂商,型号,序列号,版本。BJDH = 北京大华（Beijing DHTECH）。
 - Windows 设备类 `USBTestAndMeasurementDevice`（友好名 "USB Test and Measurement Device (IVI)"）。
+
+### 2.1 现机型号与"结论适用范围"（2026-10-22）
+
+台面**换过机**：现在挂的是 **DH1766-2 / V0.2.4.7.0**，本文 §3 固件差异、§5.1 上电过渡态、
+§7 safe_mode 与模式切换等结论**都来自老机 DH1766A-1 / V0.1.4.3**，不是同一台。
+
+**2026-10-22 已在新机跑全功能套件** `TEST_SCRIPTS/dh1766/test_dh1766_full.py`：
+**44/45 PASS**（唯一 FAIL 是 `*TRG`），Phase C「设定恢复完整性」PASS，结束时三路输出 OFF。
+留痕 `TEST_DATA/dh1766/dh1766_full_20261022_145955.json`。
+
+新机与老机的实测差异（其余命令读写行为一致）：
+
+| 项 | 老机 V0.1.4.3 | 新机 V0.2.4.7.0（2026-10-22 实测） |
+|---|---|---|
+| `VOLT:MODE?` / `CURR:MODE?` | 返回空串，没法验证读写 | **有值且可写**（FIX/LIST）；**按通道各存一份**——`INST:NSEL` 切到哪路就读哪路（三路可各不相同） |
+| `INIT:DEL?` | 返回空串 | `0.000000`，可写可读 |
+| `INIT:SOUR?` | 返回空串 | `BUS` / **`IMMediate`（长格式，不是 `IMM`）** |
+| `*PSC 1` | 写后读仍为 0 | 相同（写后读 0） |
+| `*TRG` | 未单独核对（老脚本无条件 PASS） | **恒回 `-200 "Execution error"`**，FIX/LIST 都一样 → 不能当"触发成功" |
+| `APPL:VOLT?`/`APPL:CURR?`、`MEAS:*:ALL?`、`OUTP:TIM:DATA`、`INST:COUP:TRIG`、`OUTP:TRAC/SERI/PARA`、OVP/OCP、`*ESE`/`*SRE`/`*OPC?`/`*STB?`/`STAT:*` | 正常 | 正常（同上 44/45） |
+
+**仍未复验**：`*RST`（要 `--allow-rst`，会恢复出厂设定与蜂鸣器状态）、§5.1 输出上电过渡态、
+§4 写间隔的边界、`OUTP:TIM:DATA 0` 是否仍被静默忽略。
+
+⚠ **`;` 串联多段查询必须每段带前导冒号**：`:VOLT:MODE?;:CURR:MODE?` 正常回 `LIST;FIX`；
+而 `VOLT:MODE?;CURR:MODE?` 只回第一段并积压 `-113 "Undefined header"`——SCPI 的 `;` 继承当前
+路径，第二段被解析成 `VOLT:CURR:MODE?`。批量查询一律写全 `:xxx?;:yyy?`。
 
 ## 3. 固件差异（V0.1.4.3 vs 手册基于的 V0.1.2.8）
 
@@ -126,6 +154,13 @@ CH1 +11.99V / CH2 −11.99V —— 跟踪模式负压跟随，非故障。）
   库内无条件强制（不再仅 safe_mode）。三模式固件互斥：开一路自动清零其余
   （2026-09-08 实测，全程错误队列干净），库 `output_mode()`/`set_output_mode()`
   对应手册 §3.8 的 NORM/TRAC/SERI/PARA 四态模型。
+- **面板控制权：默认收尾归还**（2026-10-22 用户口径）：任何远程会话都会把电源置为 `REM`，
+  不交还的话现场要**长按 LOCK 解锁**。所以库的 `DH1766.close()` / `with` 退出**默认先发
+  `SYST:LOC` 再关连接**（只交还面板，不动输出/电压/模式）；确实要让它留在远程态时显式
+  `DH1766(client, release_panel=False)` 或 `close(release_panel=False)`。MCP 的 `psu_*`
+  工具同样默认 LOC，可用 `INSTRUMENT_PSU_KEEP_REMOTE=1` 显式保留。
+  实测（2026-10-22）：`with` 退出后新开会话的**第一条命令**读 `SYST:COMM:RLST?` = `LOC`。
+  ⚠ 会话内发完 `SYST:LOC` 再发任何命令会重新变回 `REM`——**LOC 必须是收尾最后一条命令**。
 
 ## 8. 手册差异（DH1766 系列 vs DH1766A 系列）
 

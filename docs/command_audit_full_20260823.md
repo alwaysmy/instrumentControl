@@ -56,7 +56,7 @@
 - [HIT ] `APPL:CURR` @ dh1766_control\src\dh1766_control\commands.py:84
 - [HIT ] `APPL:OUTP` @ dh1766_control\src\dh1766_control\commands.py:85
 - [DYN ] `state:{cmd}` @ TEST_SCRIPTS\dh1766\psu_remote_lock_probe.py:133（运行时拼接，静态不可核）
-- [DYN ] `OUTP:{mode}` @ TEST_SCRIPTS\dh1766\test_dh1766_full.py:177（运行时拼接，静态不可核）
+- [DYN ] `OUTP:{mode}` @ TEST_SCRIPTS\dh1766\test_dh1766_full.py:219（运行时拼接，静态不可核）
 
 ## dg832（38 HIT / 0 MISS / 2 DYN）
 

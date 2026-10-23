@@ -44,11 +44,45 @@ def _ch_num(ch: Channel) -> int:
 
 
 class DH1766:
-    """DH1766A 驱动，基于 VisaClient。"""
+    """DH1766A 驱动，基于 VisaClient。
 
-    def __init__(self, client: VisaClient, safe_mode: bool = False):
+    面板控制权（2026-10-22 用户口径）：
+        默认 **每次用完归还面板**——`close()` / `with` 退出时先发 `SYST:LOC`（只交还
+        面板控制权，不动输出/电压/模式），然后关连接。任何远程会话都会把电源置为
+        `REM`，不归还的话现场要长按 LOCK 解锁。
+        需要让电源保持在远程态时显式指定 `DH1766(client, release_panel=False)`
+        （或 `close(release_panel=False)`）。
+    """
+
+    def __init__(self, client: VisaClient, safe_mode: bool = False,
+                 release_panel: bool = True):
         self.client = client
         self.safe_mode = safe_mode
+        self.release_panel = release_panel
+
+    # ================= 生命周期（收尾默认归还面板） =================
+    def close(self, release_panel: Optional[bool] = None) -> None:
+        """结束会话：默认先 `SYST:LOC` 归还面板控制权，再关连接。
+
+        release_panel 显式传入时覆盖构造参数；连接已断时静默跳过。
+        """
+        release = self.release_panel if release_panel is None else release_panel
+        try:
+            if release and getattr(self, "client", None) is not None:
+                self.local()
+        except Exception:
+            pass
+        try:
+            if getattr(self, "client", None) is not None:
+                self.client.close()
+        except Exception:
+            pass
+
+    def __enter__(self) -> "DH1766":
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        self.close()
 
     # ================= 系统指令集 4.2.1 =================
     def idn(self) -> str:
@@ -155,6 +189,24 @@ class DH1766:
     def current_channel(self) -> str:
         """INST? 当前通道（CH1/CH2/CH3）。"""
         return self.client.query(C.INST_SEL + "?")
+
+    def channel_modes(self) -> dict[str, dict[str, Optional[str]]]:
+        """读取三路各自的 `VOLT:MODE` / `CURR:MODE`（V0.2.4.7.0 起有回值）。
+
+        这两项**按通道各存一份**，只有 `INST:NSEL` 切到该路后查询才读到该路的值；
+        读完后把选择通道恢复到进入时的那一路（`INST?`）。
+        老固件 V0.1.4.3 查询返回空串 → 值为 None。
+        """
+        origin = self.current_channel()
+        out: dict[str, dict[str, Optional[str]]] = {}
+        for ch in (1, 2, 3):
+            self.select_channel(ch)
+            out[f"CH{ch}"] = {"volt": self.voltage_mode(), "curr": self.current_mode()}
+        try:
+            self.select_channel(origin)
+        except Exception:
+            self.select_channel(1)
+        return out
 
     def couple_trig(self, channels: Optional[list[Channel]] = None) -> Optional[list[str]]:
         """INST:COUP:TRIG 组合通道（读写）。

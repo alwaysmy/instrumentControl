@@ -534,3 +534,52 @@
     （即使 DETACHED；BREAKAWAY 被拒 → 降级标志挡不住 Job 清理）。正解 =
     `Start-ScheduledTask instrumentControl-MCP-Server`（任务上下文独立，跨会话存活
     已验证）。已记入 skill `winrm-remote-workstation`。
+
+- 2026-10-22（**"整台实验台离线"实为台面未上电；并纠正一条错误结论**）：用户报 DH1766 连不上，
+  10-20 首轮排查 ICMP/ARP/TCP 三路都打空——本机仪器网段零主机应答、ARP 无邻居、VISA 只枚举到
+  串口、`Get-PnpDevice` 里连 **DG832 的 USBTMC 节点都不存在**（`VID_0957`/`VID_1AB1` 都查不到）。
+  当时据此写下"仪器网络不可达"，**并顺手记了一条"该电源不应答 ping"的错误结论**。10-22 复测证明
+  问题在物理侧、与地址/协议无关：
+  - **"不回 ping"不成立**：设备在线时 ICMP **3/3 应答（0~1 ms）**、ARP 有动态表项。当时的零应答
+    是**整台（含 USB 侧）没上电/没接线**，不是设备特性——**不要把那次现象写成任何"设备行为"结论**。
+  - 三条通路同时可用：USB TMC、LAN raw `5025`、LAN VXI-11 `inst0`；另 **UDP 广播 `*IDN?` 到 5025
+    会被应答**——不知道 IP 时一条广播即可定位（实测 <1 s 回包，回包来源即设备地址）。
+  - 链路质量：LAN / USB 各 25 次混合查询（`*IDN?` / `MEAS:VOLT:ALL?` / `MEAS:CURR:ALL?` /
+    `SYST:COMM:RLST?`）**0 错误**（LAN 中位 2 ms、USB 中位 1 ms）；PC 侧网卡 1 Gbps、收发
+    **0 错误 0 丢弃**。
+  - **判据（可复用）**：判"仪器离线"要**两类独立证据**——① USB 侧 PnP 有没有仪器节点（没有 =
+    台面没上电/没插，与地址无关）；② `common/discovery.py` 的 TCP 端口预筛（111/4880/5025/5555）。
+    ICMP/ARP 只能作辅助；**"全段零应答 + USB 侧也无节点"应优先怀疑供电与接线，而不是地址漂移
+    或协议变化**。历史同型：2026-09-16 MHO 也是"ICMP 只有本机、ARP 无邻居"，最后**插上网线**
+    即恢复（见当日记录）——两次都是物理侧。
+  - **设备换机**：现挂 `DH1766-2` / 固件 `V0.2.4.7.0`，与此前实测的 `DH1766A-1` / `V0.1.4.3`
+    **不是同一台**（型号/序列号/资源串见 `docs/DEVICE_FACTS.local.md`，不入库）。新机**只验证了
+    只读路径**：`snapshot()` 全链路（`APPL:VOLT?`/`APPL:CURR?`、`MEAS:*:ALL?`、
+    `SYST:COMM:RLST?`、`output_mode()`）正常（CH1/CH2 设定 3.5 V / 24 V、`NORM`、三路输出关）。
+    **写路径与 `EXPERIENCE.md` §3 固件差异表未在新机复验**——沿用老机结论前先跑
+    `TEST_SCRIPTS/dh1766/test_dh1766_full.py`（备份-恢复留痕）。
+  - 工具链补正两条：① LAN raw SOCKET **现在能直接用系统 VISA（`system32\visa32.dll`）打开**，
+    `test_dh1766_readonly_lan.py` 里"NI-VISA 打不开 SOCKET 资源"的前提**已过时**；② 该脚本
+    依赖 `pyvisa-py`（`@py` 后端），本机未安装 → 报 `No module named 'pyvisa_py'`；要用先
+    `pip install pyvisa-py`，否则走统一库 / MCP `psu_status`。
+  - **全功能复验（同日）**：`TEST_SCRIPTS/dh1766/test_dh1766_full.py` 在新机上 **44/45 PASS**，
+    唯一 FAIL 是 `*TRG`（`-200 "Execution error"`，FIX/LIST 都一样）；Phase C 设定恢复完整性
+    PASS，结束时三路输出 OFF。新老固件差异表与"`;` 多段查询必须每段带前导冒号"两条已写进
+    `dh1766_control/docs/EXPERIENCE.md` §2.1。
+  - 顺带修掉测试脚本三处问题（否则跑不完 / 假 PASS）：① 输出模式那步用
+    `f"{mode.lower()}_mode"` 拼快照键，`TRAC` → `trac_mode` 直接 `KeyError` 崩（应为
+    `track_mode`）；② `VOLT:MODE`/`CURR:MODE` 原本无条件 PASS（老固件查不回值），新机有回值后
+    改成「写→查 `SYST:ERR?`→回读→恢复」真校验；③ `*TRG` 原本无条件 PASS，改成读错误队列后
+    如实记录（老固件时代也从未单独核对过）。新增 `drain_errors()` 辅助落实铁律 3。
+  - **面板控制权改为默认归还**（用户 2026-10-22 口径：用完就解锁，除非显式要求保留）：
+    `DH1766.close()` / `with` 退出**默认先发 `SYST:LOC` 再关连接**，`release_panel=False`
+    才保留远程态；MCP `psu_*` 同样默认 LOC，`INSTRUMENT_PSU_KEEP_REMOTE=1` 显式保留。
+    实测：`with` 退出后新开会话**第一条命令**读 `SYST:COMM:RLST?` = `LOC`；
+    ⚠ LOC 之后不得再发命令（会重回 `REM`），所以它必须是收尾最后一条。
+    四支 DH1766 测试脚本改为 `with VisaClient(...) as client, DH1766(client) as ps:`，
+    异常路径也会解锁（首跑崩溃那次就是因为没有收尾，把面板留在了 REM）。
+  - **复测**（收尾策略改完后）：再次 **44/45 PASS**（`*TRG` 仍 FAIL，属设备行为）。
+    Phase A 新增 `channel_modes()`（逐路读三路 `VOLT:MODE`/`CURR:MODE`，读完恢复选中通道）
+    并纳入 Phase C 比对 → 仍 0 diff；留痕 `TEST_DATA/dh1766/dh1766_full_20261022_154611.json`。
+    现场复核：CH1 的 `VOLT:MODE` 已改回 `LIST`（三路均 LIST，`CURR:MODE` 均 FIX）；
+    timer=1、`INST:COUP:TRIG`=NONE、OVP/OCP/电压电流设定、三路输出全 OFF 均与测试前一致。

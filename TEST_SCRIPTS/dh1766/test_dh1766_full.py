@@ -58,6 +58,20 @@ def check(name: str, got, expect, tol: float = 1e-3) -> bool:
     return ok
 
 
+def drain_errors(ps) -> list[str]:
+    """排空 SYST:ERR? 队列（FIFO），返回本次累积的错误；空列表 = 无错误。
+
+    铁律 3（写→查 SYST:ERR?→回读）需要"本命令产生的错误"，所以每次判定前先排空。
+    """
+    errs: list[str] = []
+    for _ in range(20):
+        err = ps.system_error()
+        if not err or err.startswith("0"):
+            break
+        errs.append(err)
+    return errs
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--safe", action="store_true", help="安全模式：输出ON时拒绝修改设定")
@@ -86,12 +100,16 @@ def main() -> None:
     resource = hit.resource
     print(f"\n== 连接 {resource}  source={hit.source}  safe_mode={args.safe} ==")
 
-    with VisaClient(resource, timeout_ms=5000) as client:
-        ps = DH1766(client, safe_mode=args.safe)
+    with VisaClient(resource, timeout_ms=5000) as client, \
+            DH1766(client, safe_mode=args.safe) as ps:
+        # DH1766 作为上下文管理器：退出（含异常）时默认 SYST:LOC 归还面板再关连接
 
         # ---------- Phase A 只读快照 ----------
         print("\n-- Phase A 只读快照 --")
         before = ps.snapshot()
+        # VOLT:MODE / CURR:MODE 是**按通道**存的，snapshot() 不含它们；单独读三路，
+        # 让 Phase C 能抓到"模式没恢复"（2026-10-22 实测：CH1 曾被写成 FIX 而无人发现）
+        before["channel_modes"] = ps.channel_modes()
         for k, v in before.items():
             print(f"  {k:20s}: {v}")
 
@@ -126,10 +144,28 @@ def main() -> None:
         ps.set_ocp(1, ocp[0])
         check("CURR:PROT CH1 恢复", ps.get_ocp(1), ocp[0])
 
-        # 5. 电压/电流模式（固件查询返回空，写后无查询可用，仅验证写入不报错）
-        ps.voltage_mode("FIX")
-        ps.current_mode("FIX")
-        rec("VOLT:MODE/CURR:MODE 写FIX", True, "固件V0.1.4.3查询返回空串，写不报错")
+        # 5. 电压/电流模式
+        #    老固件 V0.1.4.3 查询返回空串，只能验"写不报错"；
+        #    2026-10-22 实测新固件 V0.2.4.7.0 起 VOLT:MODE?/CURR:MODE? 有回值，改为真实校验。
+        for label, mode_fn, target in (
+            ("VOLT:MODE", ps.voltage_mode, "FIX"),
+            ("CURR:MODE", ps.current_mode, "FIX"),
+        ):
+            original = mode_fn()
+            drain_errors(ps)
+            mode_fn(target)
+            errs = drain_errors(ps)
+            got = mode_fn()
+            if original is None:
+                rec(f"{label} 写{target}", not errs, f"查询无回值（老固件限制） errs={errs or '无'}")
+                continue
+            rec(f"{label} 设置{target}", not errs and got == target,
+                f"原值={original} 写后={got} errs={errs or '无'}")
+            mode_fn(original)
+            errs2 = drain_errors(ps)
+            back = mode_fn()
+            rec(f"{label} 恢复{original}", not errs2 and back == original,
+                f"回读={back} errs={errs2 or '无'}")
 
         # 6. 触发：延时 + 源 + *TRG
         delay = ps.init_delay()
@@ -146,8 +182,13 @@ def main() -> None:
             rec("INIT:DEL 恢复", True, "固件查询返回空，跳过恢复比对")
         src = ps.init_source()
         ps.init_source("IMM")
+        rec("INIT:SOUR IMM", not drain_errors(ps), f"原触发源={src}")
+        # *TRG：2026-10-22 实测本机 V0.2.4.7.0 恒回 -200 Execution error（FIX/LIST 都如此），
+        # 老固件从未单独核对过（原脚本无条件 PASS）。如实记录，不再假装通过。
+        drain_errors(ps)
         ps.trigger()
-        rec("INIT:SOUR IMM + *TRG", True, f"原触发源={src}")
+        tgr_errs = drain_errors(ps)
+        rec("*TRG", not tgr_errs, f"errs={tgr_errs or '无'}")
         if src:
             ps.init_source(src)
             rec("INIT:SOUR 恢复", ps.init_source() == src, f"恢复 {src}")
@@ -167,12 +208,13 @@ def main() -> None:
         check("INST:COUP:TRIG 恢复", ps.couple_trig(), orig_couple)
 
         # 9. 输出模式（输出全关时操作，继电器 >=500ms；结束后恢复测试前原值）
-        for mode, setter, getter in (
-            ("TRAC", ps.track_mode, ps.track_mode),
-            ("SERI", ps.series_mode, ps.series_mode),
-            ("PARA", ps.parallel_mode, ps.parallel_mode),
+        for snapshot_key, mode, setter, getter in (
+            ("track_mode", "TRAC", ps.track_mode, ps.track_mode),
+            ("series_mode", "SERI", ps.series_mode, ps.series_mode),
+            ("parallel_mode", "PARA", ps.parallel_mode, ps.parallel_mode),
         ):
-            original = before[f"{mode.lower()}_mode"]
+            # 注意：快照键是 track_mode，不是 trac_mode（2026-10-22 修 KeyError）
+            original = before[snapshot_key]
             setter(True)
             check(f"OUTP:{mode} 设置ON", getter(), True)
             setter(False)
@@ -244,6 +286,7 @@ def main() -> None:
         # ---------- Phase C 最终快照比对 ----------
         print("\n-- Phase C 恢复完整性比对 --")
         after = ps.snapshot()
+        after["channel_modes"] = ps.channel_modes()
         # 回读值（MEAS）天然零漂波动，不参与设定恢复比对；
         # 设定类数值用 0.01 容差（手册编程精度 10mV/1mA 级，浮点尾差正常）
         MEAS_KEYS = {"measure_voltage_v", "measure_current_a", "measure_power_w"}

@@ -121,6 +121,17 @@ AI/Agent 操作仪器必须遵守以下规范。
     （`common/visa_client.py::VisaClient.query_block`；`screenshot()` 已改用它）。
     实测（2026-09-17）：MHO 整屏 PNG 97 471 字节，raw 上单次 `read_raw()` 只拿到 **6 字节**
     （VXI-11 因有分帧才一直没暴露）；小窗读（`get_waveform` 分片）不受影响。
+19. **MCP 没有对应工具 / 需要自己编命令序列时**（2026-10-27 外部会话教训）：
+    a. **先搜能力**：`instr_search`（compact）/ 空查询列目录——操作表里天生有通用
+       `instr.query` / `instr.write`（legacy：`instr_query` / `instr_write`）；
+    b. **一次性命令**：compact 用 `instr_call(op="instr.query"/"instr.write", …)`，
+       legacy 直接调工具名；`instr_write` 自带 drain → 写 → `SYST:ERR?` → 回读 + 审计；
+    c. **多步/循环写脚本**：用**设备库的 `write()/query()` 透传**（如 `SDG.write`）+
+       `common.resolve()` 取地址 + `instrument_runtime.broker.decide_scpi()` 过黑名单；
+    d. **禁止手搓 socket/串口/GPIB**——会丢掉协议选择、`\n` 终止符、会话锁与回读纪律
+       （SDG 的 LAN 一律 VXI-11 inst0；台架实测 5025 可连不应答，详见 skill「零.六」）；
+    e. **自编序列必须"写 → 查 `SYST:ERR?` → 回读"闭环**后才允许拿数据下结论（铁律 3）；
+    f. **长期缺能力**按 §七 落库（commands → 库 → catalog → MCP → skill）。
 
 ## 二、安全红线
 

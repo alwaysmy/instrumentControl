@@ -241,8 +241,14 @@ def register(mcp, *, registry, run_fn: Callable[[str, dict], Awaitable[str]],
         if not hits:
             return _json({"ok": True, "query": query, "device": device, "count": 0,
                           "results": [],
-                          "hint": "没有匹配的操作；用 instr_search 空查询可直接列出**全部**"
-                                  "能力目录（按设备族分组），或换关键词/设备族名再试。"})
+                          "hint": "没有匹配的专用操作。① 用 instr_search 空查询列出全部能力目录"
+                                  "（按设备族分组），或换关键词/设备族名再试；"
+                                  "② 若确实没有专用操作（例：SDG 复合波 CMBN，库里未封装），"
+                                  "用**通用原始 SCPI 通道**：instr_call(op=\"instr.query\"/"
+                                  "\"instr.write\", args={...})（legacy：instr_query/instr_write）——"
+                                  "写命令必须 confirm=True、先查手册、写后回读；"
+                                  "③ 脚本里用设备库的 write()/query() 透传（如 SDG.write），"
+                                  "**不要手搓 socket/串口/GPIB**（见 skill instrument-mcp →「零.六」）。"})
         return _json({
             "ok": True, "query": query, "device": device, "count": len(hits),
             "results": [{"id": o.id, "tool_name": o.tool_name, "device": o.device,

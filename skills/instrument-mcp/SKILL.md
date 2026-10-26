@@ -105,6 +105,71 @@ finally:
 MCP 侧（单例 `127.0.0.1:8765/mcp`）与脚本侧**可以并行使用不同设备**；同一台设备则遵守
 上面的并发纪律。
 
+## 零.六、MCP 没有对应工具 / 需要自己编序列时（三条正路 + 传输纪律）
+
+**按顺序走三条正路；任何时候都不要手搓 socket / 串口 / GPIB。**
+
+1. **先确认能力是不是真的没有**（往往只是名字不同）：
+   `instr_search("关键词")` / `instr_search("")`（全部能力目录）/ `instr_describe(id)`。
+   操作表里天生有两条"万能"通道：`instr.query` / `instr.write`
+   （legacy：`instr_query` / `instr_write`）。
+
+2. **一次性覆盖（零代码，MCP 内完成）**——"库没封装的能力"走通用原始 SCPI：
+   - compact：`instr_call(op="instr.write", args={"resource": <VISA 资源串>,
+     "cmd": "C1:CMBN ON", "readback_cmd": "C1:CMBN?", "confirm": true})`
+     （纯查询用 `instr_call(op="instr.query", args={"resource": ..., "cmd": "C1:BSWV?"})`）
+   - legacy：直接调 `instr_write(...)` / `instr_query(...)`
+   - `instr_write` 自带：写前 drain → 写 → `SYST:ERR?` → 回读 `readback_cmd` + 审计落盘；
+     复位/锁定类黑名单照样拦。**命令语法先对设备手册/`commands.py`（铁律 1）**。
+   - 多步组合（扫频/批采）用 `instr_batch`。
+
+3. **多步序列/循环 → 写脚本，用设备库的"原生命令透传"**（不是自己开 socket）：
+
+   ```python
+   import sys; sys.path.insert(0, r"D:\MyProjects\AI\instrumentControl")
+   from instrument_runtime import broker
+   from sdg_control import find_sdg                 # 地址走解析层，不写死 IP
+
+   sdg = find_sdg()                                 # VXI-11 inst0 / USB / GPIB 自动选
+   try:
+       d = broker.decide_scpi("C1:CMBN ON")         # 写前过黑名单（与 MCP 同一份判据）
+       sdg.write(d.normalized)
+       print(sdg.query("SYST:ERR?"))                # 写后查错
+       print(sdg.query("C1:CMBN?"))                 # 回读（必须）
+   finally:
+       sdg.close()
+   ```
+   各设备库都暴露 `write()/query()` 透传（`sdg_control/sdg.py` 等）；
+   协议、`\n` 终止符、资源串、`*IDN?` 校验、会话锁都由库/解析层负责。
+
+4. **长期缺能力 → 按「一.五 五步」落库**（commands.py → 库方法 → catalog 登记 → MCP 工具 → skill）。
+
+### 传输纪律：为什么不能手搓 socket/串口/GPIB（2026-10-27 反面案例）
+
+- 自己 `socket.create_connection((ip, 5025))` 会同时丢掉：① 解析层的协议选择
+  ② raw socket 的 `\n` 终止符适配 ③ `*IDN?` 身份校验 ④ 会话锁/并发告警
+  ⑤ 写后回读纪律。出问题时**分不清是设备问题还是自己的代码问题**。
+- **各设备 LAN 通路（解析层默认）**：
+
+  | 设备 | LAN 协议（手册/实测） | 本仓怎么走 |
+  |---|---|---|
+  | DH1766 | raw socket **5025**（手册指定）；VXI-11 也可 | `resolve("psu")` → 5025 SOCKET（会话即进 REM，收尾自动 `SYST:LOC`） |
+  | DHO | raw socket **5555**（实测只有它通） | 5555 SOCKET |
+  | SDS / DMM | VXI-11 **inst0** | `resolve("sds")` / `resolve("dmm")` → inst0 |
+  | SDG | 手册写明 VXI-11 + Socket **5025** + Telnet **5024** | **默认 VXI-11 inst0**；不要手搓 5025 |
+
+- **SDG 特别提醒（2026-10-27 外部会话实测，本仓待复核）**：台架两台 SDG2122X
+  （`.206`/`.17`）的 **5025 端口能 connect 但 `*IDN?` 无应答**；同网段 SDS/DH1766 的
+  5025 raw 正常，VXI-11 对 SDG 正常。手册
+  （`sdg_control/docs/SDG_Programming-Guide_PG02_C02C_output` §1.2.4/§5.2，示例即
+  SDG2122X）明确支持 Socket——所以**别据此断言"设备不支持 socket"**，按顺序查：
+  ① 命令是否以 `\n` 结尾；② 是否有别的会话/脚本占着该仪器（同设备禁止两会话；
+  某些嵌入式 LAN 服务只服务一个客户端）；③ 用 VXI-11 inst0 / Telnet 5024 对照；
+  ④ 写后回读确认生效。**排查期间一律以 VXI-11/库为准。**
+- **没验证过回读的控制通路不得用来产出实验数据**：先"写 → 查 `SYST:ERR?` → 回读"
+  闭环（如 `C1:BSWV?`），再跑实验；否则整批数据可能在"写没生效"的旧状态上测的
+  （上述案例里，该会话后来把多批 raw socket 控制的数据标成了"待复测"）。
+
 ## 一、工具选择决策树
 
 ```
@@ -113,8 +178,9 @@ MCP 侧（单例 `127.0.0.1:8765/mcp`）与脚本侧**可以并行使用不同�
     驱动挂起 6s 硬超时；代理 fake-IP 干扰 LAN 时降级 warning 不影响 VISA 结果；
     串口换号/新设备进场后用它重新定位）
 
-新设备 / 无专用库的设备 / 库里没有的能力？
-  → instr_query + instr_write（对照手册直发 SCPI，零代码接入，见下方"通用护栏"）
+新设备 / 无专用库的设备 / 库里没有的能力（含"有库但缺某个命令"，如 SDG 复合波 CMBN）？
+  → instr_query + instr_write（对照手册直发 SCPI，零代码接入，见"一.五 通用护栏"）
+  → 多步/循环写脚本：用设备库的 write()/query() 透传（见"零.六"），**不要手搓 socket**
 
 示波器（SDS）：
   看波形显示是否正常 → sds_diagnose（触发链路）→ 异常则 sds_auto_scale
@@ -602,6 +668,8 @@ MCP 进程通常已带管理员（可直接用）；若工具报"需要管理员
   （如 SDS 的 scale+offset——改 scale 会等比缩放 offset，顺序错了值就错）。
 - **自定义写序列前先 drain 错误队列**：`SYST:ERR?` 是 FIFO，上次会话残留的滞后
   错误会污染逐命令查错（写前 drain、写后逐条查——`instr_write` 已自动做）。
+  ⚠ **写完必须回读被写项**（如 `C1:BSWV?` / `C1:CMBN?`）；自编通道没通过回读验证前，
+  不得拿这批数据下实验结论（2026-10-27 反面案例：手搓 socket 的写入没生效，多批数据作废）。
 - **USB 设备一律走 VISA**：不要 pyusb/libusb 直连（Windows 无驱动时报
   NotImplementedError）；卡死恢复顺序见下方「USB-TMC 卡死」。
 - **响应形态三种坑**：① 查询回**短格式**（设 `CHANnel1` 回 `CHAN1`）——解析要兼容；
@@ -613,6 +681,9 @@ MCP 进程通常已带管理员（可直接用）；若工具报"需要管理员
 - **SDS**：`MEASure:MODE` 默认 ADVANCED——SIMPLE 组测量整体失效（`VALue?` 报
   "number of measurements is zero"）要先切 `MODE SIMPle`（`sds_measure` 工具已内置）；
   命令只吃**短形式**（`ACQ:MDEP?` 通、`:ACQuire:MDEPth?` 超时）。
+- **SDG（LAN 通路）**：解析层默认 VXI-11 **inst0**；**不要手搓 5025 raw socket**——
+  台架实测两台 SDG2122X 的 5025 可连接但 `*IDN?` 无应答（2026-10-27），而 VXI-11 正常；
+  手册虽写支持 Socket 5025/Telnet 5024，但本仓一律走 VXI-11/库（详见「零.六」）。
 - **RIGOL 示波器（DHO/MHO 共享内核 rigol_scope）**：系列差异一律走
   `rigol_scope/families.py` 的 Family 表（清测量 DHO `:MEASure:CLEar` vs MHO
   `:MEASure:DELete`；采集第四态 DHO `ULTRa` vs MHO `HRESolution`；边沿第三态

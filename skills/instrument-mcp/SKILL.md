@@ -537,7 +537,7 @@ MRNG = manual range 指示符（手册：不在自动挡时点亮），不是故
 | dg_set_wave | shape, freq, amp, offset, phase, sample_rate | 各波形 `:APPL` 参数模板不同（DC/DUAL/PRBS 无 phase、NOISE/RS232 无 freq、SEQ 首参是采样率），库已按模板生成；频率上限随波形变（square/pulse 10MHz、ramp 1MHz）|
 | dg_set_param | param, value | freq/amp/offset/phase/load；写后回读，设备钳制时 note 提示 |
 | psu_status | — | **电源状态总览（操作前先调）**：三路电压/电流/功率/设定/OVP/OCP/输出/模式/耦合 + **safe/warnings** 安全检查（原 measure 与 pre_check 已并入）|
-| psu_power_cycle | ch, expect_mode, cycles=1, off_delay_s=1.0, on_delay_s=1.0, confirm | 上下电循环（关→延迟→开→延迟）；**confirm 必填**（授权同输出开关）；放电不足时调大 off_delay_s（电容残留需 ≥6s）|
+| psu_power_cycle | ch, expect_mode, cycles=1, off_delay_s=1.0, on_delay_s=1.0, confirm | 上下电循环（关→延迟→开→延迟）；**confirm 必填**（授权同输出开关）。**放电时间随负载/电容变化，没有通用值**——看返回每轮 `off` 快照的电压是否回落，不够就调大 off_delay_s。返回 `before` / `records[].off`、`records[].on` / `after` 快照（三路 `output_on` + `voltage_v` + `current_a`，**含电流**）|
 | psu_mode / psu_set_mode | mode | **操作电源前先查模式**：NORM/TRAC/SERI/PARA；TRAC 下 CH2 跟随 CH1 输出负压（非故障，手册§3.8）；切换前输出必须全关（库内强制）|
 | psu_output | ch, on, **expect_mode**, confirm | 单通道输出开关；**expect_mode 必填**（仅校验，不符拒绝并回传实际模式）；**开/关都需 confirm=True**（关闭可能中断供电）|
 

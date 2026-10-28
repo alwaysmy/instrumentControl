@@ -514,44 +514,77 @@ class DH1766:
         vals = self.measure_current_all()
         return {f"CH{i + 1}": vals[i] for i in range(len(vals))}
 
+    def _output_snapshot(self) -> dict:
+        """三路输出快照：开关状态 + 电压 + 电流（上下电循环的观测值）。
+
+        输出开关走 `APPL:OUTP?` 回读；电压/电流走 `MEAS:VOLT:ALL?` / `MEAS:CURR:ALL?`
+        （三路一起读）。一次快照 3 条查询，开销可接受。
+        """
+        return {
+            "output_on": self.get_output_state(),
+            "voltage_v": self.measure_voltage_dict(),
+            "current_a": self.measure_current_dict(),
+        }
+
     def power_cycle(self, ch: Channel, expect_mode: str,
                     off_delay_s: float = 1.0, on_delay_s: float = 1.0,
                     cycles: int = 1) -> dict:
         """上下电循环：关断→延迟→开启→延迟，重复 cycles 次。
 
         expect_mode（必填）：声明的当前工作模式，仅校验不设置（同 set_output）。
-        off_delay_s：关断后延迟（默认 1s）——需保证下电放电时调大（如 6s，
-        实测电容残留需 ≥6s 放完）；on_delay_s：开启后延迟（默认 1s）；
-        cycles：循环次数（默认 1）。
-        延迟由主机 sleep 控制，不精准（用于保证放电/上电时序，非精密时序）。
-        返回 {"cycles", "records": [每次循环的实测延迟与电压], "after"}。
+        off_delay_s：关断后等待秒数（默认 1s）；on_delay_s：开启后等待秒数（默认 1s）；
+        cycles：循环次数（默认 1）。延迟由主机 sleep 控制，不精准。
+
+        **放电时间取决于负载与电容，没有通用值**——用返回的 `off` 快照电压判断
+        是否已回落到接近 0，不够就把 off_delay_s 调大重跑（不同负载差别很大）。
+
+        返回（每轮都带 off/on 快照，另加循环前 before 与循环后 after）：
+            {
+              "cycles", "channel", "output_mode",
+              "off_delay_s", "on_delay_s",            # 请求的延迟
+              "before": 快照,
+              "records": [{"cycle", "off_delay_s", "on_delay_s",
+                           "off": 快照, "on": 快照}, ...],
+              "after": 快照,
+            }
+            快照 = {"output_on": [CH1, CH2, CH3],
+                    "voltage_v": {"CH1": .., "CH2": .., "CH3": ..},
+                    "current_a": {"CH1": .., "CH2": .., "CH3": ..}}
         """
         n = int(cycles)
         if n < 1:
             raise ValueError(f"cycles 必须 ≥1，收到 {cycles!r}")
-        self._check_mode(expect_mode)
+        mode = self._check_mode(expect_mode)
+        channel = _ch_num(ch)
+        before = self._output_snapshot()
         records = []
         for i in range(1, n + 1):
-            self.set_output(ch, False, expect_mode)
+            self.set_output(channel, False, expect_mode)
             t0 = time.monotonic()
             time.sleep(off_delay_s)
             off_actual = time.monotonic() - t0
-            self.set_output(ch, True, expect_mode)
+            off = self._output_snapshot()
+            self.set_output(channel, True, expect_mode)
             t1 = time.monotonic()
             time.sleep(on_delay_s)
             on_actual = time.monotonic() - t1
+            on = self._output_snapshot()
             records.append({
                 "cycle": i,
                 "off_delay_s": round(off_actual, 3),
                 "on_delay_s": round(on_actual, 3),
-                "voltage_v": self.measure_voltage_all(),
+                "off": off,
+                "on": on,
             })
         return {
             "cycles": n,
+            "channel": f"CH{channel}",
+            "output_mode": mode,
             "off_delay_s": off_delay_s,
             "on_delay_s": on_delay_s,
+            "before": before,
             "records": records,
-            "after": self.measure_voltage_dict(),
+            "after": self._output_snapshot(),
         }
 
     def pre_power_check(self) -> dict:

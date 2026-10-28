@@ -1,9 +1,9 @@
 {
-  "captured_at": "2026-10-08T23:26:40",
+  "captured_at": "2026-10-29T00:11:35",
   "server": "mcp_instruments\\server.py",
   "server_info": {
     "name": "instruments",
-    "version": "1.27.0"
+    "version": "1.30.0"
   },
   "protocol_version": "2024-11-05",
   "tool_count": 71,
@@ -2908,7 +2908,7 @@
     },
     {
       "name": "psu_power_cycle",
-      "description": "DH1766 上下电循环：关断→延迟→开启→延迟，重复 cycles 次。\n\n    ⚠ **需 confirm=True**——授权同 psu_output：① 用户本轮明确要求做上下电/循环，\n    或 ② 用户明确声明独占使用；否则先向用户确认（可能打断他人实验/板子供电）。\n\n    **expect_mode 必填**（仅校验，不符拒绝）。\n    off_delay_s 默认 1s（需保证下电放电时调大，如实测电容残留需 ≥6s）；on_delay_s\n    默认 1s；cycles 默认 1。延迟由主机 sleep 控制，**不精准**，仅用于保证放电/上电时序。\n    返回 {\"cycles\", \"records\":[每次循环延迟与电压], \"after\"}。\n    ",
+      "description": "DH1766 上下电循环：关断→延迟→开启→延迟，重复 cycles 次。\n\n    ⚠ **需 confirm=True**——授权同 psu_output：① 用户本轮明确要求做上下电/循环，\n    或 ② 用户明确声明独占使用；否则先向用户确认（可能打断他人实验/板子供电）。\n\n    **expect_mode 必填**（仅校验，不符拒绝）。\n    off_delay_s/on_delay_s 默认各 1s（主机 sleep，**不精准**）。\n    **放电多久取决于负载与电容，没有通用值**——看返回里每轮 `off` 快照的电压是否\n    已回落，不够就调大 off_delay_s 重跑。\n    返回 before / records[cycle].off|on / after 快照（三路 output_on + voltage_v +\n    current_a）；字段结构见 skill instrument-mcp →「参数语义速查 · psu_power_cycle」。\n    ",
       "inputSchema": {
         "properties": {
           "ch": {

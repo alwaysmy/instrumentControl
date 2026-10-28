@@ -234,9 +234,12 @@ PATCHES["psu_power_cycle"] = """DH1766 上下电循环：关断→延迟→开�
 或 ② 用户明确声明独占使用；否则先向用户确认（可能打断他人实验/板子供电）。
 
 **expect_mode 必填**（仅校验，不符拒绝）。
-off_delay_s 默认 1s（需保证下电放电时调大，如实测电容残留需 ≥6s）；on_delay_s
-默认 1s；cycles 默认 1。延迟由主机 sleep 控制，**不精准**，仅用于保证放电/上电时序。
-返回 {"cycles", "records":[每次循环延迟与电压], "after"}。"""
+off_delay_s/on_delay_s 默认各 1s（主机 sleep，**不精准**）。
+**放电多久取决于负载与电容，没有通用值**——看返回里每轮 `off` 快照的电压是否
+已回落，不够就调大 off_delay_s 重跑。
+返回 before / records[cycle].off|on / after 快照（三路 output_on + voltage_v +
+current_a）；字段结构见 skill instrument-mcp →「参数语义速查 · psu_power_cycle」。
+"""
 
 
 def iter_doc_nodes(src: str):

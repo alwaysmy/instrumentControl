@@ -41,6 +41,7 @@ $suites = [ordered]@{
   'k3458a_worker_isolation'   = 'TEST_SCRIPTS/ks3458a/verify_worker_isolation.py'
   'k3458a_front_panel'        = 'TEST_SCRIPTS/ks3458a/verify_front_panel_release_offline_20261008.py'
   'dg832_edge_cases'          = 'TEST_SCRIPTS/dg832/verify_dg832_edge_cases.py'
+  'dh1766_power_cycle'        = 'TEST_SCRIPTS/dh1766/verify_power_cycle_offline.py'
   'install_skills_check'      = 'scripts/install_skills.py --check'
   # ---- 2026-10-08 批次（v2dev 合并 + 单例化 + 审计下沉）----
   'registry_parity'           = 'TEST_SCRIPTS/common/verify_registry_parity.py'

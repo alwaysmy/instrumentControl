@@ -583,3 +583,20 @@
     并纳入 Phase C 比对 → 仍 0 diff；留痕 `TEST_DATA/dh1766/dh1766_full_20261022_154611.json`。
     现场复核：CH1 的 `VOLT:MODE` 已改回 `LIST`（三路均 LIST，`CURR:MODE` 均 FIX）；
     timer=1、`INST:COUP:TRIG`=NONE、OVP/OCP/电压电流设定、三路输出全 OFF 均与测试前一致。
+
+- 2026-10-29（MCP `psu_power_cycle` 返回体扩展 + 离线 FakeClient 验证；**未真机**）：
+  用户指出 skill/描述里"电容残留需 ≥6s"是误导——放电时间随负载/电容变化，没有通用值。
+  改为让工具直接返回实测快照，不再写死数字。
+  - 库 `DH1766.power_cycle()`：每轮在 **off（off_delay 后）** 与 **on（on_delay 后）**
+    各取快照（三路 `output_on` + `voltage_v` + `current_a`），另加 `before` / `after`，
+    顶层回 `channel` / `output_mode`；放电是否够用看 `off` 快照电压（不够就调大重跑）。
+  - MCP `psu_power_cycle` description 与 skill 参数表同步（删除 ≥6s 说法）。
+  - 新增离线 `TEST_SCRIPTS/dh1766/verify_power_cycle_offline.py`（FakeClient，20 项 PASS）：
+    断言关断阶段确实测量（测量夹在 `OUTP OFF` 与下一个 `OUTP ON` 之间）、off/on/before/after
+    结构、数值随开关状态变化、channel/output_mode 回填、cycles<1 抛错；已加入
+    `regression_offline.ps1`（全套 27/27 套件 exit 0、0 FAIL，
+    留痕 `TEST_DATA/common/regression_offline_20261029_001150.txt`）。
+  - description 变更后按既定流程重固化 `verify_registry_parity` 基线
+    （`TEST_DATA/common/mcp_tools_baseline_v2dev.json`，仅 captured_at/version/本条描述变化），
+    校验全 PASS。
+  - **真机未跑**（电源现场使用中，用户要求别测）；新返回结构需重启 MCP 单例后生效。

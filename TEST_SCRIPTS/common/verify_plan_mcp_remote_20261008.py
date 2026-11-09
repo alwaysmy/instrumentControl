@@ -1,3 +1,4 @@
+from pathlib import Path
 # -*- coding: utf-8 -*-
 """核对需求 B 的技术前提（离线，不连仪器、不起服务）：
 
@@ -14,8 +15,8 @@ import inspect
 import json
 import sys
 
-sys.path.insert(0, r"D:\WorkDesigns\3_WorkTools\instrumentControl")
-sys.path.insert(0, r"D:\WorkDesigns\3_WorkTools\instrumentControl\mcp_instruments")
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "mcp_instruments"))
 
 from mcp.server.fastmcp import FastMCP  # noqa: E402
 

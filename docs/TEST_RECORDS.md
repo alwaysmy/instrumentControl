@@ -665,3 +665,53 @@
     真正初始化 VISA 的是 `mcp_instruments/server.py:2701` `_prewarm_visa_rm()` 里的
     `rm = pyvisa.ResourceManager()`（注释记历史上实测可 20s+），跑在 **daemon 线程**
     （`:2732`），不阻塞 `mcp.run()`；`_PREWARM_DONE` 只用于给工具超时预算 +90.0 秒。
+
+- 2026-11-09（硬编码专项审计 + 3458A 通路契约修复 + DSH 死配置清理；**未真机**）：
+  用户提出三点：① 本机应该装了 VISA（质疑上一轮"环境缺 VISA"的结论）② 清掉
+  `nowledge-mem-deepseek-harness` 死 bundle 与孤儿配置段 ③ 列出还有哪些硬编码
+  没做成本机配置文件。产出 `docs/hardcode_audit_20261109.md`（专项报告）。
+  - **VISA 结论更正**：`C:\Windows\System32\visa32.dll`（NI-VISA）**已装**，
+    `pyvisa.ResourceManager()` 正常、`list_resources()` 能返回 DG8A + ASRL 串口。
+    缺的是 **NI-488.2**（`gpib-32.dll` / `nipal.dll` 都没有）与 **Keysight IO
+    Libraries**（`ktvisa32.dll` / `sicl32.dll` 全盘 0 个、`C:\Program Files\Keysight`
+    不存在）；82357B（`VID_0957&PID_0718`）在 PnP 里查不到。所以上一轮"没装 VISA"
+    表述不准，准确说法是"装了 NI-VISA，但没有 GPIB 护照 / 没有 Keysight 套件"。
+  - **`keysight_3458a/transport.py` + `driver_check.py` 去写死盘符**：
+    原先 6 处写死 `C:\Program Files\Keysight\IO Libraries Suite[\bin]` 与
+    `C:\Windows\System32\ktvisa32.dll`。新增 `_keysight_suite_dirs()`
+    （`%ProgramFiles%` / `%ProgramW6432%` / `%ProgramFiles(x86)%` 派生）与
+    `_system_dirs()`（`%SystemRoot%` 派生），`_SICL_DIRS` / `_SICL_PATHS` /
+    `prepare_keysight_visa()` / `driver_check.SUITE_DIR` 全部改走它们。
+    本机复验：`_SICL_DIRS = ('C:\Windows\System32', 'C:\Windows\SysWOW64')`、
+    `SUITE_DIR = None`，与改前逐值一致（不产生假阳性）。
+  - **`PyVisaTransport.open()` 契约漏洞**：原本让 pyvisa 原始异常裸奔
+    （`VisaIOError: VI_ERROR_LIBRARY_NFOUND (-1073807202)`），而本模块对外契约是
+    "通路问题抛 `TransportError`"（调用方只 catch 它）。现包成
+    `TransportError(f"打开 {resource} 失败（visalib=…）：{type}: {exc}")`，
+    报错里带得出是哪个资源。`verify_worker_isolation.py` 的 S5 随之在无 Keysight
+    VISA 的机器上也能成立（7/7 PASS）。
+  - **测试脚本去绝对路径**：`TEST_SCRIPTS/**` 15 个文件写死
+    `D:\WorkDesigns\3_WorkTools\instrumentControl` → `Path(__file__).resolve().parents[2]`
+    派生；顺带修掉 `switch_opencode_mcp_remote_20261008.py` 里**别人的机器**
+    路径（`C:\Users\AlwaysTS\...` 与不存在的 `Python311\python.exe` →
+    `Path.home()` / `sys.executable`）。
+  - **DSH 死配置清理**（`C:\Users\dell\.dsh\profiles\web\`）：
+    `nowledge-mem-deepseek-harness` 的 requirements 要求 dsh `<0.2.0`，与本机
+    dsh 0.2.1-rc.2 不兼容（每次启动打印 700 字符告警后被跳过）。
+    已从 `package.json` 的 `dependencies` 与 `dsh.profile.bundles` 删除、
+    `cordis.patch.yml` 的 `- id: nowledge-mem` 条目删除（留 5 行说明 + 回滚指引）、
+    `pnpm install --lockfile-only` 重生成锁文件（残留 0 处）。
+    备份：`package.json.bak-drop-nmem-20261109-150927`、`cordis.patch.yml.bak-drop-nmem-…`、
+    `pnpm-lock.yaml.bak-drop-nmem-…`。**需重启 DSH 生效**。
+  - **仍存在的硬编码（未改，见报告 §3）**：3458A 的 `GPIB0::9::INSTR` 默认实参
+    （`remote.py:38` / `dmm3458a.py:116` / `worker.py:83` / `preflight.py:12,45`）、
+    `emoe_control/calibrator.py:6` 的 `ASRL31::INSTR`、
+    `TEST_SCRIPTS/common/diag_lan_candidates.py:20` 的两个 IP、
+    `verify_discover_final.py:16` 的 `/24`、`run_remote.ps1:84` 的 `C:\Python3*`。
+  - **本机配置缺项**：`devices.json` 只配了 `mho` / `psu`（`dg` 只在缓存里），
+    `sds` / `sdg` / `dmm` / `dho` / `ks3458a` 五类未配置。
+  - **复测**：27 套件 **27 绿（exit 0 / 0 FAIL）**，
+    留痕 `TEST_DATA/common/regression_offline_20261109_151644.txt`。
+  - **踩坑**：调试时在持久 pwsh 里 `export INSTRUMENT_NO_SESSION_LOCK=1` 忘清，
+    导致 `verify_3458a_offline` 的 S15 忙等护栏 2 条 FAIL（该变量让 `_claim()`
+    直接返回空、跳过占用检查）。清掉后 73/73。

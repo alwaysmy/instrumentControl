@@ -1,3 +1,4 @@
+from pathlib import Path
 # -*- coding: utf-8 -*-
 """独立复现：OPENBLAS_NUM_THREADS=1 对 `import pyvisa` 私有提交的影响。
 
@@ -79,7 +80,7 @@ except Exception as e:  # noqa: BLE001
 
 ts = time.strftime("%Y%m%d_%H%M%S")
 tag = "threads1" if env_threads == "1" else "unfixed"
-out_dir = r"D:\WorkDesigns\3_WorkTools\instrumentControl\TEST_DATA\common"
+out_dir = str(Path(__file__).resolve().parents[2] / "TEST_DATA" / "common")
 os.makedirs(out_dir, exist_ok=True)
 out = os.path.join(out_dir, "mem_probe_pyvisa_%s_%s.json" % (tag, ts))
 with open(out, "w", encoding="utf-8") as f:

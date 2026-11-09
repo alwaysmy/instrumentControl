@@ -12,7 +12,7 @@ import tempfile
 import time
 from pathlib import Path
 
-HERE = Path(r"D:\WorkDesigns\3_WorkTools\instrumentControl\mcp_instruments")
+HERE = Path(str(Path(__file__).resolve().parents[2] / "mcp_instruments"))
 LAUNCHER = HERE / "spawn_detached.py"
 PY = sys.executable
 

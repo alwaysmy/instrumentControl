@@ -1,3 +1,4 @@
+from pathlib import Path
 # -*- coding: utf-8 -*-
 """MCP 单例通用调用器：连 streamable-http 单例，调**一个**工具并打印结果。
 
@@ -16,7 +17,7 @@ import asyncio
 import json
 import sys
 
-sys.path.insert(0, r"D:\WorkDesigns\3_WorkTools\instrumentControl")
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from mcp import ClientSession                                  # noqa: E402
 from mcp.client.streamable_http import streamablehttp_client   # noqa: E402

@@ -1,3 +1,4 @@
+from pathlib import Path
 # -*- coding: utf-8 -*-
 """通过 MCP 单例验收仪器（只读）。
 
@@ -16,7 +17,7 @@ import os
 import sys
 import time
 
-sys.path.insert(0, r"D:\WorkDesigns\3_WorkTools\instrumentControl")
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from mcp import ClientSession                                  # noqa: E402
 from mcp.client.streamable_http import streamablehttp_client   # noqa: E402
@@ -85,7 +86,7 @@ async def main() -> int:
     if out["summary"]["failed"]:
         print("失败:", ", ".join(out["summary"]["failed"]))
 
-    dest_dir = r"D:\WorkDesigns\3_WorkTools\instrumentControl\TEST_DATA\common"
+    dest_dir = str(Path(__file__).resolve().parents[2] / "TEST_DATA" / "common")
     os.makedirs(dest_dir, exist_ok=True)
     dest = os.path.join(dest_dir, f"mcp_device_acceptance_{out['ts']}.json")
     with open(dest, "w", encoding="utf-8") as f:

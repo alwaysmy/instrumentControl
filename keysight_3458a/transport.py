@@ -164,9 +164,17 @@ class PyVisaTransport:
             self._inst.read_termination = "\n"
             # 二进制突发（2n+2 字节）走 read_bytes，块要够大
             self._inst.chunk_size = self.chunk_size
-        except Exception:
+        except Exception as exc:                              # noqa: BLE001
             self.close()
-            raise
+            # 统一成 TransportError：本模块的对外契约就是「通路问题抛 TransportError」，
+            # 调用方（MCP 工具 / 脚本）只 catch 它。让 pyvisa 的原始异常逃出去会击穿契约
+            # ——2026-11-09 实测：本机只装了 NI-VISA、没装 Keysight IO Libraries 时，
+            # 打开 GPIB 资源抛的是裸 `VisaIOError: VI_ERROR_LIBRARY_NFOUND`，
+            # 调用方一个都接不住，且报错里看不出是哪个资源。
+            raise TransportError(
+                f"打开 {self.resource} 失败"
+                f"（visalib={visalib or '默认'}）：{type(exc).__name__}: {exc}"
+            ) from exc
         self.clear()
         time.sleep(SETTLE_S)
         return self
@@ -293,16 +301,33 @@ class PyVisaTransport:
 # **传 4 参数形式会让进程崩溃——不要"简化"成 4 参数。**
 # ---------------------------------------------------------------------------
 
-_SICL_DIRS = (
-    r"C:\Program Files\Keysight\IO Libraries Suite\bin",
-    r"C:\Program Files\Keysight\IO Libraries Suite",
-    r"C:\Program Files (x86)\Keysight\IO Libraries Suite\bin",
-    r"C:\Windows\System32",
-)
-_SICL_PATHS = (
-    r"C:\Windows\System32\sicl32.dll",
-    r"C:\Windows\SysWOW64\sicl32.dll",
-)
+def _keysight_suite_dirs() -> list[str]:
+    """Keysight IO Libraries Suite 的目录（按环境变量派生，**不写死盘符**）。
+
+    安装位置随系统盘符/位数变化（`C:\\Program Files` / `D:\\Program Files (x86)`），
+    写死 `C:\\...` 在换了系统盘或只装了 32 位套件的机器上会静默失效。
+    """
+    out: list[str] = []
+    for env in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
+        base = os.environ.get(env)
+        if not base:
+            continue
+        suite = os.path.join(base, "Keysight", "IO Libraries Suite")
+        for d in (os.path.join(suite, "bin"), suite):
+            if os.path.isdir(d) and d not in out:
+                out.append(d)
+    return out
+
+
+def _system_dirs() -> list[str]:
+    """`%SystemRoot%\\System32` 与 `SysWOW64`（按环境变量派生）。"""
+    root = os.environ.get("SystemRoot") or os.environ.get("windir") or r"C:\\Windows"
+    return [os.path.join(root, name) for name in ("System32", "SysWOW64")]
+
+
+_SICL_DIRS = tuple([*_keysight_suite_dirs(),
+                    *[d for d in _system_dirs() if os.path.isdir(d)]])
+_SICL_PATHS = tuple(os.path.join(d, "sicl32.dll") for d in _system_dirs())
 
 # sicl32.dll 需要同目录的兄弟 DLL（ioRM.dll / instr32.dll …）可解析
 for _directory in _SICL_DIRS:
@@ -664,7 +689,7 @@ def prepare_keysight_visa() -> Optional[str]:
     base = _visa_base_path()
     dirs = [d for d in (os.path.join(base, "Win64", "bin") if base else None,
                         os.path.join(base, "Win64", "ktvisa", "ktbin") if base else None,
-                        r"C:\Program Files\Keysight\IO Libraries Suite\bin")
+                        *_keysight_suite_dirs())
             if d and os.path.isdir(d)]
     for d in dirs:
         try:
@@ -674,8 +699,9 @@ def prepare_keysight_visa() -> Optional[str]:
     # 关键：套件 bin 里的 ioGPIB.dll 依赖按「当前目录/SetDllDirectory」解析——
     # 只 add_dll_directory 时 WinDLL(ioGPIB.dll) 会 FileNotFoundError，随后 ktvisa 的
     # viOpen 抛 C++ 异常 0xE06D7363。SetDllDirectoryW 是进程级等效且不改 CWD。
-    suite_bin = r"C:\Program Files\Keysight\IO Libraries Suite\bin"
-    if os.path.isdir(suite_bin):
+    suite_bin = next((d for d in _keysight_suite_dirs()
+                      if os.path.basename(d) == "bin"), None)
+    if suite_bin:
         try:
             k32 = ctypes.windll.kernel32
             k32.SetDllDirectoryW.argtypes = [ctypes.c_wchar_p]
@@ -710,9 +736,10 @@ def prepare_keysight_visa() -> Optional[str]:
                 _KEYSIGHT_VISA = p
                 break
     if _KEYSIGHT_VISA_CORE is None:
-        p = os.path.join(r"C:\Windows\System32", "ktvisa32.dll")
-        if os.path.isfile(p):
-            _KEYSIGHT_VISA_CORE = p
+        for _p in (os.path.join(d, "ktvisa32.dll") for d in _system_dirs()):
+            if os.path.isfile(_p):
+                _KEYSIGHT_VISA_CORE = _p
+                break
     return _KEYSIGHT_VISA
 
 

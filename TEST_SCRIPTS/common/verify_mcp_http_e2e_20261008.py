@@ -1,3 +1,4 @@
+from pathlib import Path
 # -*- coding: utf-8 -*-
 """E2E 验收：常驻 streamable-http 单例（对应当前运行中的实例）。
 
@@ -15,13 +16,13 @@ import os
 import sys
 import time
 
-sys.path.insert(0, r"D:\WorkDesigns\3_WorkTools\instrumentControl")
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from mcp import ClientSession                                  # noqa: E402
 from mcp.client.streamable_http import streamablehttp_client   # noqa: E402
 
 URL = "http://127.0.0.1:8765/mcp"
-PID_FILE = r"D:\WorkDesigns\3_WorkTools\instrumentControl\mcp_instruments\run\mcp_server.pid"
+PID_FILE = str(Path(__file__).resolve().parents[2] / "mcp_instruments" / "run" / "mcp_server.pid")
 
 # v2dev 合并后（1b92cf8）默认 profile=compact（5 工具；68 操作都在 registry）。
 # legacy=68。断言随环境变量 INSTRUMENT_MCP_PROFILE 或服务端默认自动适配。
@@ -80,7 +81,7 @@ async def main() -> None:
 
     print(json.dumps(out, ensure_ascii=False, indent=2))
     ts = time.strftime("%Y%m%d_%H%M%S")
-    dest = rf"D:\WorkDesigns\3_WorkTools\instrumentControl\TEST_DATA\common\mcp_http_e2e_{ts}.json"
+    dest = str(Path(__file__).resolve().parents[2] / "TEST_DATA" / "common" / f"mcp_http_e2e_{ts}.json")
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     with open(dest, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=2)

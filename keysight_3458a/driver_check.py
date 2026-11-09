@@ -31,7 +31,19 @@ GPIB_USB_VID_PID = "VID_0957&PID_0718"
 GPIB_USB_NAME = "Keysight Technologies 82357B"
 # 82357B 的"驱动未安装"典型值（CM_PROB_FAILED_INSTALL）
 PROBLEM_DRIVER_MISSING = 28
-SUITE_DIR = r"C:\Program Files\Keysight\IO Libraries Suite"
+def _suite_dir() -> Optional[str]:
+    """Keysight IO Libraries Suite 安装目录（按环境变量派生，**不写死盘符**）。"""
+    for env in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
+        base = os.environ.get(env)
+        if not base:
+            continue
+        d = os.path.join(base, "Keysight", "IO Libraries Suite")
+        if os.path.isdir(d):
+            return d
+    return None
+
+
+SUITE_DIR = _suite_dir()
 
 _CACHE: dict = {}
 _CACHE_TTL = 30.0

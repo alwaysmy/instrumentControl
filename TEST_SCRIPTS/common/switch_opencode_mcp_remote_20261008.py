@@ -22,7 +22,7 @@ import shutil
 import sys
 import time
 
-CONFIG = r"C:\Users\AlwaysTS\.config\opencode\opencode.json"
+CONFIG = str(Path.home() / ".config" / "opencode" / "opencode.json")
 
 REMOTE = {
     "type": "remote",
@@ -33,7 +33,7 @@ REMOTE = {
 
 LOCAL = {
     "command": [
-        r"C:\Users\AlwaysTS\AppData\Local\Programs\Python\Python311\python.exe",
+        sys.executable,
         r"D:\WorkDesigns\3_WorkTools\instrumentControl\mcp_instruments\server.py",
     ],
     "enabled": True,

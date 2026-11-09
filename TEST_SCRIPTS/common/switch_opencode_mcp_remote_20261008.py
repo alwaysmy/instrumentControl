@@ -34,7 +34,7 @@ REMOTE = {
 LOCAL = {
     "command": [
         r"C:\Users\AlwaysTS\AppData\Local\Programs\Python\Python311\python.exe",
-        r"D:\MyProjects\AI\instrumentControl\mcp_instruments\server.py",
+        r"D:\WorkDesigns\3_WorkTools\instrumentControl\mcp_instruments\server.py",
     ],
     "enabled": True,
     "type": "local",

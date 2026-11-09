@@ -600,3 +600,68 @@
     （`TEST_DATA/common/mcp_tools_baseline_v2dev.json`，仅 captured_at/version/本条描述变化），
     校验全 PASS。
   - **真机未跑**（电源现场使用中，用户要求别测）；新返回结构需重启 MCP 单例后生效。
+
+- 2026-11-09（拉取 origin/main 60 提交后的离线回归修复；**未真机**）：
+  仓库从 `D:\MyProjects\AI\instrumentControl` 搬到 `D:\WorkDesigns\3_WorkTools\instrumentControl`
+  后第一次跑全套回归，**27 套里 7 套失败**，逐个定位并修复：
+  - **17 文件 25 处硬编码旧路径**（旧目录已不存在）→ `ModuleNotFoundError: No module named 'server'`
+    / `'keysight_3458a'`、`can't open file 'D:\MyProjects\AI\...\spawn_detached.py'`。
+    用 `%TEMP%\fix_paths.py` 做字节级替换（保留 BOM / UTF-8 编码），涉及
+    `TEST_SCRIPTS/common/{mcp_call_tool_20261008, mem_probe_pyvisa_verify_20261008,
+    switch_opencode_mcp_remote_20261008, verify_audit_sink_20261008, verify_dmm_nplc,
+    verify_mcp_device_acceptance_20261008, verify_mcp_http_e2e_20261008, verify_mcp_new_tools,
+    verify_model_field_fix, verify_plan_mcp_remote_20261008, verify_remaining_tools,
+    verify_spawn_detached_20261008}.py`、
+    `TEST_SCRIPTS/ks3458a/verify_front_panel_release_offline_20261008.py`、
+    `TEST_SCRIPTS/sds/{verify_meas_ext_mcp, verify_wave_fft}.py`、
+    `docs/2026-08-30-mcp-injection-failure.md`、`skills/instrument-mcp/SKILL.md`。
+    ⚠ 这里改的是**硬编码值**而不是改成 `Path(__file__).resolve().parents[2]` 派生，
+    下次搬仓还会踩同一个坑。
+  - **`verify_registry_parity` 61/71 描述不一致**（`mismatched 61: ['dg_output','dg_protect',
+    'dg_query','dg_set_dc','dg_set_param']`）：**FastMCP 取工具描述的实现随 mcp 版本变了** ——
+    mcp 1.27 用函数 `__doc__` 原文（续行保留 4 空格缩进），mcp 1.30 改用 `inspect.getdoc`
+    （内部即 `inspect.cleandoc`）。基线是另一版抓的，本机 1.30.0 全红。
+    修法：比较前两边都过 `_norm_desc(text) -> inspect.cleandoc(text) if text else ""`，
+    断言名改 `every description is identical (indent-normalized)`。
+    **坑**：只能用 `inspect.cleandoc`，不能用 `textwrap.dedent` —— dedent 按所有行的公共缩进裁，
+    而 docstring 首行顶格、续行才缩进，公共缩进是空 → dedent 等于没做。
+    新（71 条）与旧（带缩进）基线双跑均 71 PASS；基线文件保持 2026-10-29 原始出处未改。
+  - **技能软链指向旧目录**：`~/.agents/skills/instrument-mcp` 仍链到 `<repo>\mcp_instruments`
+    （SKILL.md 已迁到 `<repo>\skills/instrument-mcp/`），连带
+    `verify_docstring_trim_coverage_20260923.py:93` 的 `SKILL.read_text(encoding="utf-8")` 抛
+    `FileNotFoundError: 'C:\Users\dell\.agents\skills\instrument-mcp\SKILL.md'`。
+    `python scripts\install_skills.py --force` 覆盖（原目标备份到
+    `TEST_DATA/common/skill_backup_instrument-mcp_20261109_111512`）。
+  - **复测**：27 套 **26 套 exit 0 / 0 FAIL**，仅 `k3458a_worker_isolation` 6 PASS / 1 FAIL：
+    `S5 resource must reach the child (no silent cross-talk)` →
+    `TransportError: VisaIOError: VI_ERROR_LIBRARY_NFOUND (-1073807202)`
+    —— **本机没装 VISA 库**，属环境缺失，不是代码回归；且该断言期望 `TransportError`
+    而底层抛的是裸 `VisaIOError`，**断言类型本身偏脆（未改）**。
+    附带发现：该脚本把 worker 的中文 stderr 打成了 `?`
+    （`[3458A worker] killed: ????? 3s ???????? ioGPIB ??`），与 2026-09-22 的 GBK/U+FFFD
+    同一类问题 —— 子进程管道编码未固定（**未修**）。
+    留痕：`TEST_DATA/common/regression_offline_20261109_111847.txt`。
+  - `verify_mcp_tools_meta.py` 单独跑 `== result: all PASS ==`（71 工具、`description gap = 0`、
+    stdout 只有 JSON-RPC）。
+
+- 2026-11-09（DSH 启动耗时实测 + "自检是否动设备"答疑；只测不修）：
+  用户报"启动超慢"和"自检为什么去动设备"。结论：**MCP server 不是启动慢的主因，自检也不碰设备**。
+  - 入口耗时（到打印 `dsh web:` 行）：`dsh web --no-open --port 0` = **4.15s**；
+    `npx @deepseek-ai/dsh web ...` = **6.75s**。`npx @deepseek-ai/dsh --version`
+    = 1.72 / 3.62 / 2.83s（抖动大，走网络），而 `dsh --version` = 0.16s、
+    `node <global>/dsh/lib/bin.js --version` = 0.29s → **npx 纯解析开销 1.5–3.5s，
+    占启动 1/3 以上**；改用 PATH 里的 `dsh`（`%LOCALAPPDATA%\pi-node\current\dsh.ps1`）即可省掉。
+  - 本仓 MCP server 冷/热启动：compact 0.86/0.89s、legacy 0.87/0.87s（spawn → tools/list）。
+    四个 MCP 服务器握手合计 **2.66s**（everything-search 0.02 / instrument 0.88 /
+    readpdf 0.92 / cubemx 0.83）。
+  - 其余耗时：`~/.dsh/sessions` **224 文件 / 235.89 MB**（最大单文件 20.1 MB），
+    cost-meter 启动 3s 后要扫 12 份做回填 → 一次事件循环阻塞；
+    `cordis.patch.yml` 有 **59 个插件条目**；`package.json` 里
+    `nowledge-mem-deepseek-harness` 与 dsh 0.2.1-rc.2 不兼容（其 requirements 要求 `<0.2.0`），
+    每次启动都打印 700 字符告警后被跳过 —— 属死配置（**未清**）。
+  - **自检不动设备**：`mcp_instruments/server.py:1168/1169` 的 `_is_query_only` / `_is_forbidden`
+    指向 `instrument_runtime/policy.py:95` `is_query_only()` / `:113` `is_forbidden()`，
+    都是**纯字符串 + 正则**解析（按 `;` 分段、走 `QUERY_UNIT_RE`），无任何 VISA/SCPI I/O。
+    真正初始化 VISA 的是 `mcp_instruments/server.py:2701` `_prewarm_visa_rm()` 里的
+    `rm = pyvisa.ResourceManager()`（注释记历史上实测可 20s+），跑在 **daemon 线程**
+    （`:2732`），不阻塞 `mcp.run()`；`_PREWARM_DONE` 只用于给工具超时预算 +90.0 秒。

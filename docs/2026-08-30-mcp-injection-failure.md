@@ -40,7 +40,7 @@ Codex（Windows）对同时声明 `prompts + resources` 能力的 stdio MCP 服�
 | everything-mcp（1.28.1） | `prompts` + `resources` + `tools` | 失败 |
 
 处理：已在 `server.py` 移除 prompts/resources 处理器，使 instrument 的能力收敛为"仅 tools"，
-对齐 kimi-cu（见 [server.py:33](D:\MyProjects\AI\instrumentControl\mcp_instruments\server.py:33)）。
+对齐 kimi-cu（见 [server.py:33](D:\WorkDesigns\3_WorkTools\instrumentControl\mcp_instruments\server.py:33)）。
 
 ### 3.2 第二层（决定性）：MCP 工具默认延迟到 `tool_search`，DeepSeek Direct 模式无承接
 

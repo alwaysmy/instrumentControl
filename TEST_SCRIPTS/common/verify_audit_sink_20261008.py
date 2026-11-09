@@ -13,8 +13,8 @@ import tempfile
 import time
 from pathlib import Path
 
-sys.path.insert(0, r"D:\MyProjects\AI\instrumentControl")
-sys.path.insert(0, r"D:\MyProjects\AI\instrumentControl\mcp_instruments")
+sys.path.insert(0, r"D:\WorkDesigns\3_WorkTools\instrumentControl")
+sys.path.insert(0, r"D:\WorkDesigns\3_WorkTools\instrumentControl\mcp_instruments")
 
 import contextvars
 

@@ -16,7 +16,7 @@ import asyncio
 import json
 import sys
 
-sys.path.insert(0, r"D:\MyProjects\AI\instrumentControl")
+sys.path.insert(0, r"D:\WorkDesigns\3_WorkTools\instrumentControl")
 
 from mcp import ClientSession                                  # noqa: E402
 from mcp.client.streamable_http import streamablehttp_client   # noqa: E402

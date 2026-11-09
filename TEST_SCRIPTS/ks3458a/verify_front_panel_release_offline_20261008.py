@@ -11,7 +11,7 @@ import sys
 import types
 from pathlib import Path
 
-ROOT = Path(r"D:\MyProjects\AI\instrumentControl")
+ROOT = Path(r"D:\WorkDesigns\3_WorkTools\instrumentControl")
 sys.path.insert(0, str(ROOT))
 
 from keysight_3458a import commands as C          # noqa: E402

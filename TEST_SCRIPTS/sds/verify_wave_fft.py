@@ -10,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(r"D:\MyProjects\AI\instrumentControl")
+ROOT = Path(r"D:\WorkDesigns\3_WorkTools\instrumentControl")
 sys.path.insert(0, str(ROOT))
 
 from common.resolver import resolve

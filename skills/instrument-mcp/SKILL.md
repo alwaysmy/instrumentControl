@@ -80,7 +80,7 @@ instr_call(op="sds.measure", args={"item": "PKPK", "ch": 1})
 
 ```python
 import sys
-sys.path.insert(0, r"D:\MyProjects\AI\instrumentControl")   # 或相对定位
+sys.path.insert(0, r"D:\WorkDesigns\3_WorkTools\instrumentControl")   # 或相对定位
 from instrument_runtime import broker          # decide_scpi / drain_errors / audit_scpi
 from sds_control import find_sds               # 各设备库，地址走解析层（不写死 IP）
 
@@ -126,7 +126,7 @@ MCP 侧（单例 `127.0.0.1:8765/mcp`）与脚本侧**可以并行使用不同�
 3. **多步序列/循环 → 写脚本，用设备库的"原生命令透传"**（不是自己开 socket）：
 
    ```python
-   import sys; sys.path.insert(0, r"D:\MyProjects\AI\instrumentControl")
+   import sys; sys.path.insert(0, r"D:\WorkDesigns\3_WorkTools\instrumentControl")
    from instrument_runtime import broker
    from sdg_control import find_sdg                 # 地址走解析层，不写死 IP
 
@@ -726,9 +726,9 @@ MCP 进程通常已带管理员（可直接用）；若工具报"需要管理员
 **自救命令（幂等，随时可跑，安全）**：
 
 ```powershell
-pwsh -NoProfile -File D:\MyProjects\AI\instrumentControl\mcp_instruments\run_remote.ps1 status
+pwsh -NoProfile -File D:\WorkDesigns\3_WorkTools\instrumentControl\mcp_instruments\run_remote.ps1 status
 # running:false → 拉起；running:true → 服务没挂，去查别的原因
-pwsh -NoProfile -File D:\MyProjects\AI\instrumentControl\mcp_instruments\run_remote.ps1 start
+pwsh -NoProfile -File D:\WorkDesigns\3_WorkTools\instrumentControl\mcp_instruments\run_remote.ps1 start
 ```
 
 `start` **幂等**（已在跑就 no-op），且用 **detached 进程**启动 —— 不依赖这个 shell 存活，

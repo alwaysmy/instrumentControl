@@ -52,6 +52,23 @@ def check(name: str, ok: bool, detail: str = "") -> None:
         fails.append(name)
 
 
+def _norm_desc(text) -> str:
+    """去掉 docstring 的公共缩进后再比较。
+
+    背景（2026-11-09 实测）：FastMCP 取工具描述的实现随 mcp 版本变化——
+    mcp 1.27 用函数 ``__doc__`` 原文（保留 4 空格续行缩进），1.30 改用
+    ``inspect.getdoc``（``textwrap.dedent().strip()``）。基线快照是某一版
+    抓的，跨机器/跨版本直接做字节比较会 61/71 全红，而文本内容其实一致。
+    这里统一按 ``inspect.getdoc`` 的规则归一，语义相同的描述判为一致。
+    """
+    import inspect
+    # 注意：必须是 inspect.cleandoc（getdoc 内部用的就是它），不是 textwrap.dedent。
+    # dedent 只按"所有行"的公共缩进裁，而 docstring 第一行通常顶格、续行才缩进，
+    # 于是公共缩进为空、dedent 等于没做；cleandoc 只按第 2 行起的 margin 裁，
+    # 正好把续行的 4 空格去掉——这就是两版基线的实际差异。
+    return inspect.cleandoc(text) if text else ""
+
+
 def _canon(obj) -> str:
     """稳定序列化，用于深比较（键序无关）。"""
     return json.dumps(obj, ensure_ascii=False, sort_keys=True)
@@ -108,11 +125,11 @@ def main() -> int:
             desc_bad.append(name)
             schema_bad.append(name)
             continue
-        if op.description != (base.get("description") or ""):
+        if _norm_desc(op.description) != _norm_desc(base.get("description")):
             desc_bad.append(name)
         if _canon(dict(op.schema)) != _canon(base.get("inputSchema") or {}):
             schema_bad.append(name)
-    check("every description is byte-identical", not desc_bad,
+    check("every description is identical (indent-normalized)", not desc_bad,
           f"mismatched {len(desc_bad)}: {desc_bad[:5]}" if desc_bad else f"{len(base_tools)} ok")
     check("every inputSchema is deep-identical", not schema_bad,
           f"mismatched {len(schema_bad)}: {schema_bad[:5]}" if schema_bad else f"{len(base_tools)} ok")

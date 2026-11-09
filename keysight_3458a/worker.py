@@ -37,6 +37,8 @@ import sys
 import time
 from pathlib import Path
 
+from .defaults import resource as _default_resource
+
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -80,7 +82,7 @@ def main() -> int:                                     # pragma: no cover - 子�
                 if method not in ALLOWED_METHODS:
                     raise ValueError(f"方法不在白名单：{method!r}")
                 if drv is None:
-                    drv = DMM3458A(req.get("resource") or "GPIB0::9::INSTR",
+                    drv = DMM3458A(req.get("resource") or _default_resource(),
                                     timeout_s=float(req.get("timeout_s") or 30.0))
                 fn = getattr(drv, method)
                 result = fn(**(req.get("kwargs") or {}))

@@ -715,3 +715,31 @@
   - **踩坑**：调试时在持久 pwsh 里 `export INSTRUMENT_NO_SESSION_LOCK=1` 忘清，
     导致 `verify_3458a_offline` 的 S15 忙等护栏 2 条 FAIL（该变量让 `_claim()`
     直接返回空、跳过占用检查）。清掉后 73/73。
+
+- 2026-11-09（硬编码提取 + TEST_SCRIPTS 能力上提；**未真机**）：
+  用户要求「把写死的东西提出来；TEST_SCRIPTS 是项目级测试，对产品本身有用的应该提出来」。
+  - **新增 `mcp_instruments/client.py`**（从 `TEST_SCRIPTS/common/mcp_call_tool_20261008.py`
+    上提）：MCP streamable-http 单工具调用器，`call_tool()` / `python -m mcp_instruments.client`；
+    原测试脚本改为 5 行薄壳。
+  - **新增 `common/pixel_measure.py`**（从 `TEST_SCRIPTS/common/pixel_measure.py` 上提）：
+    截屏 BMP → 通道轨迹 → Vpp / 频率 / 直流，纯函数不碰设备。背景：SDS800X HD 的
+    `VALue?` 恒返回 `****`（疑似选件限制），视觉通道是唯一可用的闭环测量手段。
+    合成方波自检：`vpp=5.952 V`（理论 5.952）、`freq=125.8 Hz`（理论 125.2）。
+  - **新增 `keysight_3458a/defaults.py`**：3458A 默认地址改走解析层
+    （`devices.json` > 上次成功缓存），常量 `GPIB0::9::INSTR` 只做最后兜底；
+    只查 `known_resources()`、**不做网络发现**（默认值在构造期求值，不能触发 10s 扫描）。
+    改动点：`remote.py:38`（默认实参 + `worker_available()` 里 `RemoteDMM()`）、
+    `worker.py:83`（`req.get("resource") or _default_resource()`）、
+    `preflight.py:45`（`RESOURCE = _default_resource()`）。
+  - `mcp_instruments/run_remote.ps1:84`：`'C:\Python3*\python.exe'` →
+    `(Join-Path $env:SystemDrive 'Python3*\python.exe')`（系统盘不是 C: 也能找到）。
+  - **判断为纯测试、不提出的**：`verify_*.py`（断言）、`switch_*.py` 与
+    `trim_mcp_tool_docstrings_*.py`（一次性改造工具）、`waveform_matrix*.py` /
+    `cross_test.py` / `autoscale_verify.py`（依赖两台真机的闭环比对）、
+    `probe_all.py`（全是 `common.discovery` 现成函数 + 落 JSON，产品侧无缺口）。
+  - **仍未改**：`verify_3458a_live*.py` / `verify_worker_isolation.py` 的
+    `GPIB0::9::INSTR` 默认值（已支持 `sys.argv[1]`）、`diag_lan_candidates.py:20`
+    两个 IP、`verify_discover_final.py:16` 的 `/24`。
+  - **复测**：27 套件 **27 绿（exit 0 / 0 FAIL）**，
+    留痕 `TEST_DATA/common/regression_offline_20261109_153441.txt`。
+    报告已并入 `docs/hardcode_audit_20261109.md` §8-§9。

@@ -38,11 +38,14 @@ import threading
 import time
 from pathlib import Path
 
+from .defaults import resource as _default_resource
+
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-RESOURCE = "GPIB0::9::INSTR"
+# 地址走解析层（devices.json > 上次成功缓存），常量只在都没有时兜底
+RESOURCE = _default_resource()
 
 
 def _ascii(text) -> str:

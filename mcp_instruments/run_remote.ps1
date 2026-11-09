@@ -81,7 +81,7 @@ function Resolve-Python {
     if ($cmd) { return $cmd.Source }
     $globs = @(
         (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python3*\python.exe'),
-        'C:\Python3*\python.exe',
+        (Join-Path $env:SystemDrive 'Python3*\python.exe'),   # 不写死 C:，系统盘不是 C 也能找到
         (Join-Path $env:ProgramFiles 'Python3*\python.exe')
     )
     foreach ($g in $globs) {

@@ -27,6 +27,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from .defaults import resource as _default_resource
 from .transport import TransportError
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -35,10 +36,11 @@ ROOT = Path(__file__).resolve().parent.parent
 class RemoteDMM:
     """3458A 的进程外代理（接口同 `DMM3458A`）。"""
 
-    def __init__(self, resource: str = "GPIB0::9::INSTR", timeout_s: float = 30.0,
+    def __init__(self, resource: Optional[str] = None, timeout_s: float = 30.0,
                  deadline_s: float = 120.0, python: Optional[str] = None,
                  env: Optional[dict] = None):
-        self.resource = resource
+        # 地址走解析层（devices.json > 上次成功缓存），常量只在都没有时兜底
+        self.resource = resource or _default_resource()
         self.timeout_s = float(timeout_s)
         self.deadline_s = float(deadline_s)
         self._python = python or sys.executable
@@ -276,7 +278,7 @@ class RemoteDMM:
 def worker_available() -> tuple[bool, str]:
     """能否用进程外 worker：拉起子进程并做一次 `__sleep 0` 往返（不碰设备）。"""
     try:
-        d = RemoteDMM("GPIB0::9::INSTR")
+        d = RemoteDMM()
         try:
             out = d._rpc({"op": "__sleep", "seconds": 0}, deadline_s=30.0)
             return (out == "slept"), str(out)

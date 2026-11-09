@@ -238,3 +238,63 @@ powershell -NoProfile -ExecutionPolicy Bypass -File TEST_SCRIPTS\common\regressi
 > 踩坑记录：调试时在同一个持久 pwsh 里 `export INSTRUMENT_NO_SESSION_LOCK=1` 忘清，
 > 导致 `verify_3458a_offline` 的 S15 忙等护栏用例 2 条 FAIL（该变量会让
 > `_claim()` 直接返回空，跳过占用检查）。清掉后 73/73。
+
+---
+
+## 8. 补做：TEST_SCRIPTS 里「对产品有用」的能力已提出
+
+TEST_SCRIPTS 是**项目级测试**目录；其中混着两套东西 —— 断言（测试）和**能力（产品）**。
+后者已经提出来了：
+
+| 原来只在 TEST_SCRIPTS | 提到产品 | 说明 |
+|---|---|---|
+| `TEST_SCRIPTS/common/mcp_call_tool_20261008.py` | **新增 `mcp_instruments/client.py`** | MCP streamable-http 单工具调用器：`call_tool(tool, args)` / `python -m mcp_instruments.client <tool>`。验收脚本、DSH/opencode 之外的自动化都要用；测试脚本现在只是 5 行薄壳。 |
+| `TEST_SCRIPTS/common/pixel_measure.py` | **新增 `common/pixel_measure.py`** | 截屏 BMP → 通道轨迹 → Vpp / 频率 / 直流。SDS 的 `VALue?` 恒返回 `****`（疑似选件限制），视觉通道是**唯一可用的闭环测量手段**；纯函数，不碰设备。测试脚本现在只是薄壳 CLI。 |
+
+自检（合成方波，周期 80 列 / 覆盖 915 列、50.4 px/div）：
+
+```
+vpp  = 5.952 V   (理论 300/50.4 = 5.952)
+freq = 125.8 Hz  (理论 11.44 周期 / 0.0914 s = 125.2)
+```
+
+### 判断为「就是测试」、不提出的
+
+- `verify_*.py` —— 断言/验收，天然属于测试；
+- `switch_*.py`、`trim_mcp_tool_docstrings_20260923.py` —— 一次性改造工具（改完就没用了）；
+- `waveform_matrix*.py`、`cross_test.py`、`autoscale_verify.py` —— 闭环比对，依赖两台真机同时在线；
+- `probe_all.py` —— 全部是 `common.discovery` 的现成函数（`scan` / `detect_cidr` /
+  `probe_alive` / `identify_lan`）串起来 + 落 JSON，产品侧**没有缺口**。
+
+### 本轮硬编码
+
+| 位置（改前） | 改后 |
+|---|---|
+| `keysight_3458a/remote.py:38` `resource: str = "GPIB0::9::INSTR"` | `Optional[str] = None` → `defaults.resource()` |
+| `keysight_3458a/worker.py:83` `req.get("resource") or "GPIB0::9::INSTR"` | `or _default_resource()` |
+| `keysight_3458a/preflight.py:45` `RESOURCE = "GPIB0::9::INSTR"` | `RESOURCE = _default_resource()` |
+| `mcp_instruments/run_remote.ps1:84` `'C:\Python3*\python.exe'` | `(Join-Path $env:SystemDrive 'Python3*\python.exe')` |
+
+新增 `keysight_3458a/defaults.py`：
+
+```python
+def resource(kind: str = "ks3458a", fallback: str = "GPIB0::9::INSTR") -> str:
+    # 取本机配置里的地址；配置/缓存都没有才返回 fallback。
+```
+
+只查 `common.resolver.known_resources()`（`devices.json` > 上次成功缓存），
+**不做网络发现** —— 默认值会在导入期/构造期求值，不能触发 10s 级扫描。
+
+### 仍未改（需要你先定地址）
+
+- `TEST_SCRIPTS/ks3458a/verify_3458a_live*.py`、`verify_worker_isolation.py` 里的
+  `GPIB0::9::INSTR` —— 已支持 `sys.argv[1]` 覆盖，但默认值还是常量；
+  等 `devices.json` 里 `ks3458a` 有真地址后改成 `resolve("ks3458a")`。
+- `TEST_SCRIPTS/common/diag_lan_candidates.py:20` 的两个 IP、
+  `verify_discover_final.py:16` 的 `/24` —— 诊断脚本，建议加 `--candidates` / `--cidr` 参数。
+- `devices.json` 仍只配了 `mho` / `psu`（`sds` / `sdg` / `dmm` / `dho` / `ks3458a` 未配）。
+
+## 9. 本轮回归
+
+**27 套件 27 绿（exit 0 / 0 FAIL）**，
+留痕 `TEST_DATA/common/regression_offline_20261109_153441.txt`。

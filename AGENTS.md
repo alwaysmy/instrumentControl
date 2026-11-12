@@ -10,9 +10,12 @@ AI/Agent 操作仪器必须遵守以下规范。
 1. **命令禁止猜测**：落码前必须对照设备手册（各库 docs/ 下有提取版）核对语法。
    历史事故：`:CONF VOLT:DC`（应为 `:CONF:VOLT:DC`）积压 12 条错误；
    `:SYST:FACT`（不存在）已删除；SDS `ITEM` 漏 `,ON` 参数。
-2. **写序列前先 drain 错误队列**：错误队列 FIFO 滞后报错会污染逐命令查错
-   （`sds_control.sds.drain_errors`）。写后逐条查 `SYST:ERR?`。
-3. **写操作三步**：写入 → 查 SYST:ERR? → 回读比对。缺一不可。
+2. **写序列前先同步**：有错误队列的机型（SDG/DHO/MHO/DH1766/34xxx）用
+   `drain_errors` 清 FIFO；**SDS 没有错误队列**（手册无 `:SYSTem:ERRor`、也无
+   `*CLS`/`*ESR?`），`sds_control.sds.drain_errors` 实为一次 `*OPC?` 应答同步，
+   `system_error()` 恒返回 None（2026-11-12 更正：此前误按通用套路写 `SYST:ERR?`，
+   该查询无应答会让后续每条应答整体错位一格）。
+3. **写操作三步**：写入 → 同步（`*OPC?` / 该机型错误队列）→ 回读比对。缺一不可。
 4. **查询无副作用**（SCPI-99 §6.2.3）：例外仅 MEASurement 子系统。
 5. **字符查询返回短格式**（§6.2.3）：设 `CHANnel1` 查回 `CHAN1`；解析响应要兼容。
 6. **布尔查询返回 0/1**（§7.3），不是 ON/OFF。
@@ -594,3 +597,74 @@ MCP 服务器的工具。
 （总输入 token、工具选择失败率、参数错误率、往返次数）需要重启用真实会话跑一轮才有。
 
 设计与取舍见 `docs/gpt_qa/2026-09-23-instrument-gateway-arch.md`。
+
+
+## 八、仪器中控（instrument_console，2026-11-09）
+
+改仪器**状态/可见性**相关的东西之前先读 `docs/architecture/20261109-instrument-console.md`
+——那是这个子系统的设计权威（含缺陷清单与决策记录）。
+
+**一句话**：给每台仪器一个**控制面板**，给所有 agent 一个**共享的、自描述的中控**；
+agent 的每次调用都在同一个地方改变 UI 状态，人类在面板上的每次操作都进入 agent 上下文
+——因此不存在"两头维护"。
+
+**分层（依赖只能向下）**：
+
+```
+instrument_console/server/     HTTP/JSON + SSE + 静态 UI   ← 唯一知道 HTTP 的模块
+instrument_console/core/       规范/操作目录/总线/轮询/上下文 ← 只用标准库
+instrument_console/drivers/    每台仪器的驱动（唯一 import 设备库的地方）
+instrument_console/spec/       类规范 + 实例规范（JSON，数据不是代码）
+plugins/dsh-instrument-console/ DSH 适配层（代理 + 提示词注入 + 契约发现）
+mcp_instruments/console_bridge.py  MCP 适配层（代理 + 镜像）
+```
+
+**接入一台新仪器 = 写一个 JSON**（品类已存在时）：`spec/instruments/<id>.json` 选一个
+类规范（`spec/classes/`）与一个驱动（`drivers/__init__.py` 的 `_REGISTRATIONS`）。
+**新增仪器不该改 UI 代码**——面板完全由规范驱动。
+
+**四个同步**（这是需求核心，改之前先确认没破）：
+1. agent 调用 → 写后自动重读（`context.after`）→ 推 SSE → UI 变；
+2. 人类操作（`source="human"`）→ 未确认改动渲染成系统提示词片段；
+3. 调用前按 `context.before` 先读（如电源先读模式/电压/电流）；
+4. 调用后自动查询（同上第 1 条）。
+
+**不变量（破了会出真事故）**：
+- `core/` 只依赖标准库；`drivers/` 才 import 设备库（`verify_console_layering.py` 断言）。
+- **`allow_reuse_address = False`**：Windows 上 `SO_REUSEADDR` 允许双开，两个中控
+  同时绑定同一端口 → 请求随机落点 → "关了的电源还是开的"。
+- **写操作只接受 `application/json` + 校验 `Origin`**：中控能开关真实电源输出。
+- **业务失败返回 dict 不抛异常**：HTTP 与进程内嵌两种模式的 `error_type` 必须逐字一致。
+- **响应头归一化在驱动里做**（SDS 的 `TRIG:MODE AUTO` → `AUTO`），不在规范里做。
+
+**运维**（`instrument_console/run_console.ps1`）：
+
+```bash
+pwsh -File instrument_console/run_console.ps1 start|stop|restart|status|open|tray
+pwsh -File instrument_console/run_console.ps1 install-task    # 登录时自启
+python -m instrument_console.client describe                  # 脚本化调用
+```
+
+- **不要用 `Start-Process -RedirectStandard*` 起服务**：它会与调用方共享 console/句柄，
+  服务永不退出 → 调用方 shell 的输出捕获等到超时（`mcp_instruments/spawn_detached.py`
+  的 docstring 有 2026-10-08 三种方案实测记录）。脚本已改用该启动器。
+- **不要信任 `Get-Command python` 的返回值**：可能是 Microsoft Store 的 App Execution
+  Alias，它把真解释器当子进程拉起 → 记录的 pid 是转发器的，`Stop-Process` 只杀转发器、
+  真服务变孤儿继续占端口。脚本已排除 `\Microsoft\WindowsApps\`，且**以监听端口上的
+  pid 为准**。
+- 默认端口 **8766**（8765 已被 MCP streamable-http 占用）。
+- 轮询**默认关**：有的仪器被长轮询会进异常状态；它是便利功能，不是默认行为。
+
+**验收套件**（全部离线，不碰仪器）：
+
+```bash
+python TEST_SCRIPTS/instrument_console/verify_console_spec.py      # 规范 + 假驱动全链路
+python TEST_SCRIPTS/instrument_console/verify_console_http.py      # 路由 / 安全门 / SSE / 静态 UI
+python TEST_SCRIPTS/instrument_console/verify_console_bridge.py    # MCP 桥接 / 降级 / 镜像限频
+python TEST_SCRIPTS/instrument_console/verify_console_layering.py  # 分层边界（子进程 import）
+node   plugins/dsh-instrument-console/test/host.mjs                # DSH 插件 host
+node   plugins/dsh-instrument-console/test/client.mjs              # DSH 插件 client
+```
+
+**已知待办**：真机回归（当前全部用 `fake` 驱动覆盖）／OpenChamber 适配／`emoe` 业务
+命令（手册未提供，只读）／把镜像接进 68 个 legacy MCP 工具。

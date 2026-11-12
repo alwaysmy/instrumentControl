@@ -34,14 +34,15 @@ def _ack_ok(resp: str) -> bool:
 
 
 def drain_errors(scope: "SDS") -> int:
-    """清空设备错误队列（滞后报错会污染逐命令查错，写序列前必须先清）。"""
-    n = 0
-    while n < 30:
-        e = scope.query(C.SYST_ERR).strip()
-        if _ack_ok(e):
-            break
-        n += 1
-    return n
+    """同步设备命令处理（SDS 本机型没有错误队列，等价于一次 *OPC? 等待）。
+
+    编程手册中没有 :SYSTem:ERRor（*CLS / *ESR? 同样没有），所以"清错误队列"
+    在本机型无从谈起；调用方（measure_simple / auto_scale 等）的真实意图是
+    "确认前序写命令已被处理完"，用 IEEE-488.2 的 *OPC? 完成。
+
+    返回 0 = 已同步（保留整数返回以兼容既有调用方）。
+    """
+    return 0 if _ack_ok(scope.query(C.SYST_ERR).strip()) else 1
 
 
 class SDS:
@@ -118,8 +119,39 @@ class SDS:
         return self.query("*IDN?")
 
     def system_error(self) -> Optional[str]:
-        resp = self.query(C.SYST_ERR)
-        return resp or None
+        """SDS 不支持错误队列查询（手册无 :SYSTem:ERRor），恒返回 None。
+
+        需要"命令已处理完"用 sync_opc()；要看设备报错请用面板/截图（无 SCPI 出口）。
+        """
+        return None
+
+    def sync_opc(self) -> bool:
+        """*OPC? 同步：前序命令全部处理完返回 True（本机型唯一的应答同步手段）。"""
+        return _ack_ok(self.query(C.SYST_ERR).strip())
+
+    def flush_input(self, settle_ms: int = 60, max_reads: int = 64) -> int:
+        """读掉接收缓冲里的残留字节，返回丢弃的字节数。
+
+        场景：TMC 大块读完后设备仍可能补一个换行；或某次查询超时后响应迟到。
+        残片留在缓冲里会让**下一条查询读到上一次的应答**（整体错位一格，表现为
+        读数恒等于某个旧值、二进制头解析失败）。代价：一次短超时读（默认 60ms）。
+        """
+        inst = self._c().inst
+        old = inst.timeout
+        n = 0
+        try:
+            inst.timeout = settle_ms
+            for _ in range(max_reads):
+                try:
+                    chunk = inst.read_raw()
+                except Exception:      # noqa: BLE001  —— 超时=缓冲已空，正常出口
+                    break
+                if not chunk:
+                    break
+                n += len(chunk)
+        finally:
+            inst.timeout = old
+        return n
 
     def run(self) -> None:
         self.write(C.RUN)
@@ -248,10 +280,11 @@ class SDS:
           VALue? 返回 'The number of measurements is zero'）；
         - SOURce 与 ITEM 是两条命令，ITEM 必须带 ,ON 状态参数；
         - item 用 SDS 缩写枚举（PKPK/FREQ/PER/MAX/RMS...，与 ADVanced 同表）；
-        - 每步后查 SYST:ERR? 确认。
+        - 每步后用 *OPC? 同步确认（本机型无 :SYST:ERR?，见 drain_errors）。
         """
         if item not in self.MEAS_TYPES:
             raise ValueError(f"未知测量项 {item!r}，可用: {', '.join(self.MEAS_TYPES)}")
+        self.flush_input()
         drain_errors(self)
         self.write(":MEASure:MODE SIMPle")
         time.sleep(0.2)
@@ -602,8 +635,31 @@ class SDS:
     SCREEN_GRID = {"x0": 20, "x1": 935, "y0": 48, "y1": 552, "divs_y": 10}
 
     def screenshot(self, save_dir: Optional[Path] = None) -> bytes:
-        """:PRIN? BMP 截屏原始字节（含 TMC 头则剥离）。"""
-        return self._c().query_block(C.SCREEN_BMP)
+        """:PRIN? BMP 截屏原始字节（完整整屏位图）。"""
+        return self._read_prin_bmp()
+
+    def _read_prin_bmp(self) -> bytes:
+        """读整屏 BMP（按 BMP 头声明的文件长度读齐）。
+
+        本机型 :PRIN? BMP 返回的是**裸 BMP，没有 TMC 头**，而 BMP 内含大量 0x0A
+        字节；VISA 的 read_termination='\n' 会在第一个 0x0A 处截断（实测只拿到
+        1,274,104 / 2,457,658 字节，且头部声明的尺寸与实得字节数不一致，PIL 报
+        'not enough image data'）。因此这里临时关掉读终止符，先读 54 字节文件头，
+        再按 0x02..0x06 处的文件长度把剩余部分读齐。
+        """
+        inst = self._c().inst
+        old_rt = inst.read_termination
+        inst.read_termination = None
+        try:
+            inst.write(C.SCREEN_BMP)
+            head = inst.read_bytes(54)
+            total = struct.unpack("<I", head[2:6])[0]
+            body = inst.read_bytes(total - 54) if total > 54 else b""
+            data = head + body
+        finally:
+            inst.read_termination = old_rt
+        self.flush_input()
+        return data
 
     def screenshot_png(self, save_path: Path) -> Path:
         """截屏并存为 PNG（供人工/AI 查看）。
@@ -992,6 +1048,7 @@ class SDS:
         电压 = raw/code*vdiv - offset；时间 = -(tdiv*10/2) + i*interval + delay。
         """
         source = f"C{int(src)}" if isinstance(src, int) else str(src).upper()
+        self.flush_input()          # 清掉上轮遗留（否则本条查询会读到旧应答）
         self.write(f"{C.WAV_SOUR} {source}")
         pre = self._preamble(source)
         total = pre["point_num"]
@@ -1007,9 +1064,14 @@ class SDS:
         while start < total:
             n = min(max_pts, total - start)
             self.write(f"{C.WAV_START} {start}")
-            chunks.append(self._c().query_block(C.WAV_DATA))
+            # require_tmc: 设备回错误文本（-113/-114 等）时立刻报错，不当波形数据解析
+            chunks.append(self._c().query_block(C.WAV_DATA, require_tmc=True))
+            self.flush_input()      # 块后可能有补发的换行
             start += n
         blob = b"".join(chunks)[:total * (2 if width == "WORD" else 1)]
+        want = total * (2 if width == "WORD" else 1)
+        if len(blob) != want:
+            raise RuntimeError(f"波形数据长度不符: 期望 {want} 字节，实得 {len(blob)}（源={source}, 点数={total}）")
 
         if width == "WORD":
             codes = struct.unpack(f"<{len(blob)//2}h", blob)
@@ -1031,9 +1093,8 @@ class SDS:
         }
 
     def screenshot_bmp(self) -> bytes:
-        """:PRIN? BMP 截屏原始字节（含 TMC 头则剥离）。"""
-        data = self.query_raw(C.SCREEN_BMP)
-        return self._strip_tmc(data) if data.find(b"#") == 0 else data
+        """同 screenshot()：整屏 BMP 原始字节（按文件长度读齐，不截断）。"""
+        return self._read_prin_bmp()
 
     # ---------- 快照 ----------
     def snapshot(self) -> dict:

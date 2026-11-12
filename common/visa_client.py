@@ -57,7 +57,7 @@ class VisaClient:
         self.inst.write(cmd)
         return self.inst.read_raw()
 
-    def query_block(self, cmd: str, max_reads: int = 2000) -> bytes:
+    def query_block(self, cmd: str, max_reads: int = 2000, require_tmc: bool = False) -> bytes:
         """发送命令并**把 TMC 大块读完**，返回数据体（无 TMC 头则原样返回）。
 
         为什么需要：VXI-11/HiSLIP 有消息分帧（一次 read 拿到整条消息），而
@@ -66,15 +66,18 @@ class VisaClient:
         并在长度不符时明确报错（不静默返回截断数据）。
         """
         data = self.query_raw(cmd)
-        if not data[:1] == b"#":
+        # 设备可能在 TMC 块前带 ASCII 回显（SDS 实测: 'C4:WF DAT2,#9000000000'），
+        # 因此不能假定块从第 0 字节开始——在前 64 字节内找 '#'。
+        idx = data.find(b"#", 0, 64)
+        if idx < 0 or not data[idx + 1:idx + 2].isdigit():
+            if require_tmc:
+                raise ValueError(f"期望 TMC 块，实得 {data[:60]!r}")
             return data
-        if len(data) < 2 or not data[1:2].isdigit():
-            return data
-        ndigits = int(data[1:2])
-        if len(data) < 2 + ndigits:
+        if len(data) < idx + 2 + int(data[idx + 1:idx + 2]):
             raise ValueError(f"TMC 头不完整: {data[:12]!r}")
-        length = int(data[2:2 + ndigits])
-        body = data[2 + ndigits:]
+        ndigits = int(data[idx + 1:idx + 2])
+        length = int(data[idx + 2:idx + 2 + ndigits])
+        body = data[idx + 2 + ndigits:]
         reads = 0
         while len(body) < length and reads < max_reads:
             try:
@@ -88,6 +91,18 @@ class VisaClient:
             reads += 1
         if len(body) < length:
             raise ValueError(f"TMC 数据不完整: 期望 {length} 字节，实得 {len(body)}")
+        body = body[:length]
+        # 吃掉块尾终止符：设备在二进制块后通常补一个 \n，留着会被下一条查询读走
+        # → 整体错位一格（实测：WAV:DATA? 之后紧跟的读会少头/多头一个字节）
+        old_tmo = self.inst.timeout
+        try:
+            self.inst.timeout = 50
+            try:
+                self.inst.read_raw()
+            except Exception:      # noqa: BLE001  —— 无尾随字符=超时, 正常
+                pass
+        finally:
+            self.inst.timeout = old_tmo
         return body
 
     def write(self, cmd: str) -> None:

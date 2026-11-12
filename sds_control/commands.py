@@ -11,8 +11,10 @@
     - SCPI 字符串须以 \n 结尾（Socket 与 VISA 同理，VisaClient 已配 write_termination）。
 """
 
-RUN = ":RUN"
-STOP = ":STOP"
+# [cmd-fix 2026-11-11] SDS800X HD 编程手册里**没有** :RUN/:STOP（只有 :TRIGger:RUN / :TRIGger:STOP）；
+# 发 :RUN 得不到任何动作，容易被误判成"示波器卡死/不采集"。
+RUN = ":TRIGger:RUN"
+STOP = ":TRIGger:STOP"
 AUTOSET = ":AUTOSET"
 
 # 采集子系统：实测 SDS824X HD 对全拼 ":ACQuire:MDEPth?" 不响应（超时），必须用短形式
@@ -29,7 +31,12 @@ CHAN_ATTN = "C{n}:ATTN?"
 CHAN_COUPLING = "C{n}:COUPLING?"
 
 TB_SCALE = "TDIV?"
+# 写形式按手册 5.21（`:TIMebase:SCALe <value>` / 短形式示例 `TIM:SCAL <value>`）。
+# 2026-11-09 补：中控面板需要设时基，而库原先只有查询。**不要**把 `TDIV` 当写命令
+# ——那是查询专用关键字，手册示例里写形式一律是 `TIM:SCAL`。
+TB_SCALE_W = "TIM:SCAL {val}"
 TRIG_DELAY = "TRDL?"
+TRIG_DELAY_W = "TIM:DEL {val}"     # 手册 5.21 `:TIMebase:DELay <value>`
 TRIG_MODE = "TRIG:MODE?"
 TRIG_STATUS = ":TRIGger:STATus?"   # 手册 3.27.3（Stop/TD/Wait/TRiggered...）
 TRIG_EDGE_SOUR = "TRIG:EDGE:SOUR?" # 手册 :TRIGger:EDGE:SOURce（短形式）
@@ -104,7 +111,10 @@ WAV_DATA = "WAV:DATA?"
 
 SCREEN_BMP = "PRIN? BMP"
 
-SYST_ERR = ":SYST:ERR?"
+# [cmd-fix 2026-11-11] 本机型**不支持** :SYST:ERR?（编程手册无该命令，也不支持 *CLS/*ESR?），
+# 发它 = 无应答查询 → 超时后把后续每条应答都错位一格（实测：读数被冻结成同一个值、
+# 二进制波形头解析失败、面板显示 Remote 锁死）。改用 IEEE-488.2 的 *OPC? 做应答同步。
+SYST_ERR = "*OPC?"     # 返回 "1" 表示命令已处理完
 # 注：恢复出厂请用面板操作。曾误列 ":SYST:FACT"（无手册出处，已删除）。
 
 # :WAVeform:PREamble? 参数块字段偏移（手册 6.3 节官方实例）

@@ -27,12 +27,18 @@ def _num(text: str) -> float:
     return float(m.group().replace("D", "E").replace("d", "e"))
 
 
+def _ack_ok(resp: str) -> bool:
+    """应答是否表示"命令已被接受"：兼容 *OPC?(=1) 与旧 :SYST:ERR? 的 +0/"No error"。"""
+    r = (resp or "").strip()
+    return r == "1" or r.startswith("+0") or ("No error" in r)
+
+
 def drain_errors(scope: "SDS") -> int:
     """清空设备错误队列（滞后报错会污染逐命令查错，写序列前必须先清）。"""
     n = 0
     while n < 30:
         e = scope.query(C.SYST_ERR).strip()
-        if e.startswith("+0") or "No error" in e:
+        if _ack_ok(e):
             break
         n += 1
     return n
@@ -169,11 +175,24 @@ class SDS:
         return None
 
     # ---------- 时基/触发 ----------
-    def timebase_scale(self) -> float:
-        return _num(self.query(C.TB_SCALE))
+    def timebase_scale(self, value: Optional[float] = None) -> Optional[float]:
+        """水平时基（s/div）：传值则写、不传则查（写后回读由调用方做）。
 
-    def trigger_delay(self) -> float:
-        return _num(self.query(C.TRIG_DELAY))
+        写形式 `TIM:SCAL <NR3>` 出自手册 5.21（`：TIMebase:SCALe <value>` 的短形式
+        示例）。注意手册提醒：**从大档位往小设**时示波器会自动匹配当前可设的最小时基，
+        所以写后必须回读（`configure_*`/面板都按回读值显示）。
+        """
+        if value is None:
+            return _num(self.query(C.TB_SCALE))
+        self.write(C.TB_SCALE_W.format(val=value))
+        return None
+
+    def trigger_delay(self, value: Optional[float] = None) -> Optional[float]:
+        """水平触发延时（s）：传值则写、不传则查（手册 5.21 `TIM:DEL <NR3>`）。"""
+        if value is None:
+            return _num(self.query(C.TRIG_DELAY))
+        self.write(C.TRIG_DELAY_W.format(val=value))
+        return None
 
     def trigger_mode(self) -> str:
         return self.query(C.TRIG_MODE).strip()
@@ -237,16 +256,16 @@ class SDS:
         self.write(":MEASure:MODE SIMPle")
         time.sleep(0.2)
         err = self.query(C.SYST_ERR).strip()
-        if not err.startswith("+0") and "No error" not in err:
+        if not _ack_ok(err):
             raise RuntimeError(f":MEASure:MODE SIMPle 被拒: {err}")
         self.write(f":MEASure:SIMPle:SOURce {src.upper()}")
         time.sleep(0.1)
         err = self.query(C.SYST_ERR).strip()
-        if not err.startswith("+0") and "No error" not in err:
+        if not _ack_ok(err):
             raise RuntimeError(f":MEASure:SIMPle:SOURce 被拒: {err}")
         self.write(f":MEASure:SIMPle:ITEM {item},ON")
         err = self.query(C.SYST_ERR).strip()
-        if not err.startswith("+0") and "No error" not in err:
+        if not _ack_ok(err):
             raise RuntimeError(f":MEASure:SIMPle:ITEM 被拒: {err}")
         # 测量项切换后引擎需要重建（实测：连续切换时读到过渡期旧值，
         # 如 MAX 读出上一项的残值导致 auto_scale 连环误判）
@@ -330,21 +349,21 @@ class SDS:
         drain_errors(self)
         self.write(f"{C.MEAS_ADV_SOUR1.format(n=n)} {src.upper()}")
         err = self.query(C.SYST_ERR).strip()
-        if not err.startswith("+0") and "No error" not in err:
+        if not _ack_ok(err):
             raise RuntimeError(f"P{n} SOURce1 被拒: {err}")
         if src2 is not None:
             self.write(f"{C.MEAS_ADV_SOUR2.format(n=n)} {src2.upper()}")
             err = self.query(C.SYST_ERR).strip()
-            if not err.startswith("+0") and "No error" not in err:
+            if not _ack_ok(err):
                 raise RuntimeError(f"P{n} SOURce2 被拒: {err}")
         self.write(C.MEAS_ADV_TYPE_W.format(n=n, t=mtype))
         err = self.query(C.SYST_ERR).strip()
-        if not err.startswith("+0") and "No error" not in err:
+        if not _ack_ok(err):
             raise RuntimeError(f"P{n} TYPE 被拒: {err}")
         if enable:
             self.write(f"{C.MEAS_ADV_SLOT.format(n=n)} ON")
             err = self.query(C.SYST_ERR).strip()
-            if not err.startswith("+0") and "No error" not in err:
+            if not _ack_ok(err):
                 raise RuntimeError(f"P{n} 开槽被拒: {err}")
 
     def measure_phase(
@@ -584,8 +603,7 @@ class SDS:
 
     def screenshot(self, save_dir: Optional[Path] = None) -> bytes:
         """:PRIN? BMP 截屏原始字节（含 TMC 头则剥离）。"""
-        data = self.query_raw(C.SCREEN_BMP)
-        return self._strip_tmc(data) if data.find(b"#") == 0 else data
+        return self._c().query_block(C.SCREEN_BMP)
 
     def screenshot_png(self, save_path: Path) -> Path:
         """截屏并存为 PNG（供人工/AI 查看）。
@@ -954,7 +972,10 @@ class SDS:
         return body[:length]
 
     def _preamble(self, src: str) -> dict:
-        raw = self._strip_tmc(self.query_raw(C.WAV_PREAMBLE))
+        # [tmc-fix 2026-11-11] raw socket 无分帧: 单次 read_raw 只拿到第一段,
+        # 残留字节会让下一条查询错位(实测: TMC 头解析到 '\n'、ascii 解码失败、
+        # 读数被冻结)。改用 query_block 按 TMC 头长度读齐。
+        raw = self._c().query_block(C.WAV_PREAMBLE)
         out: dict = {}
         for key, (off, fmt) in C.PREAMBLE_OFFSETS.items():
             size = {"h": 2, "i": 4, "f": 4, "d": 8}[fmt]
@@ -986,7 +1007,7 @@ class SDS:
         while start < total:
             n = min(max_pts, total - start)
             self.write(f"{C.WAV_START} {start}")
-            chunks.append(self._strip_tmc(self.query_raw(C.WAV_DATA)))
+            chunks.append(self._c().query_block(C.WAV_DATA))
             start += n
         blob = b"".join(chunks)[:total * (2 if width == "WORD" else 1)]
 

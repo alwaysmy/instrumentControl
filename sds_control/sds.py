@@ -634,6 +634,25 @@ class SDS:
     # 屏幕网格区近似标定（1024x600 截图，可按机型微调）
     SCREEN_GRID = {"x0": 20, "x1": 935, "y0": 48, "y1": 552, "divs_y": 10}
 
+    def read_waveform_safe(self, src: Union[int, str] = 1,
+                           points: Optional[int] = None) -> dict:
+        """先 :TRIGger:STOP、读波形、再 :TRIGger:RUN —— 规避 WAV:DATA? 卡死采集引擎。
+
+        实测（2026-11-12，SDS824X HD）：采集运行中反复 WAV:DATA? 会让采集线程死掉
+        （状态恒 Arm、数据 0 字节、只有 :SYSTem:REBoot 能救）；STOP 后读再 RUN 连测两轮
+        均正常。读完恢复原 Run 状态；若调用前本就是 Stop，则保持 Stop。
+        """
+        was_running = self.query(":TRIGger:STATus?").strip() != "Stop"
+        if was_running:
+            self.write(":TRIGger:STOP")
+            time.sleep(0.35)
+        try:
+            return self.get_waveform(src, points)
+        finally:
+            if was_running:
+                self.write(":TRIGger:RUN")
+                time.sleep(0.15)
+
     def screenshot(self, save_dir: Optional[Path] = None) -> bytes:
         """:PRIN? BMP 截屏原始字节（完整整屏位图）。"""
         return self._read_prin_bmp()
@@ -1046,6 +1065,11 @@ class SDS:
         """读取模拟通道波形并换算物理量（分片读取，官方协议）。
 
         电压 = raw/code*vdiv - offset；时间 = -(tdiv*10/2) + i*interval + delay。
+
+        ⚠ **采集运行中调用本接口有把采集引擎卡死的风险**（2026-11-12 实测：SDS824X HD /
+        10 Mpts，20 次 WAV:DATA? 后 :TRIGger:STATus? 永久停在 Arm，波形读回 0 字节，
+        只有 :SYSTem:REBoot 能恢复；块大小 100 点与 2000 点同样触发）。
+        要么先用 read_waveform_safe()（内部 STOP→读→RUN），要么自己 STOP 再读。
         """
         source = f"C{int(src)}" if isinstance(src, int) else str(src).upper()
         self.flush_input()          # 清掉上轮遗留（否则本条查询会读到旧应答）

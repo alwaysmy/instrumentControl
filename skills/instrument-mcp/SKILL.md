@@ -1,17 +1,17 @@
 ---
 name: instrument-mcp
-description: instrument MCP 服务器使用指引 — 八台仪器（SDS 示波器/SDG 信号源/Keysight 34465A 万用表/DHO 示波器/MHO900 示波器/DG832 信号源/DH1766 电源/Keysight 3458A 八位半万用表）的 MCP 工具选择、参数语义、安全门、典型工作流，compact/legacy 双 profile 用法，以及 3458A 非 SCPI 用法与 GPIB/VISA 分层排查（preflight）。触发条件：使用 instrument MCP 工具、compact profile 的 instr_devices/instr_search/instr_describe/instr_call/instr_batch、或 legacy profile 的 sds_/sdg_/dmm_/dho_/mho_/dg_/psu_/ks3458a_/instr_ 前缀工具、仪器测量/定标/截图/关机决策、3458A、GPIB、VISA、仪器连不上/不通/读超时、仪器排查、preflight。
+description: instrument MCP 服务器使用指引 — 八台仪器（SDS804/SDS824X HD 示波器、SDG2000X 信号源、Keysight 34465A 万用表、DHO800/900 与 MHO900 示波器、DG832 信号源、DH1766/DH1766-2 三路电源、Keysight 3458A 八位半万用表）的 MCP 工具选择、参数语义、安全门、典型工作流，compact/legacy 双 profile 用法，以及 3458A 的两处特殊性「非 SCPI + 不走标准 VISA」（必须走 Keysight VISA 核心 ktvisa32.dll；系统 visa32.dll 打开 GPIB 会 VI_ERROR_LIBRARY_NFOUND）与 GPIB/VISA 分层排查（preflight）。触发条件：使用 instrument MCP 工具、compact profile 的 instr_devices/instr_search/instr_describe/instr_call/instr_batch、或 legacy profile 的 sds_/sdg_/dmm_/dho_/mho_/dg_/psu_/ks3458a_/instr_ 前缀工具、仪器测量/定标/截图/关机决策、3458A、GPIB、VISA、ktvisa32、VI_ERROR_LIBRARY_NFOUND、82357B、NI-488.2、仪器连不上/不通/读超时、仪器排查、preflight。
 ---
 
 # instrument MCP 使用指引
 
-MCP server：`mcp_instruments/server.py`（68 操作 = 64 设备专用 + 3 通用护栏 + 1 故障兜底，八台设备）。
+MCP server：`mcp_instruments/server.py`（71 操作 = 67 设备专用 + 3 通用护栏 + 1 故障兜底，八台设备）。
 **暴露方式取决于 profile**（`--profile=` 或环境变量 `INSTRUMENT_MCP_PROFILE`，默认 `compact`）：
 
 | profile | 模型看到的工具 | 本文的用法 |
 |---|---|---|
 | `compact` | 只有 5 个：`instr_devices` / `instr_search` / `instr_describe` / `instr_call` / `instr_batch` | **默认档**；下文的名字是**操作**，需经 `instr_call` 调用，见下 |
-| `legacy` | 68 个操作各一个工具（`sds_measure`、`dg_set_wave` …） | 下文决策树里的名字**直接可用** |
+| `legacy` | 71 个操作各一个工具（`sds_measure`、`dg_set_wave` …） | 下文决策树里的名字**直接可用** |
 
 ## 零、compact 是默认档（先读这一节）
 
@@ -200,7 +200,7 @@ MCP 侧（单例 `127.0.0.1:8765/mcp`）与脚本侧**可以并行使用不同�
   测量 → dmm_measure（先 dmm_configure 设功能/量程更稳）
   看配置 → dmm_status
 
-八位半万用表（3458A，**非 SCPI**，`ks3458a_*`）：
+八位半万用表（3458A，**非 SCPI**、**不走标准 VISA**，`ks3458a_*`）：
   看状态 → ks3458a_status（`ID?`/`ERRSTR?`/`TEMP?` + **`device` 设备回读**
     `FUNC?`/`RANGE?`/`NPLC?`/`TARM?`/`TRIG?`/`INBUF?`… → 真实配置，不是"本会话设过什么"）
   取数 → ks3458a_read（单次 DCV）/ ks3458a_read_avg(n) / ks3458a_read_stats(n)
@@ -326,6 +326,18 @@ MCP 侧（单例 `127.0.0.1:8765/mcp`）与脚本侧**可以并行使用不同�
         ⚠ `ks3458a_unstick`（IFC+RESET）对 **Talk Only 的有效性待验证**：手册只给面板
         处置，原理上表只听不讲时收不到 `RESET`；但 2026-09-23 两成因未分离，不能断言
         远程一定无效。`preflight --id` 会识别这一态并提示按哪个键。
+    16. **不走标准 VISA**：系统 `visa32.dll`（`C:\Windows\System32\visa32.dll`）打开
+        `GPIB0::9::INSTR` 会 **`VI_ERROR_LIBRARY_NFOUND (-1073807202)`**——它不是一台"插上就能
+        用 pyvisa 读"的表。**必须**走 Keysight VISA 核心 `ktvisa32.dll`，并先把
+        `<Keysight IO Libraries Suite>\bin` 用 `SetDllDirectoryW` 顶到 DLL 搜索前面（不然
+        `viOpen` 会在 DLL 内部抛 `0xE06D7363`，而 `viOpenDefaultRM`/`viFindRsrc` 却成功——
+        极难定位）。库已全部封装（`keysight_3458a/transport.py`），所以：
+        · **别自己写 pyvisa 调 3458A**，走 `keysight_3458a` 库或 `ks3458a_*` 工具
+        · 换机器/重装系统后先 `python -m keysight_3458a.driver_check`，
+          `ktvisa32.dll` 不在 ⇒ 装 **Keysight IO Libraries Suite**（**不要**装 NI-488.2，
+          它不支持 82357B）
+        · 只有 `ktvisa32.dll` 也解析不到时，库才会回落到系统 `visa32.dll`——那是**降级路径**，
+          本地 GPIB 上必然 `VI_ERROR_LIBRARY_NFOUND`，不是代码 bug
 
   **在脚本里集成 3458A（两种方式，二选一）**：
     ① **直接用库（脚本推荐）**：`from keysight_3458a import DMM3458A`
